@@ -1,0 +1,11 @@
+{
+  "facilities": [
+    {"type": "控制中枢", "level": 1, "operators": ["玛恩纳", "维什戴尔", "魔王", "令", "路人中枢"]},
+    {"type": "制造站",   "level": 3, "operators": ["泡泡", "黍", "路人甲"]},
+    {"type": "制造站",   "level": 3, "operators": ["槐琥", "阿罗玛", "火神"]},
+    {"type": "贸易站",   "level": 3, "operators": ["火哨", "巫恋", "路人乙"]},
+    {"type": "办公室",   "level": 3, "operators": ["斥罪"]},
+    {"type": "宿舍",     "level": 5, "operators": ["菲亚梅塔"]}
+  ]
+}
+
