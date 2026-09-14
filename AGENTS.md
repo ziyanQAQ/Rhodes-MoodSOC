@@ -40,10 +40,11 @@ documents/
 ├── 06-数据来源.md          ★ 数据查找策略（强制）+ 上游缺失清单
 ├── 07-设计史.md            架构诊断 + P1~P5 重构决策记录
 ├── 08-上游数据源分析.md     上游仓库结构分析（首次摸底留档）
-└── 09-开发指南.md          运行与测试 / 公共 API 速查 / 改完代码自查清单
+├── 09-开发指南.md          运行与测试 / 公共 API 速查 / 改完代码自查清单
+└── 10-图形界面.md          图形界面 ui/：导入多班排班 / 时间滑动 / 对点曲线
 ```
 
-**目录分工**：`mood_soc/` `scripts/` `tests/` `main.py` = **代码**；
+**目录分工**：`mood_soc/` `scripts/` `tests/` `main.py` `ui/` = **代码**；
 `resources/` = **数据**（`.docx` 需求文档 / `.txt` 技能与阵营表 / `.json` 样例）；
 `documents/` = **文档**；`scenarios/` = 示例场景。
 
@@ -85,7 +86,7 @@ documents/
    `skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `resources/*.txt` → 重跑生成脚本。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 80 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 110 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 
 ---
@@ -101,6 +102,9 @@ python main.py --demo --target 泡泡 --explain           # 打印心情流水�
 python main.py --demo --target 菲亚梅塔 --entry-events  # 先结算进驻事件（M15a 心情互换）
 python main.py --mode base --demo                      # 整个布局还能维持多久
 python main.py --mode base --demo --period 12          # 先推进 12h 再评估
+
+# 图形界面（纯标准库 tkinter；导入多班排班 / 时间滑动 / 对点曲线）
+.venv/Scripts/python.exe -m ui                          # 见 documents/10-图形界面.md
 
 # 数据管道（改完 resources/*.txt 必须按顺序跑）
 python scripts/classify_skills.py --agd <ArknightsGameData>   # 挂模板 + 生成 755 行台账

@@ -1,0 +1,174 @@
+"""tests/test_ui_app_smoke.py —— 图形界面的**端到端冒烟测试**（真要建窗口）。
+
+它覆盖"界面到引擎"的接线：导入排班 → 看板出位置 → 时间滑动改心情 → 左键换人 →
+右键设心情 → 对点出曲线 → 班次设置改时长。对话框用**打桩**替换（不弹真窗口），
+其余全部走真实代码路径。
+
+无图形环境（Tk 建不出来，如无桌面的 CI）时整体跳过——计算核心另有
+`tests/test_ui_schedule_blackbox.py` 覆盖，不依赖显示器。
+
+运行：.venv/Scripts/python.exe -m unittest tests.test_ui_app_smoke -v
+"""
+from __future__ import annotations
+
+import tkinter as tk
+import unittest
+from decimal import Decimal
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
+
+
+def _tk_available() -> bool:
+    try:
+        r = tk.Tk()
+        r.withdraw()
+        r.destroy()
+        return True
+    except Exception:            # noqa: BLE001 —— 无显示器/无 Tk 都视作不可用
+        return False
+
+
+TK_OK = _tk_available()
+
+
+@unittest.skipUnless(TK_OK, "无图形环境（Tk 不可用），跳过界面冒烟测试")
+class Test界面冒烟(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from ui.app import MoodSocApp
+        cls.app = MoodSocApp()
+        cls.app.withdraw()                     # 测试时不弹窗
+        cls.app.load_paths([SAMPLE])
+        cls.app.update_idletasks()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.destroy()
+
+    def setUp(self):
+        """每个用例都从"示例排班 + 周期数 1"的干净状态开始（用例之间不串状态）。"""
+        app = self.app
+        app.cycles_var.set("1")
+        app.cycles = 1
+        app.load_paths([SAMPLE])
+        app.update_idletasks()
+
+    def test_导入后看板与曲线就绪(self):
+        app = self.app
+        self.assertEqual(len(app.schedule.shifts), 3)
+        self.assertEqual(app._total_hours(), Decimal("24"))
+        self.assertGreater(len(app.board.slots), 40)          # 看板画出了位置
+        self.assertIsNotNone(app.traj)
+        self.assertEqual(app.chart.name, app.curve_operator)  # 曲线已绑定干员
+        self.assertTrue(app.stats.cget("text"))               # 关键数值已填
+        self.assertEqual(len(app.shift_buttons), 3)
+
+    def _slot_for(self, name: str):
+        """按干员名取当前看板上的位置控件（班次切换会重建控件，故不能缓存引用）。"""
+        return next(s for s in self.app.board.slots if s.operator == name)
+
+    def test_时间滑动改变心情(self):
+        """滑块/时间跳转 → 看板心情文字实时变化（这就是需求③）。"""
+        app = self.app
+        who = "锡人"                      # 三个班次都在排班里，便于跨班比较
+        app.set_time(Decimal("0"))
+        at0 = self._slot_for(who).mood_label.cget("text")
+        app.set_time(Decimal("12"))       # 跳到第二个班次（看板会重建）
+        at12 = self._slot_for(who).mood_label.cget("text")
+        self.assertTrue(at0 and at12)
+        self.assertNotEqual(at0, at12, f"12h 后 {who} 的心情应已变化（都在为 '{at0}'）")
+        app._on_scale(6.0)                # 模拟拖动滑块
+        self.assertLessEqual(abs(app.current_t - Decimal("6")), Decimal("0.001"))
+        app.set_time(Decimal("0"))
+
+    def test_左键换人与右键设心情(self):
+        """需求②：位置可换人、可设心情（对话框打桩，其余走真路径）。"""
+        from ui import app as app_mod
+        app = self.app
+        app.set_time(Decimal("0"))
+        slot = app.board.slots[0]
+        old_ops = len(app.schedule.shifts[0].world.facilities[slot.fac_index].operators)
+
+        orig_op, orig_mood = app_mod.ask_operator, app_mod.ask_mood
+        try:
+            app_mod.ask_operator = lambda *a, **k: "泡泡"           # 换人
+            app.on_slot_left(slot.fac_index, 0)
+            self.assertEqual(app.schedule.shifts[0].world.facilities[slot.fac_index]
+                             .operators[0].name, "泡泡")
+            app_mod.ask_operator = lambda *a, **k: ""               # 清空该位置
+            app.on_slot_left(slot.fac_index, 0)
+        finally:
+            app_mod.ask_operator, app_mod.ask_mood = orig_op, orig_mood
+        self.assertLessEqual(len(app.schedule.shifts[0].world.facilities[slot.fac_index].operators),
+                             max(old_ops, 1))
+
+        # 右键设心情 → 影响周期起点
+        app.set_time(Decimal("0"))
+        slot = next(s for s in app.board.slots if s.operator)
+        who = slot.operator
+        try:
+            app_mod.ask_mood = lambda *a, **k: Decimal("6")
+            app.on_slot_right(slot.fac_index, slot.slot_index)
+        finally:
+            app_mod.ask_mood = orig_mood
+        self.assertEqual(app.initial_moods.get(who), Decimal("6"))
+        self.assertEqual(app.traj.mood_at(who, 0), Decimal("6"))
+
+    def test_对点查询切换干员(self):
+        """需求④：选人 → 曲线与该干员的关键数值一起切换。"""
+        app = self.app
+        names = list(app.op_box.cget("values"))
+        target = "巫恋" if "巫恋" in names else names[1]
+        app.op_var.set(target)
+        app._on_operator_pick()
+        self.assertEqual(app.chart.name, target)
+        self.assertIn("最低", app.stats.cget("text"))
+        self.assertIn("各班最低", app.stats.cget("text"))
+        app._step_operator(1)
+        self.assertNotEqual(app.chart.name, target)
+
+    def test_班次设置改时长(self):
+        """需求①：自设每班时长（打桩返回 8/8/8）→ 周期仍 24h。"""
+        from ui import app as app_mod
+        app = self.app
+        orig = app_mod.ask_shift_hours
+        try:
+            app_mod.ask_shift_hours = lambda *a, **k: [Decimal("8"), Decimal("8"), Decimal("8")]
+            app.edit_shifts()
+        finally:
+            app_mod.ask_shift_hours = orig
+        self.assertEqual([s.hours for s in app.schedule.shifts], [Decimal("8")] * 3)
+        self.assertEqual(app.schedule.cycle_hours, Decimal("24"))
+        # 复原成 12/6/6，避免影响其它用例
+        app_mod.ask_shift_hours = lambda *a, **k: [Decimal("12"), Decimal("6"), Decimal("6")]
+        try:
+            app.edit_shifts()
+        finally:
+            app_mod.ask_shift_hours = orig
+
+    def test_播放与关键盘微调(self):
+        app = self.app
+        app.set_time(Decimal("0"))
+        app.toggle_play()
+        self.assertTrue(app._playing)
+        app.toggle_play()
+        self.assertFalse(app._playing)
+        app.set_time(Decimal("0"))
+        app.nudge(Decimal("0.25"))
+        self.assertLessEqual(abs(app.current_t - Decimal("0.25")), Decimal("0.001"))
+        app.set_time(Decimal("0"))
+
+    def test_周期数切换(self):
+        app = self.app
+        app.cycles_var.set("2")
+        app._on_cycles()
+        self.assertEqual(app._total_hours(), Decimal("48"))
+        app.cycles_var.set("1")
+        app._on_cycles()
+        self.assertEqual(app._total_hours(), Decimal("24"))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

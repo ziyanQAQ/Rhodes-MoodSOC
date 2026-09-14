@@ -364,13 +364,28 @@ Rhodes-MoodSOC/
 │   ├── ledger.py          ★记录层：Contribution / MoodLedger（逐条贡献流水账）+ 轴 F 统一合成
 │   ├── variables.py       ★变量账本：26 种"中间货币"（人间烟火/热情值/无声共鸣…）+ 产出者收集
 │   ├── skills_data.py     技能数据表（自动生成，勿手改）：SKILLS / DEFAULT_OPERATORS / SKILL_EQUIPS / TRAITS
+│   ├── maa.py             输入解析层：MAA 排班 JSON -> facilities（脚本与图形界面共用这一份映射）
 │   ├── rules.py           业务逻辑层：**流水账驱动**——把"布局 + 干员"折算成消耗/回复/净速率 + 各项查询
 │   ├── simulator.py       时间步进模拟器：每步重算速率，处理"红脸 → 技能失效"等时变情况
 │   ├── report.py          展示层：中文结果格式化（文本）
 │   ├── output.py          输出层：结果 -> JSON dict / 写入文件（inf -> null）
 │   └── scenario.py        输入解析层：字典/JSON -> BaseLayout
+├── ui/                    ★ **图形界面**（tkinter，纯标准库；见 documents/10-图形界面.md）
+│   ├── schedule.py        多班排班模型 + 整周期心情轨迹（事件驱动精确积分）——不依赖 GUI
+│   ├── theme.py           配色 / 字体 / 间距令牌 + 显示格式化（唯一的显示舍入处）
+│   ├── board.py           基建看板：房间卡片 + 位置上干员名与实时心情
+│   ├── chart.py           心情曲线（Canvas 手绘：坐标轴 / 网格 / 班次分界 / 悬停读数）
+│   ├── dialogs.py         选人 / 设心情 / 班次设置对话框
+│   ├── app.py             主窗口（工具栏 + 看板 + 曲线 + 时间滑块 + 状态栏）
+│   └── __main__.py        `python -m ui` 入口
+├── tests/                 黑盒测试（只断言"输入 → 输出"，不测内部结构）
+│   ├── __init__.py
+│   ├── test_api_blackbox.py        公开 API 黑盒：场景 JSON + 目标/时段 → 结果 JSON
+│   ├── test_cli_blackbox.py        命令行黑盒：subprocess 调 main.py → stdout JSON / 退出码 / 结果文件
+│   ├── test_ui_schedule_blackbox.py 图形界面的计算核心黑盒（含"不拉起 tkinter"的结构断言）
+│   └── test_ui_app_smoke.py        界面端到端冒烟（真建窗口；无图形环境自动跳过）
 ├── scripts/
-│   ├── maa_to_scenario.py      把 MAA 排班 JSON 转成本工具的场景 JSON
+│   ├── maa_to_scenario.py      把 MAA 排班 JSON 转成本工具的场景 JSON（解析在 mood_soc/maa.py）
 │   ├── classify_skills.py      给每个 clause 挂六轴模板 + 生成 755 行覆盖台账 + 零遗漏校验
 │   ├── generate_factions.py    从上游 termDescriptionDict 生成干员↔阵营/标签表
 │   └── generate_skills_data.py 把 resources 两份 txt 生成为 mood_soc/skills_data.py（技能数据管道）
@@ -384,7 +399,7 @@ Rhodes-MoodSOC/
 │   └── arknights-infra-schedule-maa.json  MAA 排班样例（转换脚本的输入）
 ├── documents/             ★ **文档**（按门类分文件，索引见 documents/README.md）
 │   ├── README.md            文档索引 + §编号约定 + 维护约定
-│   └── 01-架构.md … 09-开发指南.md
+│   └── 01-架构.md … 10-图形界面.md
 ├── results/               运行生成的结果 JSON（已被 gitignore）
 ├── README.md              面向人类的完整说明（人类入口）
 ├── AGENTS.md              给 AI 的精简入口（DSH 只从项目根自动加载它）
@@ -392,8 +407,9 @@ Rhodes-MoodSOC/
 └── .venv/                 Python 3.14 虚拟环境（uv 创建）
 ```
 
-依赖关系单向向下：`main / tests → report/output/simulator/rules → skills/models → config/battery`，
-无环、无横向耦合。
+依赖关系单向向下：`main / ui / tests → report/output/simulator/rules → skills/models → config/battery`，
+无环、无横向耦合。`ui/` 是**与 `main.py` 并列的另一个入口层**（`mood_soc` 不知道 `ui` 存在；
+`ui/schedule.py` 不得 import tkinter，有测试盯着）。
 
 ---
 
@@ -509,6 +525,26 @@ python main.py --mode base --demo --period 12                           # 先推
   `{"name": "x", "mood": 20.5, "skill_ids": [...], "trait": "岁", "elite": 2, "level": 1}` 对象。
   `elite`（精英化等级 0/1/2）与 `level`（干员等级）控制技能解锁：某些技能只有精英化后才可用，
   或精英化后才"提升"到目标效果（如 火神 工匠精神 α→β）。
+
+### 4) 图形界面（`python -m ui`）
+
+命令行是"算一次"，图形界面是"**看整周期**"——导入 MAA 排班，看板上每个位置显示干员名与
+**实时心情**，拖时间滑块看一天里心情怎么走，指定干员看整周期曲线：
+
+```bash
+.venv/Scripts/python.exe -m ui
+```
+
+| 能做什么 | 怎么操作 |
+|---|---|
+| 导入多班（12h / 6h / 6h 三个文件，或一个含多班的文件） | 「导入排班…」可多选；一个文件里的每个 plan 都算一个班次 |
+| 自己设置周期 / 班数 / 每班时长 | 「班次设置…」（各班长之和必须等于周期，界面实时校验） |
+| 逐个位置设干员与心情 | 看板**左键**位置 → 选人/更换/清空；**右键**位置 → 设该干员心情（周期起点） |
+| 时间滑动 → 各位置心情实时变化 | 底部滑块（`←/→` 微调 15 分钟、`Home/End` 跳首尾、`空格` 播放/暂停） |
+| 对点：输入干员名 → 整周期心情曲线 | 右侧「对点查询」选人 → 曲线 + 关键数值（最低/最高及时刻、红脸段数与时长、各班最低） |
+
+技术底座是 tkinter（标准库），**没有引入任何第三方依赖**；界面规矩、计算口径与已知简化见
+**`documents/10-图形界面.md`**。
 
 ## 五、Python API
 
@@ -651,16 +687,18 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 
 ## 六、测试（黑盒）
 
-测试为**黑盒测试**：只通过「命令行」和「公开 API」断言**输入 → 输出**是否正确，
-不测试任何内部结构 / 内部函数。
+测试为**黑盒测试**：只通过「命令行」「公开 API」与「图形界面的计算核心」断言
+**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **110 个用例全绿**。
 
 ```bash
 # 运行全部测试
 .venv/Scripts/python.exe -m unittest discover -s tests -v
 
 # 只跑某个文件
-.venv/Scripts/python.exe -m unittest tests.test_api_blackbox -v   # 公开 API 黑盒
-.venv/Scripts/python.exe -m unittest tests.test_cli_blackbox -v   # 命令行黑盒
+.venv/Scripts/python.exe -m unittest tests.test_api_blackbox -v          # 公开 API 黑盒
+.venv/Scripts/python.exe -m unittest tests.test_cli_blackbox -v          # 命令行黑盒
+.venv/Scripts/python.exe -m unittest tests.test_ui_schedule_blackbox -v  # 图形界面的计算核心
+.venv/Scripts/python.exe -m unittest tests.test_ui_app_smoke -v          # 界面冒烟（无图形环境自动跳过）
 ```
 
 覆盖的代表性输入 → 输出：
@@ -678,5 +716,8 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 | 宿舍 寒檀 + 提丰（均为萨米） | 提丰 单体回复 1.00 |
 | 宿舍 深靛 + 临光 + 蓝毒 | 1.00（0.55+0.45 先求和，再胜过使徒 0.50） |
 | 命令行目标不存在 | 非零退出码 + stderr 错误提示 |
+| 图形界面：导入 3 班排班 | 3 个班次 / 周期 24h；看板 50 个位置；轨迹节点 130 |
+| 图形界面：时间滑到 12h | 看板心情随之变化（如锡人 24 → 15） |
+| 图形界面：对点选人 | 曲线与该干员的关键数值同步切换 |
 
 ---

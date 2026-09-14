@@ -1,0 +1,514 @@
+"""ui/app.py —— 主窗口：工具栏 + 基建看板 + 心情曲线 + 时间滑块 + 状态栏。
+
+五个功能的落点：
+
+| 需求 | 在哪 |
+|---|---|
+| ① 导入多班（12h/6h/6h 三个文件或一个含多 plan 的文件）+ 自设周期/班数/每班时长 | 「导入排班…」「班次设置…」 |
+| ② 逐个位置手动设干员与心情 | 看板：**左键**位置选人/更换/清空、**右键**设该位置干员的心情 |
+| ③ 时间滑动 → 各位置心情实时变化 | 底部滑块（只做插值，不重算，跟手） |
+| ④ 对点：输入干员名 → 整周期心情曲线 | 右侧曲线面板（下拉/搜索选人 + 精确读数与关键数值） |
+| ⑤ 简洁明了 | `ui/theme.py` 一套扁平令牌；界面只有"看板 / 曲线 / 滑块"三块 |
+
+引擎（`ui/schedule.py`）与界面严格分离：**只有"结构变了"才重算**（改布局/改时长/改周期数），
+拖动滑块只做 O(位置数) 的插值刷新。
+"""
+from __future__ import annotations
+
+import time
+import tkinter as tk
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+from . import theme
+from .board import BaseBoard
+from .chart import MoodChart
+from .dialogs import ask_mood, ask_operator, ask_shift_hours
+from .schedule import (Schedule, Trajectory, all_operator_names, default_initial_moods,
+                       load_schedule, simulate_schedule)
+
+ROOT = Path(__file__).resolve().parent.parent
+SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
+STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
+
+
+class MoodSocApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Rhodes-MoodSOC · 基建心情排班")
+        self.geometry("1480x900")
+        self.minsize(1120, 700)
+        self.configure(bg=theme.BG)
+
+        self.schedule: Schedule | None = None
+        self.traj: Trajectory | None = None
+        self.initial_moods: dict = {}          # 手动设过的心情（覆盖布局里的值）
+        self.cycles = 1
+        self.entry_events = tk.BooleanVar(value=False)
+        self.current_t = Decimal("0")
+        self.curve_operator = ""
+        self._playing = False
+        self._play_job = None
+        self._layout_sig = None
+        self._setting_scale = False
+        self._pending_t = None
+        self._refresh_job = None
+        self._last_refresh = 0.0
+
+        self._init_style()
+        self._build_toolbar()
+        self._build_body()
+        self._build_bottom()
+        self._bind_keys()
+
+        self.after(60, self._autoload_sample)
+
+    # ================================================================== 样式
+    def _init_style(self):
+        st = ttk.Style(self)
+        try:
+            st.theme_use("clam")
+        except tk.TclError:
+            pass
+        st.configure(".", font=(theme.FONT_FAMILY, theme.FS_BODY),
+                     background=theme.BG, foreground=theme.TEXT)
+        st.configure("TButton", padding=(10, 5), relief="flat",
+                     background=theme.PANEL, bordercolor=theme.BORDER, focuscolor=theme.PANEL)
+        st.map("TButton", background=[("active", theme.PANEL_ALT), ("disabled", theme.BG)],
+               foreground=[("disabled", theme.MUTED)])
+        st.configure("Accent.TButton", background=theme.ACCENT, foreground="#ffffff")
+        st.map("Accent.TButton", background=[("active", "#245ccb"), ("disabled", "#9db8f5")],
+               foreground=[("disabled", "#f0f4ff")])
+        st.configure("TCheckbutton", background=theme.BG, focuscolor=theme.BG)
+        st.map("TCheckbutton", background=[("active", theme.BG)])
+        st.configure("TCombobox", padding=3)
+        st.configure("TScale", background=theme.BG)
+        st.configure("Vertical.TScrollbar", background=theme.PANEL, troughcolor=theme.BG,
+                     bordercolor=theme.BORDER, arrowcolor=theme.MUTED)
+
+    # ================================================================== 工具栏
+    def _build_toolbar(self):
+        bar = tk.Frame(self, bg=theme.BG)
+        bar.pack(fill="x", padx=theme.PAD, pady=(theme.PAD, theme.GAP))
+
+        ttk.Button(bar, text="导入排班…", style="Accent.TButton",
+                   command=self.import_files).pack(side="left")
+        ttk.Button(bar, text="班次设置…", command=self.edit_shifts).pack(side="left",
+                                                                        padx=(6, 0))
+        ttk.Button(bar, text="重置心情", command=self.reset_moods).pack(side="left", padx=(6, 0))
+
+        tk.Label(bar, text="周期数", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(16, 4))
+        self.cycles_var = tk.StringVar(value="1")
+        cb = ttk.Combobox(bar, textvariable=self.cycles_var, width=3, state="readonly",
+                          values=("1", "2", "3"))
+        cb.pack(side="left")
+        cb.bind("<<ComboboxSelected>>", lambda _e: self._on_cycles())
+
+        ttk.Checkbutton(bar, text="结算进驻事件（M15a）", variable=self.entry_events,
+                        command=self.recompute).pack(side="left", padx=(16, 0))
+        self.play_btn = ttk.Button(bar, text="▶ 播放", command=self.toggle_play)
+        self.play_btn.pack(side="left", padx=(16, 0))
+        ttk.Button(bar, text="回到起点", command=lambda: self.set_time(Decimal("0"))
+                   ).pack(side="left", padx=(6, 0))
+
+        self.hint = tk.Label(bar, text="看板：左键选人/更换/清空　右键设心情　下方滑块看心情随时间变化",
+                             bg=theme.BG, fg=theme.MUTED,
+                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.hint.pack(side="right")
+
+    # ================================================================== 主体
+    def _build_body(self):
+        body = tk.Frame(self, bg=theme.BG)
+        body.pack(fill="both", expand=True, padx=theme.PAD)
+
+        self.board = BaseBoard(body, on_slot_click=self.on_slot_left,
+                               on_slot_right=self.on_slot_right)
+        self.board.pack(side="left", fill="both", expand=True)
+
+        right = tk.Frame(body, bg=theme.PANEL, highlightbackground=theme.BORDER,
+                         highlightthickness=1, width=560)
+        right.pack(side="left", fill="both", padx=(theme.GAP, 0))
+        right.pack_propagate(False)
+
+        head = tk.Frame(right, bg=theme.PANEL)
+        head.pack(fill="x", padx=theme.PAD, pady=(theme.PAD, 4))
+        tk.Label(head, text="对点查询 · 整周期心情曲线", bg=theme.PANEL, fg=theme.TEXT,
+                 font=(theme.FONT_FAMILY, theme.FS_TITLE)).pack(side="left")
+        ttk.Button(head, text="设置心情…", command=self.set_curve_mood).pack(side="right")
+
+        sel = tk.Frame(right, bg=theme.PANEL)
+        sel.pack(fill="x", padx=theme.PAD)
+        tk.Label(sel, text="干员", bg=theme.PANEL, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+        self.op_var = tk.StringVar()
+        self.op_box = ttk.Combobox(sel, textvariable=self.op_var, state="readonly")
+        self.op_box.pack(side="left", fill="x", expand=True, padx=(6, 6))
+        self.op_box.bind("<<ComboboxSelected>>", lambda _e: self._on_operator_pick())
+        ttk.Button(sel, text="◀", width=3, command=lambda: self._step_operator(-1)).pack(side="left")
+        ttk.Button(sel, text="▶", width=3, command=lambda: self._step_operator(1)).pack(side="left",
+                                                                                         padx=(4, 0))
+
+        self.chart = MoodChart(right, height=300)
+        self.chart.pack(fill="both", expand=True, padx=theme.PAD, pady=theme.GAP)
+        self.chart.info_provider = self._facility_at
+
+        self.stats = tk.Label(right, text="", bg=theme.PANEL, fg=theme.TEXT, justify="left",
+                              anchor="w", font=(theme.FONT_MONO, theme.FS_SMALL))
+        self.stats.pack(fill="x", padx=theme.PAD, pady=(0, theme.PAD))
+
+    # ================================================================== 底部
+    def _build_bottom(self):
+        bottom = tk.Frame(self, bg=theme.BG)
+        bottom.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, 4))
+
+        self.shift_bar = tk.Frame(bottom, bg=theme.BG)
+        self.shift_bar.pack(fill="x")
+        self.shift_buttons: list = []
+
+        slide = tk.Frame(bottom, bg=theme.BG)
+        slide.pack(fill="x", pady=(4, 0))
+        ttk.Button(slide, text="◀ 15min", width=8,
+                   command=lambda: self.nudge(-STEP_FINE)).pack(side="left")
+        self.scale = ttk.Scale(slide, from_=0.0, to=24.0, orient="horizontal",
+                               command=self._on_scale)
+        self.scale.pack(side="left", fill="x", expand=True, padx=theme.GAP)
+        ttk.Button(slide, text="15min ▶", width=8,
+                   command=lambda: self.nudge(STEP_FINE)).pack(side="left")
+        self.time_label = tk.Label(slide, text="00:00", bg=theme.BG, fg=theme.TEXT, width=16,
+                                   font=(theme.FONT_MONO, theme.FS_BIG, "bold"))
+        self.time_label.pack(side="left", padx=(theme.GAP, 0))
+
+        self.status = tk.Label(self, text="就绪", bg=theme.BG, fg=theme.MUTED, anchor="w",
+                               font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.status.pack(fill="x", padx=theme.PAD, pady=(0, theme.PAD))
+
+    def _bind_keys(self):
+        self.bind("<Left>", lambda _e: self.nudge(-STEP_FINE))
+        self.bind("<Right>", lambda _e: self.nudge(STEP_FINE))
+        self.bind("<Home>", lambda _e: self.set_time(Decimal("0")))
+        self.bind("<End>", lambda _e: self.set_time(self._total_hours()))
+        self.bind("<space>", lambda _e: self.toggle_play())
+
+    # ================================================================== 数据流
+    def _autoload_sample(self):
+        if SAMPLE.exists():
+            try:
+                self.load_paths([SAMPLE])
+                self.status.configure(text=f"已载入示例排班：{SAMPLE.name}（可用「导入排班…」换成你的）")
+            except Exception as exc:                       # noqa: BLE001 —— 启动兜底
+                self.status.configure(text=f"示例排班载入失败：{exc}")
+
+    def load_paths(self, paths):
+        """按文件集合装配排班（可能抛 ValueError，调用方展示原因）。"""
+        sch = load_schedule(paths)
+        self.schedule = sch
+        self.initial_moods.clear()
+        self.current_t = Decimal("0")
+        self._build_shift_buttons()
+        self._sync_operator_box()
+        self.recompute(fit_slider=True)
+
+    def import_files(self):
+        paths = filedialog.askopenfilenames(
+            title="选择排班文件（可多选：12h / 6h / 6h 三个文件，或一个含多班的文件）",
+            initialdir=str(ROOT / "resources"),
+            filetypes=[("排班 / 场景 JSON", "*.json"), ("全部文件", "*.*")])
+        if not paths:
+            return
+        try:
+            self.load_paths(list(paths))
+        except ValueError as exc:
+            messagebox.showerror("导入失败", str(exc), parent=self)
+        except OSError as exc:
+            messagebox.showerror("读取失败", str(exc), parent=self)
+
+    def recompute(self, fit_slider: bool = False):
+        """结构变化后重算轨迹（改布局 / 改时长 / 改周期数 / 改进驻事件开关）。"""
+        if self.schedule is None:
+            return
+        t0 = time.perf_counter()
+        self.status.configure(text="计算中…")
+        self.update_idletasks()
+        self.traj = simulate_schedule(self.schedule, cycles=self.cycles,
+                                      initial_moods=self.initial_moods,
+                                      entry_events=self.entry_events.get())
+        total = self._total_hours()
+        if fit_slider or self.current_t > total:
+            self.current_t = Decimal("0")
+        self.scale.configure(to=float(total))
+        self._refresh_layout()
+        self._sync_operator_box()
+        self.refresh_view()
+        ms = (time.perf_counter() - t0) * 1000
+        self.status.configure(
+            text=f"{len(self.schedule.shifts)} 班 / 周期 {theme.fmt_hours(self.schedule.cycle_hours)}"
+                 f"　干员 {len(self.traj.names)} 名　轨迹节点 {len(self.traj.times)}"
+                 f"　重算耗时 {ms:.0f} ms")
+
+    def _refresh_layout(self):
+        """看板只在"当前时刻所在班次的布局"变化时重建（否则只刷新心情）。"""
+        idx = self.schedule.index_at(self.current_t)
+        shift = self.schedule.shifts[idx]
+        sig = (idx, tuple((f.display_name, tuple(o.name for o in f.operators))
+                          for f in shift.world.facilities))
+        if sig != self._layout_sig:
+            self.board.set_layout(shift, sub_title=self._shift_span_text(idx))
+            self._layout_sig = sig
+
+    def refresh_view(self):
+        """只更新随时间变化的部分（滑块拖动走这里，O(位置数)）。"""
+        if self.traj is None:
+            return
+        self.board.update_moods(self.traj.moods_at(self.current_t))
+        self.chart.set_cursor(self.current_t)
+        self.time_label.configure(text=theme.fmt_clock(self.current_t, self.schedule.cycle_hours))
+        self._highlight_shift_button()
+
+    def _on_scale(self, value):
+        """滑块回调：只记录目标时刻，刷新做"前沿 + 尾部"节流（拖动时约 30fps）。
+
+        - 距上次刷新 ≥30ms → 立刻刷新（跟手，不延迟）；
+        - 否则排队一次 30ms 后的刷新 —— **末位一定落地**，不会丢最后一帧。
+        """
+        if self._setting_scale:          # 程序设置滑块位置时不要再触发一轮 set_time
+            return
+        try:
+            self._pending_t = Decimal(str(round(float(value), 4)))
+        except (InvalidOperation, ValueError):
+            return
+        if time.perf_counter() - self._last_refresh >= 0.03:
+            self._flush_pending()
+        elif self._refresh_job is None:
+            self._refresh_job = self.after(30, self._flush_pending)
+
+    def _flush_pending(self):
+        self._refresh_job = None
+        self._last_refresh = time.perf_counter()
+        t, self._pending_t = self._pending_t, None
+        if t is not None:
+            self.set_time(t)
+
+    def set_time(self, t: Decimal):
+        if self.traj is None:
+            return
+        total = self._total_hours()
+        t = max(Decimal("0"), min(Decimal(str(t)), total))
+        changed_shift = self.schedule.index_at(t) != self.schedule.index_at(self.current_t)
+        self.current_t = t
+        self._setting_scale = True
+        self.scale.set(float(t))
+        self._setting_scale = False
+        if changed_shift:
+            self._refresh_layout()
+        self.refresh_view()
+
+    def nudge(self, delta: Decimal):
+        self.set_time(self.current_t + delta)
+
+    def _total_hours(self) -> Decimal:
+        return self.schedule.cycle_hours * self.cycles if self.schedule else Decimal("0")
+
+    def _shift_span_text(self, idx: int) -> str:
+        s = self.schedule.shifts[idx]
+        start = self.schedule.starts[idx]
+        return f"{theme.fmt_clock(start, self.schedule.cycle_hours)} – " \
+               f"{theme.fmt_clock(start + s.hours, self.schedule.cycle_hours)}"
+
+    # ================================================================== 编辑
+    def _editing_shift_index(self) -> int:
+        return self.schedule.index_at(self.current_t)
+
+    def on_slot_left(self, fac_index: int, slot_index: int):
+        """左键：选人 / 更换 / 清空该位置。"""
+        if self.schedule is None:
+            return
+        idx = self._editing_shift_index()
+        shift = self.schedule.shifts[idx]
+        facility = shift.world.facilities[fac_index]
+        current = facility.operators[slot_index].name if slot_index < len(facility.operators) else ""
+        names = all_operator_names(self.schedule.operator_names())
+        picked = ask_operator(self, names, current,
+                              title=f"{facility.display_name} · 第 {slot_index + 1} 位")
+        if picked is None:
+            return
+        facs = self._facilities_of(idx)
+        ops = [o.name for o in facility.operators]
+        while len(ops) <= slot_index:
+            ops.append("")
+        ops[slot_index] = picked                      # "" = 清空
+        facs[fac_index]["operators"] = [o for o in ops if o]
+        self._apply_facilities(idx, facs)
+
+    def on_slot_right(self, fac_index: int, slot_index: int):
+        """右键：设置该位置干员的心情（周期起点）。"""
+        if self.schedule is None:
+            return
+        idx = self._editing_shift_index()
+        facility = self.schedule.shifts[idx].world.facilities[fac_index]
+        if slot_index >= len(facility.operators):
+            return
+        who = facility.operators[slot_index].name
+        self._ask_and_set_mood(who)
+
+    def set_curve_mood(self):
+        """右侧面板：给当前曲线选中的干员设心情。"""
+        if not self.curve_operator:
+            return
+        self._ask_and_set_mood(self.curve_operator)
+
+    def _ask_and_set_mood(self, who: str):
+        current = self.initial_moods.get(who, self._current_start_mood(who))
+        v = ask_mood(self, who, current)
+        if v is None:
+            return
+        self.initial_moods[who] = Decimal(v)
+        self.recompute()
+
+    def _current_start_mood(self, who: str) -> Decimal:
+        if self.schedule:
+            for op in self.schedule.shifts[0].world.all_operators():
+                if op.name == who:
+                    return op.mood
+        return Decimal("24")
+
+    def reset_moods(self):
+        self.initial_moods.clear()
+        if self.schedule:
+            self.recompute()
+
+    def _facilities_of(self, idx: int):
+        return [dict(f, operators=list(f.get("operators", [])))
+                for f in self.schedule.shifts[idx].facilities]
+
+    def _apply_facilities(self, idx: int, facs):
+        """改完某个班次的布局 → 重建 Schedule → 重算。"""
+        self.schedule = self.schedule.replaced_shift(idx, facs)
+        self._layout_sig = None
+        self.recompute()
+
+    def edit_shifts(self):
+        """班次设置：周期 / 每班时长（各班长之和必须等于周期）。"""
+        if self.schedule is None:
+            return
+        hours = ask_shift_hours(self, [s.label for s in self.schedule.shifts],
+                                [s.hours for s in self.schedule.shifts],
+                                self.schedule.cycle_hours)
+        if not hours:
+            return
+        self.schedule = self.schedule.with_hours(hours)
+        self._build_shift_buttons()
+        self.recompute(fit_slider=True)
+
+    def _on_cycles(self):
+        self.cycles = int(self.cycles_var.get())
+        self.recompute(fit_slider=True)
+
+    # ================================================================== 曲线面板
+    def _sync_operator_box(self):
+        if self.schedule is None:
+            return
+        names = self.schedule.operator_names()
+        self.op_box.configure(values=names)
+        if self.curve_operator not in names:
+            self.curve_operator = names[0] if names else ""
+        self.op_var.set(self.curve_operator)
+        self._update_chart()
+
+    def _on_operator_pick(self):
+        self.curve_operator = self.op_var.get()
+        self._update_chart()
+
+    def _step_operator(self, delta: int):
+        names = list(self.op_box.cget("values"))
+        if not names:
+            return
+        i = names.index(self.curve_operator) if self.curve_operator in names else 0
+        self.curve_operator = names[(i + delta) % len(names)]
+        self.op_var.set(self.curve_operator)
+        self._update_chart()
+
+    def _update_chart(self):
+        if self.traj is None or not self.curve_operator:
+            self.chart.clear()
+            self.stats.configure(text="")
+            return
+        self.chart.set_data(self.traj, self.curve_operator)
+        self.stats.configure(text=self._stats_text(self.curve_operator))
+
+    def _stats_text(self, name: str) -> str:
+        traj = self.traj
+        lo, lo_t, hi, hi_t = traj.bounds(name)
+        spans = traj.red_face_spans(name)
+        total_red = sum((b - a for a, b in spans), Decimal("0"))
+        lines = [
+            f"起点 {theme.fmt_mood(traj.mood_at(name, 0))}　"
+            f"周期末 {theme.fmt_mood(traj.mood_at(name, traj.total_hours))}",
+            f"最低 {theme.fmt_mood(lo)} @ {theme.fmt_clock(lo_t, traj.schedule.cycle_hours)}"
+            f"　最高 {theme.fmt_mood(hi)} @ {theme.fmt_clock(hi_t, traj.schedule.cycle_hours)}",
+            f"红脸 {len(spans)} 段，合计 {theme.fmt_hours(total_red)}" if spans else "红脸 无",
+        ]
+        per = traj.min_mood_at_each_shift(name)
+        lines.append("各班最低：" + "　".join(f"{l} {theme.fmt_mood(v)}" for l, v in per))
+        return "\n".join(lines)
+
+    def _facility_at(self, t: Decimal) -> str:
+        if self.schedule is None:
+            return ""
+        idx = self.schedule.index_at(t)
+        fac = self.schedule.shifts[idx].world.facility_of(self.curve_operator)
+        return fac.display_name if fac else "未排班"
+
+    # ================================================================== 班次条
+    def _build_shift_buttons(self):
+        for b in self.shift_buttons:
+            b.destroy()
+        self.shift_buttons.clear()
+        if self.schedule is None:
+            return
+        tk.Label(self.shift_bar, text="班次", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(0, 6))
+        for i, s in enumerate(self.schedule.shifts):
+            b = ttk.Button(self.shift_bar,
+                           text=f"{i + 1}. {s.label}（{theme.fmt_hours(s.hours)}）",
+                           command=lambda k=i: self.set_time(self.schedule.starts[k]))
+            b.pack(side="left", padx=(0, 4))
+            self.shift_buttons.append(b)
+
+    def _highlight_shift_button(self):
+        idx = self.schedule.index_at(self.current_t) if self.schedule else -1
+        for i, b in enumerate(self.shift_buttons):
+            b.configure(style="Accent.TButton" if i == idx else "TButton")
+
+    # ================================================================== 播放
+    def toggle_play(self):
+        if self.traj is None:
+            return
+        self._playing = not self._playing
+        self.play_btn.configure(text="■ 停止" if self._playing else "▶ 播放")
+        if self._playing:
+            self._play_tick()
+        elif self._play_job:
+            self.after_cancel(self._play_job)
+            self._play_job = None
+
+    def _play_tick(self):
+        if not self._playing or self.traj is None:
+            return
+        total = self._total_hours()
+        nxt = self.current_t + Decimal("0.1")
+        if nxt > total:
+            nxt = Decimal("0")
+        self.set_time(nxt)
+        self._play_job = self.after(60, self._play_tick)
+
+
+def main() -> int:
+    app = MoodSocApp()
+    app.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
