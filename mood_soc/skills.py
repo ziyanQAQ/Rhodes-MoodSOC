@@ -130,10 +130,36 @@ def _cond_alone_in_facility(ctx) -> bool:
     return len(ops) == 1 and ops[0] is ctx.owner
 
 
-def _cond_target_in_faction(faction: str):
-    """「如果目标是 <阵营/标签> 干员」（资深料理人：莱欧斯小队）。"""
+def _cond_target_in_faction(*factions: str):
+    """「如果目标是 <阵营/标签> 干员」（M08/M09 的定向加成）。
+
+    可传多个阵营，任一命中即可（上游用「和」连接，语义上是并集）：
+      - 资深料理人「如果目标是 **莱欧斯小队** 干员，则恢复效果额外 +0.15」
+      - 降生于冰寒「如果目标是 **萨米** 干员，则恢复效果额外 +0.45」
+      - 狩猎好帮手「如果目标是 **怪物猎人小队**成员**和泡影国狩猎小队**，
+        则恢复效果额外 +0.45」（`cc.tag.mh` + `cc.tag.mh2`）
+    """
     def cond(ctx) -> bool:
-        return faction in _factions_of(ctx.target)
+        target = getattr(ctx, "target", None)
+        if target is None:
+            return False
+        fs = _factions_of(target)
+        return any(f in fs for f in factions)
+    return cond
+
+
+def _cond_target_is(*names: str):
+    """「如果目标是 <具体干员>」（M09 的定向加成）。
+
+    上游原文（`dorm_rec_single_P[000]` 等）：
+        「…使该宿舍内除自身以外心情未满的某个干员每小时恢复+0.55（同种效果取最高），
+          **如果目标是 <干员>**，则恢复效果额外+0.45」
+    被点名的目标是具体干员而非阵营，故单独一个条件函数：
+      - 沏茶 → 锡兰 · 烤肉大师 → 嘉维尔 · 毒剂师之友 → 蓝毒
+    """
+    def cond(ctx) -> bool:
+        target = getattr(ctx, "target", None)
+        return target is not None and getattr(target, "name", "") in names
     return cond
 
 

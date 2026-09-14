@@ -147,6 +147,7 @@ dorm_rec_single&oneself_030,2,使徒,recover,dorm_self,self,,250,auto,,M10,stack
 dorm_rec_single&oneself_040,1,甜甜圈派对,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,,400,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single&oneself_040,2,甜甜圈派对,recover,dorm_self,self,,400,auto,,M10,stacking=same_kind_max;partial=false
 dorm_rec_single&tag_000,1,狩猎好帮手,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是怪物猎人小队/泡影国狩猎小队，则额外+0.45,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
+dorm_rec_single&tag_000,2,狩猎好帮手,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是怪物猎人小队/泡影国狩猎小队，则额外+0.45,450,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_000,1,医疗服务,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,,650,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_001,1,疗养,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,,650,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_010,1,善解人意,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
@@ -157,10 +158,15 @@ dorm_rec_single_032,1,心理疏导,recover,dorm_single,进驻宿舍时，使该�
 dorm_rec_single_033,1,恩典颂歌,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,,700,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_1010,1,善解人意,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_P_000,1,沏茶,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是锡兰，则恢复效果额外+0.45,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
+dorm_rec_single_P_000,2,沏茶,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是锡兰，则恢复效果额外+0.45,450,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_P_001,1,烤肉大师,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是嘉维尔，则恢复效果额外+0.45,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
+dorm_rec_single_P_001,2,烤肉大师,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是嘉维尔，则恢复效果额外+0.45,450,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_P_002,1,毒剂师之友,recover,dorm_single,进驻宿舍时，使该宿舍内心情未满的某个干员每小时恢,如果目标是蓝毒，则恢复效果额外+0.45,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
+dorm_rec_single_P_002,2,毒剂师之友,recover,dorm_single,进驻宿舍时，使该宿舍内心情未满的某个干员每小时恢,如果目标是蓝毒，则恢复效果额外+0.45,450,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_power_000,1,降生于冰寒,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是萨米干员，则恢复效果额外+0.45,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
+dorm_rec_single_power_000,2,降生于冰寒,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是萨米干员，则恢复效果额外+0.45,450,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_power_001,1,圣城趣事通,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是拉特兰干员，则恢复效果额外+0.45,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
+dorm_rec_single_power_001,2,圣城趣事通,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是拉特兰干员，则恢复效果额外+0.45,450,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_power_100,1,天生乐天派,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 hire_spd_cost&char_000,1,圣女声望,drain,self,self,,-250,auto,,M07a,stacking=sum;partial=false
 hire_spd_cost&char_001,1,雪境归心,drain,self,self,,-250,auto,,M07a,stacking=sum;partial=false

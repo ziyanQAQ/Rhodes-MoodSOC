@@ -368,6 +368,23 @@ net == 0     → "心情不变"
     `Facility.deputies` 是副手（不占位、不耗心情、被「不包含副手」类技能排除，29 条 buff 用到）；
     活动室 `FacilityType.PRIVATE` 的使用者默认被 `base_operators()` 排除（23 条 buff 用到）。
     `get_facility()` 只返回第一个同类型设施，多房间请用 `of_type()` / `count_of_type()`。
+27. **`M09` 定向加成「如果目标是 X，则恢复效果额外 +0.45」已实现**（P5）：
+    上游 6 条 `dorm_rec_single*` 写的是「…恢复 +0.55（同种效果取最高），**如果目标是 X，
+    则恢复效果额外 +0.45**」。本地 CSV 当初挤成一行、加成丢失；现按上游原文**手工补 `clause#2`**
+    （value=450，与 `#1` 同 `skill_id`），条件见 `generate_skills_data.CLAUSE_COND`：
+    沏茶→锡兰、烤肉大师→嘉维尔、毒剂师之友→蓝毒（用 **`_cond_target_is`**，点名具体干员）；
+    降生于冰寒→萨米、圣城趣事通→拉特兰、狩猎好帮手→怪物猎人小队/泡影国狩猎小队
+    （用 **`_cond_target_in_faction`**，可传多个 = 并集）。
+    两条配套铁律：
+    - **「同种效果取最高」的单位是技能（含各分句），不是分句**（同 §4.18）。`_single_recovery`
+      旧实现按单条分句取 `max` 会吃掉 +0.45；现改为记进 `MoodLedger` 后调用
+      **`MoodLedger.same_kind_winner(bucket, group)`** 取获胜**技能实例**（0.55+0.45=1.00）。
+      该方法与 `total()` 的 `SAME_KIND_MAX` 同源，规则只有一份。
+    - **点名要过守卫**：`check_faction_refs()` 现在会扫 `CLAUSE_COND` 里的字符串字面量，
+      阵营名与干员名对不上直接报错（干员名册取 `resources/operators.txt` **全量**，
+      不能用 `DEFAULT_OPERATORS`——锡兰/嘉维尔/蓝毒都是只有生产/训练技能的干员）。
+    ⚠️ 遗留简化：`_single_recovery` 的**目标锁定**是全局一名受益者（§8.5），
+    所以「毒剂师之友」上游没写「除自身以外」、深靛本可自指，本模型仍把她排除在候选外。
 
 ---
 
@@ -563,8 +580,11 @@ MAA 排班转换：`python scripts/maa_to_scenario.py [源] [输出目录]`（�
    MAA 占位符 / per-count 倍率 / 资源计数 / 截断文本，一律标 `partial=true`，并按
    `partial_mode` 处置：`apply`（子句 value 无条件成立 → 按骨架生效）/ `hold`（value 本身以缺失条件
    为前提 → 保留骨架但不生效，仍计入 `untranslated`）。判定：条件文本为空或含「额外」⇒ `apply`。
-   实收：不生效子句 **37 → 31**（6 条本就正确的单体回复重新生效）。
-   要彻底启用剩余 31 条，需实现 per-count 变量（人间烟火等）与 `COND_MARKERS` 扩充。
+   实收：不生效子句 **37 → 31**（6 条本就正确的单体回复重新生效）；P3/P4a/P4b 又逐步降到 **3 条**
+   （变量 + 可数基准 + 分支条件全部落地）。
+   要彻底启用剩余子句，需实现 per-count 变量（人间烟火等）与 `COND_MARKERS` 扩充
+   ——**这两项 P3/P4a 已完成，当前仅剩 3 条 `hold`**（投资·α/β 需贸易站订单类型、
+   患难之交需进驻顺序）。
 3. **布局容量与房间数取自上游**：`config.FACILITY_MAX_COUNT`（`rooms[].maxCount`）与
    `FACILITY_SLOTS_BY_LEVEL`（`rooms[].phases[lv].maxStationedNum`）。`BaseLayout.validate()`
    只**报告**问题、不抛异常（历史场景可能刻意超容量）；`build_base_layout(validate=True)` 才抛。
@@ -581,7 +601,7 @@ MAA 排班转换：`python scripts/maa_to_scenario.py [源] [输出目录]`（�
 8. **数据管道幂等**（P4b 修）：`classify_skills.py --agd` 会重写 `moods_skills.txt` 的
    `template_id` / `params`。它现在**保留手写参数**（`basis=` / `var=` / `var_per=` / `var_min=`）
    与**已存在的人工判定**（`partial` / `partial_mode`），只给新行填初值。
-   实测：重跑一次 `--agd`，243 行参数变化 **0** 行。
+   实测：重跑一次 `--agd`，249 行参数变化 **0** 行。
    ⚠️ 若没有这道保护，重跑分类器会把 P3/P4 手工回填的折算规则**全部抹掉**（已踩过）。
 9. **阵营表已改为上游自动生成**（2026-09 重构）：`OPERATOR_FACTIONS` / `FACTION_MEMBERS` 由
    `scripts/generate_factions.py` 读上游 `cc.g.*` / `cc.tag.*` 生成（28 组 231 条），
@@ -676,6 +696,14 @@ traj = simulate(world, "泡泡", Decimal("12"), step=Decimal("0.1"))   # 深拷�
 - [ ] 是否新增了「基础 + 每有 N 额外」结构的技能？→ 确认两个分句的 `group` 相同
       （`SAME_KIND_MAX` 会按 skill_id 先求和再取最高）；若额外部分应**独立求和**而非参与取最高，
       则用不同的 `group`。
+- [ ] 是否给技能挂了**按目标**的定向加成（「如果目标是 X」）？→ ①阵营/标签用
+      `_cond_target_in_faction("…", …)`（可传多个 = 并集），点名干员用 `_cond_target_is("…")`；
+      ②在 `CLAUSE_COND` 里按 `(skill_id, clause)` 挂上；③名字要能过 `check_faction_refs()`
+      （阵营名对 `factions.txt`，干员名对 `operators.txt` 全量）；④**若挂的是 `dorm_single`，
+      确认取值走 `MoodLedger.same_kind_winner` 而不是单条分句 `max`**（否则基础分句会把加成吃掉）。
+- [ ] 是否手工往 `moods_skills.txt` **补过分句**（上游一个 buff 描述里有多个效果、本地 CSV 没拆）？
+      → `classify_skills.py` 是**原地重写**、不重建行，故补的行会保留；但仍要跑一次 `--agd`
+      确认参数变化 0 行，并在 `CLAUSE_COND` / 模板注释里写清上游原文出处。
 
 ---
 

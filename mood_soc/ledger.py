@@ -189,6 +189,32 @@ class MoodLedger:
         """净速率 = clamp(消耗, 0, ∞) − 回复（与 rules 的口径一致：消耗不为负）。"""
         return max(ZERO, self.total(Bucket.CONSUME)) - self.total(Bucket.RECOVER)
 
+    def same_kind_winner(self, bucket: Bucket, group: str = ""):
+        """「同种效果取最高」的**获胜技能实例**：返回 `(小计, 代表 Contribution)`。
+
+        比较单位是**技能实例**（持有者 + skill_id；同一技能的各分句**先求和**），
+        与 `total()` 的 `SAME_KIND_MAX` 分支完全同源——所以调用方不必自己再写一遍
+        轴 F 逻辑（`rules._single_recovery` 就是"只保留一名受益者"的场景：
+        它需要知道**赢的是哪一条技能**，而不只是一个合计数字）。
+
+        无满足条件的贡献时返回 `(ZERO, None)`。并列时取先出现者。
+        """
+        insts: Dict[tuple, list] = {}
+        for c in self.of(bucket):
+            if c.stacking != Stacking.SAME_KIND_MAX or c.max_group:
+                continue
+            g = c.group or c.template or c.label
+            if group and g != group:
+                continue
+            inst = (c.owner or c.target or "", c.skill_id.split("#", 1)[0] or c.label)
+            insts.setdefault((g, inst), []).append(c)
+        best_value, best_rep = ZERO, None
+        for cs in insts.values():
+            v = sum((c.value for c in cs), ZERO)
+            if best_rep is None or v > best_value:
+                best_value, best_rep = v, cs[0]
+        return best_value, best_rep
+
     # ------------------------------------------------------------------ 展示
     def explain(self) -> str:
         """中文逐条解释：这个干员的净速率是怎么来的。"""

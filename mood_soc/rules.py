@@ -500,7 +500,7 @@ def _dorm_ledger(world: BaseLayout, op: Operator, facility: Facility,
                                 detail="（同种效果取最高）" + _vtxt))
 
     # --- 单体回复（dorm_single，同种取最高，仅一名受益者）---
-    single, s_owner, s_skill = _single_recovery(world, op, facility)
+    single, s_owner, s_skill = _single_recovery(world, op, facility, variables)
     if single:
         lg.add(Contribution(Bucket.RECOVER, "宿舍单体回复", single, group="dorm_single",
                             stacking=Stacking.SAME_KIND_MAX, owner=s_owner, target=op.name,
@@ -550,12 +550,19 @@ def _targeted_recovery(world, op: Operator, facility: Facility) -> Decimal:
     return sum((c.value for c in lg.of(Bucket.RECOVER) if c.group == "dorm_targeted"), ZERO)
 
 
-def _single_recovery(world, op: Operator, facility: Facility):
+def _single_recovery(world, op: Operator, facility: Facility, variables=None):
     """单体回复：返回 (值, 提供者名, 技能)。
 
     取同种最高值，作用于"心情最低且未满"的一名干员。
     说明：文档中的单体回复存在"进驻顺序 / 快照锁定"等复杂机制，
     此处采用可实现的简化：锁定心情最低、未满且不持有单体回复技能的干员。
+
+    ⚠️ 「同种效果取最高」的比较单位是**技能**（含它的各分句），不是分句：
+    上游 M09 系列写「…每小时恢复 +0.55（同种效果取最高），**如果目标是 X，
+    则恢复效果额外 +0.45**」——基础分句与定向加成分句属于**同一条技能**，
+    要先求和（0.55+0.45=1.00）再与其他单体回复技能取最高。
+    故这里先把每条分句记进流水账，再用 `MoodLedger.same_kind_winner` 取获胜**技能实例**
+    （旧实现按单条分句取 max，会把 +0.45 的定向加成整个吃掉）。
     """
     providers = [o for o in facility.operators
                  if _active(o) and _skills_of(o, SkillKind.DORM_SINGLE)]
@@ -569,18 +576,27 @@ def _single_recovery(world, op: Operator, facility: Facility):
     if op is not beneficiary:
         return ZERO, "", None
 
-    best, best_owner, best_skill = ZERO, "", None
+    lg = MoodLedger(op.name, facility.display_name, variables=variables)
+    by_inst = {}
     for provider in providers:
         for s in _skills_of(provider, SkillKind.DORM_SINGLE):
-            ctx = SkillContext(world, provider, beneficiary, facility)
+            ctx = SkillContext(world, provider, beneficiary, facility, variables)
             if s.condition is not None and not s.condition(ctx):
                 continue
-            _ok, amount, _vtxt = _scaled_amount(s, None, world, facility, beneficiary)
+            _ok, amount, vtxt = _scaled_amount(s, variables, world, facility, beneficiary)
             if not _ok:
                 continue
-            if amount > best:
-                best, best_owner, best_skill = amount, provider.name, s
-    return best, best_owner, best_skill
+            lg.add(Contribution(Bucket.RECOVER, "宿舍单体回复", amount,
+                                group="dorm_single", stacking=Stacking.SAME_KIND_MAX,
+                                owner=provider.name, target=op.name, skill_id=s.id,
+                                skill_name=s.name, template=s.template_id,
+                                detail="（同种效果取最高）" + vtxt))
+            by_inst[(provider.name, base_skill_id(s.id))] = s
+
+    value, rep = lg.same_kind_winner(Bucket.RECOVER, "dorm_single")
+    if rep is None or value <= ZERO:
+        return ZERO, "", None
+    return value, rep.owner, by_inst.get((rep.owner, base_skill_id(rep.skill_id)))
 
 
 def compute_consumption(world: BaseLayout, op: Operator, facility: Facility,

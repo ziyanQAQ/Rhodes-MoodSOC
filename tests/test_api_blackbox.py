@@ -882,5 +882,73 @@ class Test分支条件P4b(unittest.TestCase):
         self.assertEqual(mood_ledger(world, "路人甲").total(Bucket.RECOVER), Decimal("4.15"))
 
 
+class Test定向加成M09(unittest.TestCase):
+    """M09 单体回复的「如果目标是 X，则恢复效果额外 +0.45」。
+
+    上游原文（`building_data.json` → `buffs["dorm_rec_single_P[000]"]` 等 6 条）：
+        「进驻宿舍时，使该宿舍内除自身以外心情未满的某个干员每小时恢复 +0.55
+          （同种效果取最高），**如果目标是 <点名干员 / 阵营>，则恢复效果额外 +0.45**」
+    即：基础 0.55 与定向加成 0.45 属于**同一条技能的两个分句**，
+    要先求和（1.00）再与其它单体回复技能取最高。
+    """
+
+    @staticmethod
+    def _dorm(members, level=5):
+        return build_base_layout(scenario(
+            {"type": "宿舍", "level": level,
+             "operators": [{"name": m, "mood": 10} for m in members]}))
+
+    @staticmethod
+    def _single(world, who):
+        return sum((c.value for c in mood_ledger(world, who).of(Bucket.RECOVER)
+                    if c.group == "dorm_single"), Decimal("0"))
+
+    def test_target_named_operator(self):
+        """点名具体干员：毒剂师之友（深靛）→ 蓝毒 +0.45；沏茶（黑）→ 锡兰 +0.45。"""
+        self.assertEqual(self._single(self._dorm(["深靛", "蓝毒"]), "蓝毒"), Decimal("1.00"))
+        self.assertEqual(self._single(self._dorm(["深靛", "路人"]), "路人"), Decimal("0.55"))
+        self.assertEqual(self._single(self._dorm(["黑", "锡兰"]), "锡兰"), Decimal("1.00"))
+        self.assertEqual(self._single(self._dorm(["黑", "路人"]), "路人"), Decimal("0.55"))
+
+    def test_target_faction(self):
+        """点名阵营：降生于冰寒（寒檀）→ 萨米 +0.45；圣城趣事通（新约能天使）→ 拉特兰 +0.45。"""
+        self.assertEqual(self._single(self._dorm(["寒檀", "提丰"]), "提丰"), Decimal("1.00"))
+        self.assertEqual(self._single(self._dorm(["寒檀", "路人"]), "路人"), Decimal("0.55"))
+        self.assertEqual(self._single(self._dorm(["新约能天使", "蕾缪安"]), "蕾缪安"), Decimal("1.00"))
+
+    def test_target_multi_tag_union(self):
+        """狩猎好帮手（罗德岛隐秘队）同时认 `cc.tag.mh` 与 `cc.tag.mh2`（并集）。
+
+        上游原文：「如果目标是 <怪物猎人小队>成员**和<泡影国狩猎小队>**，则额外 +0.45」
+        ——两个标签任一命中即可。该干员自己就是泡影国成员，但「除自身以外」故不能自指。
+        """
+        self.assertEqual(self._single(self._dorm(["罗德岛隐秘队", "焰狐龙梓兰"]), "焰狐龙梓兰"),
+                         Decimal("1.00"))
+        self.assertEqual(self._single(self._dorm(["罗德岛隐秘队", "火龙S黑角"]), "火龙S黑角"),
+                         Decimal("1.00"))
+        self.assertEqual(self._single(self._dorm(["罗德岛隐秘队", "路人"]), "路人"),
+                         Decimal("0.55"))
+
+    def test_same_kind_max_compares_skills_not_clauses(self):
+        """「同种效果取最高」的比较单位是**技能**：0.55+0.45 要先求和，再赢过 0.50。
+
+        陪跑：临光「使徒」= 0.50（`dorm_rec_single&oneself_030`）。
+        若按单条分句取 max，深靛会只剩 0.55 > 0.50 仍然赢——看不出差别；
+        故再加一条**只让加成生效**的对照：命中时合计 1.00、未命中时 0.55，
+        两者都必须在与 0.50 的比较中胜出，且合计值随目标身份变化。
+        """
+        hit = self._dorm(["深靛", "临光", "蓝毒"])
+        miss = self._dorm(["深靛", "临光", "路人"])
+        self.assertEqual(self._single(hit, "蓝毒"), Decimal("1.00"))     # max(0.55+0.45, 0.50)
+        self.assertEqual(self._single(miss, "路人"), Decimal("0.55"))    # max(0.55, 0.50)
+
+    def test_bonus_provider_must_be_active(self):
+        """红脸（mood≤0）的提供者技能失效——定向加成同样不生效。"""
+        world = build_base_layout(scenario(
+            {"type": "宿舍", "level": 5,
+             "operators": [{"name": "深靛", "mood": 0}, {"name": "蓝毒", "mood": 10}]}))
+        self.assertEqual(self._single(world, "蓝毒"), Decimal("0"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

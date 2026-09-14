@@ -118,6 +118,17 @@ CLAUSE_COND = {
     ("control_mp_aegir1_000", 3): "_cond_dorm_abyssals_full_mood",
     # 资深料理人：对莱欧斯小队干员的额外 +0.15
     ("dorm_rec_all&tag_000", 2): '_cond_target_in_faction("莱欧斯小队")',
+    # —— M09 单体回复的「如果目标是…，则恢复效果额外 +0.45」（上游原文见各条 skill_id）——
+    # 注：这 6 条的 clause#2 是本项目**按上游原文手工补的分句**（上游把基础效果与定向加成
+    # 写在同一个 buff 描述里，本地 CSV 当初未拆）。分句与 #1 同 skill_id，
+    # 由 MoodLedger 的 SAME_KIND_MAX「先按 skill 求和、再跨技能取最高」合成 → 0.55 + 0.45 = 1.00。
+    ("dorm_rec_single_P_000", 2): '_cond_target_is("锡兰")',                       # 沏茶（黑）
+    ("dorm_rec_single_P_001", 2): '_cond_target_is("嘉维尔")',                      # 烤肉大师（特米米）
+    ("dorm_rec_single_P_002", 2): '_cond_target_is("蓝毒")',                        # 毒剂师之友（深靛）
+    ("dorm_rec_single_power_000", 2): '_cond_target_in_faction("萨米")',            # 降生于冰寒（寒檀）
+    ("dorm_rec_single_power_001", 2): '_cond_target_in_faction("拉特兰")',          # 圣城趣事通（新约能天使）
+    ("dorm_rec_single&tag_000", 2):                                                 # 狩猎好帮手（罗德岛隐秘队）
+        '_cond_target_in_faction("怪物猎人小队", "泡影国狩猎小队")',
 }
 
 # 纯布尔、可自动映射的条件（在 target 或 condition 文本中命中）
@@ -544,6 +555,7 @@ def render(skills_by_key, default_operators, equips, traits, factions, var_produ
     lines.append('    _cond_no_abyssal_outside_dorm,')
     lines.append('    _cond_dorm_abyssals_full_mood,')
     lines.append('    _cond_target_in_faction,')
+    lines.append('    _cond_target_is,')
     lines.append(')')
     lines.append('')
     lines.append('')
@@ -666,15 +678,40 @@ def render(skills_by_key, default_operators, equips, traits, factions, var_produ
     return "\n".join(lines)
 
 
-def check_faction_refs(skills_by_key, factions) -> list[str]:
-    """校验：技能引用的阵营名必须存在于生成表里。
+def load_all_operator_names() -> set:
+    """`resources/operators.txt` 里出现过的**全部**干员名（含只有非心情技能的干员）。
+
+    校验 `_cond_target_is("锡兰")` 这类"点名某干员"的定向加成时必须用全量名册：
+    `DEFAULT_OPERATORS` 只收"有心情技能"的干员，而锡兰/嘉维尔/蓝毒这几个**目标**
+    恰恰是只有生产/训练技能的干员，用前者会把正确的数据判成错的（实测踩过）。
+    """
+    names = set()
+    with open(OPERATORS_TXT, encoding="utf-8") as f:
+        for r in list(csv.reader(f))[1:]:
+            if len(r) >= 2 and r[1]:
+                names.add(r[1])
+    return names
+
+
+def check_faction_refs(skills_by_key, factions, known_operators=()) -> list[str]:
+    """校验：技能引用的阵营名 / 干员名必须真实存在。
 
     这道守卫本该早就存在——旧手工表把「米诺斯」误标为「萨尔贡」、
     把早露用的名字写成「乌萨斯」（上游叫「乌萨斯学生自治团」），
     两者都因为"没人对了名字"而长期潜伏。现在一旦对不上就**直接报错**。
+
+    覆盖三处引用点：
+      1. `Skill.count_faction` / `Skill.target_faction` 字段；
+      2. `COOP_COND` 里的 `_cond_with_cc_faction("…")`；
+      3. `CLAUSE_COND` 里的 `_cond_target_in_faction("…")`（阵营名）
+         与 `_cond_target_is("…")`（**具体干员名**，如沏茶→锡兰）。
+    第 3 类是 P5 补的：名字写在条件表达式的字符串里、不经过字段，
+    旧守卫完全扫不到（`resources/skills_registry.md` 式的"改名/打错字"会静默失效）。
     """
     known = set(factions["by_faction"])
+    known_ops = set(known_operators) | set(factions["by_operator"])
     used = {}
+    unknown_ops = {}
     for key, sk in skills_by_key.items():
         for fac in (sk.get("count_faction"), sk.get("target_faction")):
             if fac:
@@ -683,11 +720,25 @@ def check_faction_refs(skills_by_key, factions) -> list[str]:
         m = re.search(r'_cond_with_cc_faction\("([^"]+)"\)', expr)
         if m:
             used.setdefault(m.group(1), []).append(sid)
+    for key, expr in CLAUSE_COND.items():
+        where = f"{key[0]}#{key[1]}"
+        for m in re.finditer(r'_cond_target_in_faction\(([^)]*)\)', expr):
+            for name in re.findall(r'"([^"]+)"', m.group(1)):
+                used.setdefault(name, []).append(where)
+        for m in re.finditer(r'_cond_target_is\(([^)]*)\)', expr):
+            for name in re.findall(r'"([^"]+)"', m.group(1)):
+                if name not in known_ops:
+                    unknown_ops.setdefault(name, []).append(where)
+
     unknown = {f: v for f, v in used.items() if f not in known}
     if unknown:
         raise SystemExit(
             "❌ 技能引用了阵营表里不存在的阵营（改名或补 resources/factions_supplement.txt）：\n"
             + "\n".join(f"   {f!r} ← {', '.join(v[:4])}" for f, v in unknown.items()))
+    if unknown_ops:
+        raise SystemExit(
+            "❌ 定向技能引用了不存在的干员名（`_cond_target_is` 只认 operators.txt / 阵营表里的名字）：\n"
+            + "\n".join(f"   {f!r} ← {', '.join(v[:4])}" for f, v in unknown_ops.items()))
     return sorted(used)
 
 
@@ -696,7 +747,8 @@ def main():
     annotate_factions(skills_by_key)
     default_operators, equips = load_operators(skills_by_key)
     factions = load_factions()
-    used_factions = check_faction_refs(skills_by_key, factions)
+    used_factions = check_faction_refs(skills_by_key, factions,
+                                       load_all_operator_names())
     var_producers = load_variable_producers()
     traits = derive_traits(factions)
     out_text = render(skills_by_key, default_operators, equips, traits, factions, var_producers)
