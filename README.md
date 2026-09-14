@@ -6,7 +6,122 @@
 > 给定「当前干员信息 + 当前基建布局 + 目标时段」，
 > 输出「目标时段后该干员的剩余心情」，以及「其余干员心情无限时，该干员还能工作多久」。
 
-规则严格依据 `resources/心情消耗回复和工休时间.docx`。
+规则依据：
+- 心情消耗/回复/工休的**计算规则**：`resources/心情消耗回复和工休时间.docx`；
+- **真实技能库与干员↔技能映射**：`resources/moods_skills.txt` + `resources/operators.txt`
+  （含精英化解锁等级、value 千分值、作用 family），由 `scripts/generate_skills_data.py`
+  一键生成 `mood_soc/skills_data.py`。
+
+> 技能数值以两份 txt 为**权威来源**（docx 中的技能示例值已过时）。
+> 两份 txt 的**上游**是 `Kengxxiao/ArknightsGameData`（`zh_CN/gamedata/excel/building_data.json`）；
+> 结构分析、逐条对照结果、以及「是否属心情类」的待判定清单见
+> `resources/AGD_心情技能数据源分析.md`（该文档只是**数据源分析**，不参与计算）。
+>
+> **技能分类**：每条技能都挂在一个**六轴模板**（`M01`~`M17` 心情类 / `X01`~`X11` 非心情）上，
+> 新增干员技能 = 认模板 + 填参数；上游全部 buff 都有覆盖台账，未归类会**硬报错**。
+> 见 `resources/skill_taxonomy.md`（分类大纲 + 模板字典）与 `resources/skills_registry.txt`（台账）。
+
+### 心情流水账（可解释）
+
+每条速率都能拆开看：谁 → 哪条技能 → 作用于谁 → 值多少 → 按哪条叠加规则合成。
+
+```bash
+python main.py --demo --target 泡泡 --explain      # 打印流水账
+```
+```python
+from mood_soc import build_base_layout
+from mood_soc.rules import mood_ledger
+print(mood_ledger(world, "刺玫").explain())
+# 回复  合计 4.2000
+#      4.0000  [BASE] 宿舍基础回复　（1.5 + 0.1×5 + 0.0004×5000）
+#        0.05  [M01] 焰影苇草「领袖」　（同种效果最取高）
+#        0.15  [M08] 刺玫（自身）「芬芳疗养·β」　（同种效果取最高）
+# 净速率 = 消耗 − 回复 = -4.2000 ……
+```
+
+### 分支条件
+
+本地技能表里的条件文本曾被截断（只剩「如果」「反之」），现已回上游取全文并纳入模型：
+
+| 技能 | 条件 | 心情效果 |
+|---|---|---|
+| 双面间谍 / 「职业操守」α·β / 我自己的愿望 / 专业经理·α·β | 会客室内**只有自身**在工作 | 自身消耗 +1~+2 |
+| 潮汐守望（歌蕾蒂娅） | 没有其他深海猎人在宿舍以外 | 自身回复 +0.5（反之 +0.5 消耗/个） |
+| 互为半身（若叶睦） | 与丰川祥子同中枢 | 消除**自身**心情消耗影响 |
+| 资深料理人（森西） | 目标是**莱欧斯小队**干员 | 恢复效果额外 +0.15 |
+
+### 可数条件（每有 N 个什么）
+
+「每有 1 间发电站」「当前宿舍每级」「每个招募位」「每有 1 名其他干员」这类条件**可以从布局直接数出来**，
+现已全部纳入模型（12 条子句）：
+
+```bash
+# 死前必做清单（响石）= 0.15 + 0.02×宿舍等级，再与其它宿舍群体回复取最高
+# 寻同路人（斥罪）= 0.15 + 0.05×办公室等级（招募位）
+# 柔和微光（流明）= 0.15（β）+ 0.05×发电站数
+```
+上游原文明确写「…额外 +N 恢复效果（**叠加后的最终值**同种效果取最高）」——
+即同一技能的多个分句要**先求和**，再与其他技能取最高。
+
+### 变量（技能间的中间货币）
+
+官方术语表定义了 26 种变量，其中 **人间烟火 / 热情值 / 无声共鸣** 会影响心情，例如：
+
+```
+重岳「知我为我」→ 人间烟火 +5/每个（宿舍/活动室以外的）岁干员
+              → 重岳「孤光共照」每 20 点人间烟火，room2 心情回复额外 +0.05
+若叶睦「演技的怪物」+20 / 祐天寺若麦「勤学苦练」+10 / 八幡海铃「可靠伙伴」+10
+              → 丰川祥子「生活的重压」在热情值 ≥ 40 时自身消耗 +0.05
+塑心「无声共鸣」+1/每名宿舍干员 → 塑心「无词颂歌」每 5 点，宿舍回复额外 +0.01
+```
+
+产出端逐条注明上游出处：`resources/variable_producers.txt`；实现见 `mood_soc/variables.py`。
+流水账 `--explain` 会打印变量快照与"由谁产出"。
+
+### 基建布局
+
+多房间（4 制造站 / 4 宿舍 / 3 发电站）、容量、副手、活动室都是一等公民：
+
+```json
+{"facilities": [
+  {"type": "制造站", "level": 3, "name": "制造站#1", "operators": ["泡泡"], "deputies": ["火神"]},
+  {"type": "活动室", "level": 1, "operators": ["某人"]}
+]}
+```
+- 容量与房间数上限取自上游 `rooms[].maxCount` / `phases[lv].maxStationedNum`；`build_base_layout(data, validate=True)` 可自检。
+- `get_facility()` 只取第一个同类型设施（兼容旧用法），多房间用 `of_type()` / `count_of_type()`。
+
+### 开发约定
+
+- **每次改动即时提交**：每完成一次修改就 `git commit` 一次，提交信息用 **1–15 个字**简要描述
+  （如「修复替换链」「补变量账本」）。
+- 改了代码 / 数据 / 文档，必须同步更新 `AGENTS.md` 与 `README.md`。
+
+### 技能分类与阵营表
+
+- **分类**：每个技能 clause 挂在六轴模板（`M01`~`M17` 心情类 / `X01`~`X11` 非心情）上，
+  新增干员技能 = 认模板 + 填参数；上游全部 755 条 buff 都有覆盖台账，未归类**硬报错**。
+  见 `resources/skill_taxonomy.md`、`resources/skills_registry.txt`。
+- **阵营/标签**：`resources/factions.txt` 由 `scripts/generate_factions.py` 从上游
+  `cc.g.*` / `cc.tag.*` 自动生成（28 组 231 条），**不手工维护**
+  （人工补充只有上游不列名单的「异格者」）。生成器会校验技能引用的阵营名都存在。
+- **架构**：运行时（派发/布局/记录）的可拓展性诊断与重构设计见 `resources/mood_engine_design.md`。
+
+### 🔎 数据查找策略（强制）
+
+遇到任何**不知道的数据**——技能原文 / 数值 / 解锁精英化与等级 / 阵营成员名单 / 设施集合定义 /
+全局常量 / 机制术语——**先去上游仓库查证**：
+[**Kengxxiao/ArknightsGameData**](https://github.com/Kengxxiao/ArknightsGameData)（`zh_CN/gamedata/excel/`）。
+**不要凭印象写、不要猜、不要从二手资料誊抄。** 本项目的 `resources/*.txt` 与
+`mood_soc/skills_data.py` 都只是**上游的派生物**；两者不一致时**以上游为准**。
+
+- 技能/数值/解锁 → `building_data.json`（`buffs` + `chars[].buffChar[].buffData[]`）
+- 干员名 → `character_table.json`；术语/阵营/设施集合/常量 → `gamedata_const.json`
+- 拉取方式（不要整仓 clone）：
+  `git clone --filter=blob:none --depth 1 --no-checkout <仓库> <目录>` 后用
+  `git sparse-checkout set zh_CN/gamedata/excel` 只取表。
+- 注意：仓库是**纯数据 dump**，没有公式实现；"怎么算"仍以需求 docx 为准。
+- 完整策略（含四个坑与查完后的动作）见 `AGENTS.md` §11。
 
 > **精度策略**：全部数值计算使用 Python 标准库 `decimal.Decimal`（十进制精确），
 > 避免 float 无法精确表示 `0.1 / 0.3 / 0.05 / 0.0004` 等十进制小数带来的累积误差。
@@ -69,26 +184,45 @@ sustain_hours（还能维持/恢复多久，evaluate 输出）：
 消耗 = 1（基础）
      - X      设施基础减免（制造/贸易按进驻人数：1人0 / 2人0.05 / 3人0.1；其它设施0）
      - 0.25   控制中枢满员全局减免（按人数线性折算）
-     ± 自身技能        （斥罪 +0.5、泡泡 -0.25 等）
-     ± 同设施设施级技能  （黍 -0.1、火哨 -0.1、巫恋 +0.25，作用于全体含自身）
-     - 中枢全局减免技能  （维什戴尔/玛恩纳/重岳，按干员取最高）
+     ± 自身技能        （泡泡 -0.25、火神 α-0.15/β-0.25、阿罗玛 +0.25、斥罪 +0.5 等）
+     ± 同设施设施级技能  （黍 -0.1、夕"不以物喜"中枢 -0.05，作用于全体含自身）
+     ± 同设施其他干员技能（巫恋"低语" +0.25，作用于其他干员、不含自身）
+     - 中枢减免技能  （预留：维什戴尔/重岳等真实数据已归为"回复"，见下）
 ```
 
 特殊规则：
 - **消除类**（槐琥 / 令）：移除目标干员"自身技能"的正负影响，但**不**影响中枢减免、
-  **不**影响设施级技能。
+  **不**影响设施级技能；令额外限定 `trait="岁"`。
 - **红脸**（心情 ≤ 0）：该干员所有技能失效（仍可继续工作，只是效率下降）。
+- **精英化判断**：技能是否生效 = 干员 `elite >= 技能解锁 elite` 且 `level >= 解锁 level`；
+  "精英化提升"版技能（如 火神 β）解锁后**替换**低版本（α），不叠加。
 
 ### 心情回复
 
 ```
 宿舍回复 = 白字(1.5 + 0.1×等级) + 绿字(0.0004×实际氛围 + 技能加成)
+        + 中枢干员对宿舍的回复（领袖/战纹/巡心/羁绊相生等）
         + 自身回复 + 群体回复 + 单体回复 + 定向回复
-工作设施回复 = 中枢技能提供的回复（玛恩纳：发电/办公/会客 +0.1、中枢内 +0.05）
+工作设施回复 = 中枢技能提供的回复（玛恩纳中枢+0.05/发电办公会客+0.1、维什戴尔工作设施+0.1、
+              重岳+0.05、冰酿中枢+0.05）
 ```
 
 - 不同类型（自身/群体/单体/定向）**可叠加**；同种类型**取最高**。
 - 特殊干员：**菲亚梅塔**（自身 +2、不接受其它来源）；**冰酿**（0.8 总额平分给未满成员）。
+
+### 阵营联动（因其他阵营/干员存在而改变心情）
+
+三类联动技能，均已生效（手工阵营表 `skills.OPERATOR_FACTIONS`）：
+
+1. **阵营计数类（per-count）**：value 是"每个该阵营干员"的回复量，总回复 = `value × 目标设施内
+   该阵营干员数`。例：陈"德才兼备"（中枢内每个龙门近卫局干员 +0.05）、电弧"无言的慈爱"
+   （宿舍内每个精英干员 +0.1）、异格者/彩虹小队/谢拉格/乌萨斯/鲤氏等。
+2. **与具体干员共事**：同中枢（`_cond_with_cc_operator`）/ 同设施（`_cond_with_facility_operator`）。
+   例：德克萨斯"恩怨"与拉普兰德同贸易站 +0.3、老鲤"浮生得闲"与阿同中枢、魔王"魔王传承"与阿米娅同中枢。
+3. **与阵营共事**：同中枢且排除自身（`_cond_with_cc_faction`）。
+   例：摆渡人"英雄的骄傲"与萨尔贡干员同中枢 +0.02。
+
+> 阵营表 `OPERATOR_FACTIONS` 是手工维护的（resources 数据里没有干员↔阵营映射）。
 
 ### 工休比
 
@@ -110,7 +244,8 @@ Rhodes-MoodSOC/
 │   ├── config.py          纯配置层：常量与数据表（无逻辑）
 │   ├── battery.py         纯数学层：安时积分法 + to_decimal/INF（与游戏规则无关）
 │   ├── models.py          数据模型层：Operator / Facility / BaseLayout / MoodResult / OperatorResult / BaseResult
-│   ├── skills.py          规则数据层：技能定义（加技能 = 加一条数据）
+│   ├── skills.py          规则数据层：Skill / SkillEquip / SkillKind 框架 + 条件函数（末尾 re-export 数据）
+│   ├── skills_data.py     技能数据表（自动生成，勿手改）：SKILLS / DEFAULT_OPERATORS / SKILL_EQUIPS / TRAITS
 │   ├── rules.py           业务逻辑层：把"布局 + 干员"折算成净速率
 │   ├── simulator.py       时间步进模拟器：处理红脸等时变情况
 │   ├── report.py          展示层：中文结果格式化（文本）
@@ -121,9 +256,13 @@ Rhodes-MoodSOC/
 │   ├── test_api_blackbox.py   公开 API 黑盒：场景 JSON + 目标/时段 → 结果 JSON
 │   └── test_cli_blackbox.py   命令行黑盒：subprocess 调 main.py → stdout JSON / 退出码 / 结果文件
 ├── scripts/
-│   └── maa_to_scenario.py  把 MAA 排班 JSON 转成本工具的场景 JSON
+│   ├── maa_to_scenario.py  把 MAA 排班 JSON 转成本工具的场景 JSON
+│   └── generate_skills_data.py  把 resources 两份 CSV 生成为 mood_soc/skills_data.py
 ├── scenarios/             demo.json + maa_shift1/2/3.json（示例场景）
-├── resources/             心情消耗回复和工休时间.docx（需求文档）+ arknights-infra-schedule-maa.json
+├── resources/             心情消耗回复和工休时间.docx + moods_skills.txt + operators.txt
+│                          + skills_registry.txt（755 行 buff 覆盖台账）
+│                          + skill_taxonomy.md（六轴 + 模板字典）
+│                          + arknights-infra-schedule-maa.json + AGD_心情技能数据源分析.md
 ├── results/               运行生成的结果 JSON（已被 gitignore）
 ├── README.md              面向人类的完整说明
 ├── AGENTS.md              给 AI 的项目速读指南
@@ -239,8 +378,10 @@ python main.py --mode base --demo --period 12                           # 先推
 ```
 
 - `type` 支持中文名或英文枚举值（`control_center` / `manufacturing` / ...）。
-- 干员既可用名字字符串（自动套用内置技能），也可用
-  `{"name": "x", "mood": 20.5, "skill_ids": [...], "trait": "岁"}` 对象。
+- 干员既可用名字字符串（自动套用内置技能，默认 `elite=2` 满练），也可用
+  `{"name": "x", "mood": 20.5, "skill_ids": [...], "trait": "岁", "elite": 2, "level": 1}` 对象。
+  `elite`（精英化等级 0/1/2）与 `level`（干员等级）控制技能解锁：某些技能只有精英化后才可用，
+  或精英化后才"提升"到目标效果（如 火神 工匠精神 α→β）。
 
 ## 五、Python API
 
@@ -313,7 +454,7 @@ python main.py --mode base --demo --period 12                           # 先推
 
 **布局 / 干员 / 设施**：
 
-- `Operator(name, mood=MOOD_MAX, skill_ids=[], trait=None)` —— 干员
+- `Operator(name, mood=MOOD_MAX, skill_ids=[], trait=None, elite=2, level=1)` —— 干员（elite/level 控制技能解锁）
 - `Facility(ftype, level=1, operators=[], atmosphere=None)` —— 设施房间
 - `BaseLayout(facilities=[])` —— 基建布局；方法：`get_facility` / `control_center` / `facility_of` / `get_operator` / `all_operators`
 
