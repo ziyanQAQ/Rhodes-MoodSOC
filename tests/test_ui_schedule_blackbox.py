@@ -342,7 +342,7 @@ class Test进驻事件与口径(MoodAssertMixin, unittest.TestCase):
         self.assertLess(traj.mood_at("菲亚梅塔", D("6.9")), D("24"))  # 换之前她还没满
         # 班次开始时会先留一条"她没满、等她回满再换"的说明（不是静默）
         self.assertTrue([m for m in traj.marks
-                         if m.kind == "entry" and "强制换心情" in m.label])
+                         if m.kind == "entry" and "等她回满" in m.label])
 
     def test_位置也互换时轨迹不同(self):
         """`restore_back=False`：换完位置也对调 → 她被丢进制造站（开始掉），他回宿舍（保持满）。"""
@@ -416,23 +416,33 @@ class Test进驻事件与口径(MoodAssertMixin, unittest.TestCase):
         self.assertFalse([m for m in traj.marks if float(m.t) == 18.0 and m.kind == "entry"
                           and "互换" in m.label])
 
-    def test_按班次强制_逐班(self):
-        """逐班「强制」：只有第 1 班勾了 → 她回满的那一刻（7h）就换；不勾 → 等到第 2 班开始（12h）。"""
-        def entry(force_first):
-            return {"enabled": True, "scope": "anywhere", "swap_with": "巫恋",
-                    "per_shift": [{"force": force_first}, {}, {"enabled": False}]}
+    def test_按班次触发方式_逐班(self):
+        """逐班「什么时候换」：`wait`（等她回满）与 `full`（只在她满时换）互不影响。"""
+        def entry(when1, when2):
+            return {"enabled": True, "scope": "anywhere", "swap_with": "巫恋", "when": "full",
+                    "per_shift": [{"when": when1}, {"when": when2}, {"enabled": False}]}
 
-        traj = simulate_schedule(self._three_shifts(entry(True), her_mood="10"),
+        # ① 第 1 班 wait：她在第 1 班回满的那一刻（7h）就换 → 之后到下个班次都还没满 → 只换 1 次
+        traj = simulate_schedule(self._three_shifts(entry("wait", "full"), her_mood="10"),
                                  cycles=1, entry_events=True)
         swaps = self._swaps(traj)
         self.assertEqual(len(swaps), 1)
-        self.assertLessEqual(abs(swaps[0].t - D("7")), D("0.01"))       # 她 10→24 需 7h
+        self.assertLessEqual(abs(swaps[0].t - D("7")), D("0.01"))
 
-        traj = simulate_schedule(self._three_shifts(entry(False), her_mood="10"),
+        # ② 第 1 班 full（此刻不满 → 不换），第 2 班 full：到 12h 她已经满心情 → 在 12h 换
+        traj = simulate_schedule(self._three_shifts(entry("full", "full"), her_mood="10"),
                                  cycles=1, entry_events=True)
         swaps = self._swaps(traj)
         self.assertEqual(len(swaps), 1)
-        self.assertLessEqual(abs(swaps[0].t - D("12")), D("0.01"))      # 只在下个班次开始时才试
+        self.assertLessEqual(abs(swaps[0].t - D("12")), D("0.01"))
+
+        # ③ 默认（不写 when）＝ 强制立刻换：第 1 班开局就换，不看双方心情
+        traj = simulate_schedule(
+            self._three_shifts({"enabled": True, "scope": "anywhere", "swap_with": "巫恋"},
+                               her_mood="10"),
+            cycles=1, entry_events=True)
+        swaps = self._swaps(traj)
+        self.assertLessEqual(abs(swaps[0].t - D("0")), D("0.01"))
 
     def test_按班次写法与继承(self):
         """按序号 / 按班次名定位；显式 null 清空对象；没写的字段继承全局。"""

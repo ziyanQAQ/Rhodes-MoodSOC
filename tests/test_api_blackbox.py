@@ -1079,11 +1079,36 @@ class Test进驻事件M15a(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(self._moods(world), [Decimal("24"), Decimal("6")])
 
-    def test_no_swap_when_not_full(self):
-        """自身不满心情 → 不触发。"""
+    def test_默认强制立刻换_不满心情也换(self):
+        """**默认口径＝强制立刻换**：她不满心情也照换、不管对方心情是多少（用户口径）。"""
         world = self._world([("路人", 6), ("菲亚梅塔", 20)])
-        self.assertEqual(apply_entry_events(world), [])
+        events = apply_entry_events(world)
+        self.assertEqual(len(events), 1)                       # 不再因为"她不满"而跳过
+        self.assertEqual(self._moods(world), [Decimal("20"), Decimal("6")])
+
+    def test_双方心情相同也照换(self):
+        """强制交换：**双方心情相同也不再跳过**（数值不变，但位置该换就换、事件照记）。"""
+        world = self._world([("路人", 24), ("菲亚梅塔", 24)])
+        events = apply_entry_events(world, restore_back=False)
+        self.assertEqual(len(events), 1)
+        self.assertIn("本来就相同", events[0].detail)
+        # 位置仍然按设置对调了
+        self.assertEqual([o.name for o in world.facilities[0].operators],
+                         ["菲亚梅塔", "路人"])
+
+    def test_when_full_模式_不满心情不换(self):
+        """`when="full"`（游戏原口径）→ 自身不满心情时不触发。"""
+        world = self._world([("路人", 6), ("菲亚梅塔", 20)])
+        self.assertEqual(apply_entry_events(world, when="full"), [])
         self.assertEqual(self._moods(world), [Decimal("6"), Decimal("20")])
+        # 旧字段兼容：JSON 里写 "force": false 也等于 "full"
+        world2 = self._json_world({"enabled": True, "force": False},
+                                  members=(("路人", "6"), ("菲亚梅塔", "20")))
+        self.assertEqual(world2.entry_events.when, "full")
+        self.assertEqual(apply_entry_events(world2), [])
+        # "force": true 等于 "wait"
+        world3 = self._json_world({"enabled": True, "force": True})
+        self.assertEqual(world3.entry_events.when, "wait")
 
     def test_no_swap_without_previous_occupant(self):
         """她是宿舍里第一个进驻的（没有"前一位"）→ 不触发。"""
@@ -1098,7 +1123,7 @@ class Test进驻事件M15a(unittest.TestCase):
         self.assertEqual(self._moods(world), [Decimal("3"), Decimal("24"), Decimal("6")])
 
     def test_idempotent(self):
-        """互换后她不再是满心情 → 重复调用不会换回来。"""
+        """同一份布局快照只结算一次：重复调用不会来回换（哪怕强制模式下没有"她不满"这个刹车）。"""
         world = self._world([("路人", 6), ("菲亚梅塔", 24)])
         apply_entry_events(world)
         self.assertEqual(apply_entry_events(world), [])

@@ -48,7 +48,8 @@ from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import MOOD_MAX, MOOD_MIN
 from mood_soc.maa import read_maa
 from mood_soc.models import (BaseLayout, EntryEventConfig, EntryShiftOverride,
-                             build_entry_event_config, resolve_entry_config)
+                             build_entry_event_config, normalize_entry_when,
+                             resolve_entry_config)
 from mood_soc.skills import DEFAULT_OPERATORS
 
 # 周期默认 24h；班次时长之和必须等于周期时长
@@ -501,6 +502,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       entry_scope: Optional[str] = None,
                       entry_restore_back: Optional[bool] = None,
                       entry_force: Optional[bool] = None,
+                      entry_when: Optional[str] = None,
                       entry_per_shift: Optional[List[EntryShiftOverride]] = None,
                       max_segment: Decimal = MAX_SEGMENT_HOURS) -> Trajectory:
     """把排班跑成"整周期心情轨迹"（事件驱动精确积分）。
@@ -513,7 +515,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                        `None`（用场景 JSON，再没有＝「前一位进驻」）
         entry_scope      `"dorm"`（限同宿舍）/ `"anywhere"`（**基建任意位置**）；`None` = 用 JSON
         entry_restore_back  `True` = 只换心情、两人留在原位置（默认）；`False` = **位置也一起互换**
-        entry_force      `True` = 到点（每班开始）触发者没满心情时**等她回满那一刻再换**
+        entry_force      **旧参数**（`True` = 等她回满再换；`False` = 只在她满心情时换）
+        entry_when       **什么时候换**：`"immediate"`（默认，**强制立刻换**：不管她满不满、
+                       也不管对方心情是多少）/ `"wait"`（等她回满再换）/ `"full"`（只在她满心情时换）；
+                       `None` = 用场景 JSON
         entry_per_shift  **按班次覆盖**（`[EntryShiftOverride, ...]`）——
                        3 班排班就可以"第 1 班换给巫恋、第 2 班自动挑最累的、第 3 班不用"；
                        `None` = 用场景 JSON 里的 `per_shift`
@@ -536,12 +541,16 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     moods: Dict[str, Decimal] = {n: start_moods.get(n, MOOD_MAX) for n in names}
 
     cfg = schedule.entry_config()
+    when = entry_when if entry_when is not None else getattr(cfg, "when", None)
     base = EntryEventConfig(
         enabled=None,                     # 由 entry_events 总开关决定
         swap_with=(entry_swap_with if entry_swap_with is not None else cfg.swap_with),
         scope=(entry_scope if entry_scope is not None else cfg.scope),
         restore_back=(entry_restore_back if entry_restore_back is not None else cfg.restore_back),
         force=(entry_force if entry_force is not None else cfg.force),
+        # ⚠️ `when` 必须显式带上：否则会退化成 dataclass 默认值，把 JSON 里的
+        #    "只在她满心情时换 / 等她回满再换" 覆盖成"强制立刻换"。
+        when=(normalize_entry_when(when) or "immediate"),
     )
     worlds = [copy.deepcopy(s.world) for s in schedule.shifts]
     # 每个班次解析一次"这一班的有效配置"，挂到该班次的副本上（按班次覆盖在这里生效）。
@@ -590,8 +599,8 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             if swapped:
                 _read_back_moods(world, moods)
                 _record_jump(times, series, names, moods, t0)
-            elif eff.force:
-                # 强制换心情：此刻她不满心情 → 登记，等她回满**那一刻**再换
+            elif eff.when == "wait":
+                # 「等她回满再换」：此刻她不满心情 → 登记，等她回满**那一刻**再换
                 pending = [h for h, _room in entry_event_holders(world)
                            if moods.get(h, MOOD_MAX) < MOOD_MAX]
         groups = [[o.name for o in f.operators] for f in world.facilities]

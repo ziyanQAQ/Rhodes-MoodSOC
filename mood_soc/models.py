@@ -39,6 +39,29 @@ from .config import (
 )
 
 
+ENTRY_WHEN_MODES = ("immediate", "wait", "full")
+# 「什么时候换」的中文说明（界面与文档共用一套说法）
+ENTRY_WHEN_LABELS = {
+    "immediate": "强制立刻换（不管双方心情）",
+    "wait": "到点没满就等她回满再换",
+    "full": "只在她满心情时换（游戏原口径）",
+}
+
+
+def normalize_entry_when(value) -> Optional[str]:
+    """把 `when` 的各种写法归一成 `"immediate"`/`"wait"`/`"full"`；认不出返回 None。"""
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    aliases = {
+        "immediate": "immediate", "now": "immediate", "force": "immediate",
+        "立即": "immediate", "立刻": "immediate", "强制": "immediate",
+        "wait": "wait", "wait_full": "wait", "waitfull": "wait", "等待": "wait",
+        "full": "full", "when_full": "full", "whenfull": "full", "满心情": "full",
+    }
+    return aliases.get(text, text if text in ENTRY_WHEN_MODES else None)
+
+
 def build_entry_event_config(raw) -> "EntryEventConfig":
     """把场景 JSON 里的 `entry_events` 解析成 `EntryEventConfig`（宽松解析）。
 
@@ -67,12 +90,20 @@ def build_entry_event_config(raw) -> "EntryEventConfig":
             scope = "anywhere"
         if scope not in ("dorm", "anywhere"):
             raise ValueError(f'entry_events.scope 只能是 "dorm" 或 "anywhere"，收到 {scope!r}')
+        when = normalize_entry_when(raw.get("when", raw.get("换")))
+        if when is None:
+            if "when" in raw and raw["when"] is not None:
+                raise ValueError(f'entry_events.when 只能是 {ENTRY_WHEN_MODES} 之一，'
+                                 f"收到 {raw['when']!r}")
+            # 兼容旧字段：写了 force 就按旧语义（true→等她满 / false→只在她满时换）
+            when = ("wait" if raw["force"] else "full") if "force" in raw else "immediate"
         return EntryEventConfig(
             enabled=(None if enabled is None else bool(enabled)),
             swap_with=(str(target) if target else None),
             scope=scope,
             restore_back=bool(raw.get("restore_back", raw.get("restoreBack", True))),
             force=bool(raw.get("force", False)),
+            when=when,
             per_shift=build_entry_shift_overrides(raw.get("per_shift", raw.get("perShift"))),
         )
     raise ValueError(f"entry_events 配置格式无法识别：{raw!r}")
@@ -95,6 +126,7 @@ class Operator:
     factions: Optional[Tuple[str, ...]] = None       # 阵营/标签覆盖；None = 用自动生成的 OPERATOR_FACTIONS
     elite: int = 2                                   # 精英化等级（0=未精英 / 1=精英一 / 2=精英二）
     level: int = 1                                   # 干员等级（用于"等级 30 解锁"等非精英门槛）
+    entry_swapped: bool = False                      # 本次布局快照里是否已结算过进驻事件（防重复结算）
 
 
 @dataclass
@@ -147,7 +179,7 @@ class Facility:
 class EntryShiftOverride:
     """**某个班次**的进驻事件覆盖（字段为 `None` = 沿用全局 `EntryEventConfig`）。
 
-    排班是"多班轮换"（如 12h + 6h + 6h），而"这个班要不要换心情、换给谁、要不要强等"
+    排班是"多班轮换"（如 12h + 6h + 6h），而"这个班要不要换心情、换给谁、什么时候换"
     经常每班不同（MAA 的排班文件里也是每个 plan 各自带一份 `Fiammetta` 设置）。
     所以支持按班次覆盖：
 
@@ -155,7 +187,7 @@ class EntryShiftOverride:
     "entry_events": {
       "enabled": true, "scope": "anywhere",
       "per_shift": [
-        {"enabled": true,  "swap_with": "巫恋", "force": true},
+        {"enabled": true,  "swap_with": "巫恋", "when": "immediate"},
         {"enabled": true,  "swap_with": "any"},
         {"enabled": false}
       ]
@@ -166,6 +198,8 @@ class EntryShiftOverride:
       用列表写法时按位置自动编号。
     - `swap_with`：`None` = 继承全局；`""`（JSON 里的 `null`/空串）= **明确"不指定"**
       （回到默认口径：同宿舍「前一位进驻」）。
+    - `when`：`"immediate"`（强制立刻换）/ `"wait"`（等她回满再换）/ `"full"`（只在她满心情时换）；
+      `None` = 继承全局。
     """
     key: object = 0                      # int（1 基序号）或 str（班次名 / 数字串）
     enabled: Optional[bool] = None
@@ -173,6 +207,7 @@ class EntryShiftOverride:
     scope: Optional[str] = None
     restore_back: Optional[bool] = None
     force: Optional[bool] = None
+    when: Optional[str] = None
 
     def matches(self, index: int, label: str = "") -> bool:
         """是否命中第 `index`（0 基）个班次。"""
@@ -210,9 +245,15 @@ class EntryEventConfig:
     - `restore_back`：换完心情之后要不要把"**被换满心情的那名干员换回原位**"。
       `True`（默认）= 两人各自留在自己的位置上，**只交换心情**；
       `False` = **位置也一起互换**（触发者接管对方岗位，对方进触发者的位置）。
-    - `force`：到该换的时候（每班开始）触发者**不满心情**时怎么办。
-      `False`（默认）= 这次不换；`True` = **等她回满心情的那一刻再换**（强制换）。
-      只有带时间的排班模拟（`ui.schedule.simulate_schedule`）能"等"；一次性 API 不会等待。
+    - `force`：**旧字段**（`True` = 等她回满再换；`False` = 只在她满心情时换）。保留兼容，
+      新写法请用 `when`。
+    - `when`：**什么时候换**（三选一，默认 `"immediate"`）：
+      - `"immediate"`（**强制立刻换**，默认）——只要开了并设了对象，到点就换，
+        **不管她满不满、也不管对方心情是多少**（哪怕两边都是 24，也照做，位置该换也换）；
+      - `"wait"` —— 到点若她不满心情，就**等她回满的那一刻再换**；
+      - `"full"` —— **只在她满心情时换**（游戏原文口径），不满就这一次不换。
+      ⚠️ 兼容规则：没写 `when` 时，若写了 `force` 则按旧语义（`true`→`wait`、`false`→`full`），
+      两者都没写才是新默认 `immediate`。
     - `per_shift`：**按班次覆盖**上列各项（见 `EntryShiftOverride`）——
       3 班排班就可以写"第 1 班换给巫恋、第 2 班自动挑最累的、第 3 班不用"。
     """
@@ -221,6 +262,7 @@ class EntryEventConfig:
     scope: str = "dorm"
     restore_back: bool = True
     force: bool = False
+    when: str = "immediate"
     per_shift: List["EntryShiftOverride"] = field(default_factory=list)
 
 
@@ -274,6 +316,12 @@ def build_entry_shift_overrides(raw) -> List["EntryShiftOverride"]:
         if "swap_with" in value or "swapWith" in value:
             target = value.get("swap_with", value.get("swapWith"))
             swap_with = str(target).strip() if target else ""      # "" = 明确不指定
+        when = normalize_entry_when(value.get("when"))
+        if when is None and "when" in value and value["when"] is not None:
+            raise ValueError(f"per_shift[{key!r}].when 只能是 {ENTRY_WHEN_MODES} 之一，"
+                             f"收到 {value['when']!r}")
+        if when is None and "force" in value and value["force"] is not None:
+            when = "wait" if value["force"] else "full"            # 兼容旧字段
         out.append(EntryShiftOverride(
             key=key,
             enabled=(None if value.get("enabled") is None else bool(value["enabled"])),
@@ -282,6 +330,7 @@ def build_entry_shift_overrides(raw) -> List["EntryShiftOverride"]:
             restore_back=(None if value.get("restore_back", value.get("restoreBack")) is None
                           else bool(value.get("restore_back", value.get("restoreBack")))),
             force=(None if value.get("force") is None else bool(value["force"])),
+            when=when,
         ))
     return out
 
@@ -295,7 +344,7 @@ def resolve_entry_config(cfg: "EntryEventConfig", index: int, label: str = "",
     返回的配置**不含** `per_shift`（已经解析完了）。
     """
     out = EntryEventConfig(enabled=cfg.enabled, swap_with=cfg.swap_with, scope=cfg.scope,
-                           restore_back=cfg.restore_back, force=cfg.force)
+                           restore_back=cfg.restore_back, force=cfg.force, when=cfg.when)
     for ov in (cfg.per_shift if overrides is None else overrides):
         if not ov.matches(index, label):
             continue
@@ -307,8 +356,12 @@ def resolve_entry_config(cfg: "EntryEventConfig", index: int, label: str = "",
             out.scope = ov.scope
         if ov.restore_back is not None:
             out.restore_back = ov.restore_back
-        if ov.force is not None:
+        if ov.when is not None:
+            out.when = ov.when
+        if ov.force is not None:                      # 旧字段兜底
             out.force = ov.force
+            if ov.when is None:
+                out.when = "wait" if ov.force else "full"
     return out
 
 
