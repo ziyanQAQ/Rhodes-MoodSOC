@@ -101,45 +101,64 @@ python main.py --scenario-file x.json --target 菲亚梅塔 --entry-events
 # [进驻事件] [M15a] 菲亚梅塔「患难之交」　（与「前一位进驻」的 路人 互换：菲亚梅塔 24 → 6，路人 6 → 24）
 ```
 
-#### 换不换、换谁：都可以配
+#### 换不换、在哪换、换谁、换完怎么放、要不要等她——全都能配
 
-**场景 JSON 顶层**加一个 `entry_events` 就能定这两件事（不必每次敲命令行开关）：
+**场景 JSON 顶层**加一个 `entry_events` 就能定这些事（不必每次敲命令行开关）：
 
 ```json
 {
-  "entry_events": {"enabled": true, "swap_with": "路人"},
+  "entry_events": {
+    "enabled": true,
+    "scope": "anywhere",
+    "swap_with": "any",
+    "restore_back": true,
+    "force": true
+  },
   "facilities": [
-    {"type": "宿舍", "level": 5, "operators": [
-      {"name": "路人", "mood": 6}, {"name": "菲亚梅塔", "mood": 24}
-    ]}
+    {"type": "宿舍", "level": 5, "operators": [{"name": "菲亚梅塔", "mood": 24}]},
+    {"type": "制造站", "level": 3, "operators": [{"name": "路人", "mood": 2}]}
   ]
 }
 ```
 
-- `enabled`：`true` = 默认结算（CLI/界面不用再开）；`false` = **这个布局不换心情**；省略 = 未配置。
-- `swap_with`：**与谁**互换；省略 = 默认的「前一位进驻」。给了名字就必须是**同一宿舍**的另一位，
-  不在同一宿舍时**不换**，并记一条 `Bucket.EVENT` 说明原因（CLI/界面都会显示）。
-- 宽松写法：`"entry_events": true` / `false`，或直接写 `"entry_events": "某人"`。
+| 字段 | 取值 | 含义 |
+|---|---|---|
+| `enabled` | `true` / `false` / 省略 | `true` = 默认结算（CLI/界面不用再开）；`false` = 这个布局不换心情；省略 = 未配置 |
+| `scope` | `"dorm"`（默认）/ `"anywhere"` | **在哪换**：`dorm` 只在同一宿舍找人；**`anywhere` = 基建任意位置**（任何设施上的干员都能换） |
+| `swap_with` | 人名 / `"any"` / 省略 | **换谁**：人名 = 指定；`"any"`（或 `"任意"`/`"最累"`）= **自动挑全基建心情最低的那位**；省略 = 「前一位进驻」（`scope=anywhere` 时省略也走自动挑） |
+| `restore_back` | `true`（默认）/ `false` | **换完怎么放**：`true` = 把被换满的那位**换回原位**（两人都留在自己的岗位上，只交换心情）；`false` = **位置也一起互换**（她接管对方岗位、对方进她的位置） |
+| `force` | `false`（默认）/ `true` | **要不要等她**：到该换的时候（每班开始）她不满心情时，`false` = 这次不换；`true` = **一直等到她回满心情的那一刻立刻换** |
+
+宽松写法：`"entry_events": true` / `false` / `"某人"`；`"anywhere": true` 等价于 `"scope": "anywhere"`。
 
 ```python
-from mood_soc import apply_entry_events, entry_event_holders  # ⚠️ 前者就地修改 world 的干员心情
-events = apply_entry_events(world)                            # 默认：结算，用"前一位进驻"
-events = apply_entry_events(world, swap_with="路人")           # 指定与谁换
-events = apply_entry_events(world, enabled=False)             # 明确不换
-events = entry_event_holders(world)                           # [(触发者名, 所在房间)] 供界面提示
+from mood_soc import apply_entry_events, entry_event_holders, find_entry_target
+# ⚠️ apply_entry_events 就地修改 world（心情；restore_back=False 时还包括位置）
+events = apply_entry_events(world)                                    # 默认：结算，用"前一位进驻"
+events = apply_entry_events(world, swap_with="路人")                   # 指定与谁换
+events = apply_entry_events(world, scope="anywhere", swap_with="any")  # 任意位置 + 自动挑最累的
+events = apply_entry_events(world, restore_back=False)                 # 连位置一起换
+events = apply_entry_events(world, enabled=False)                     # 明确不换
+events = entry_event_holders(world)                                   # [(触发者名, 所在房间)] 供界面提示
+target, why = find_entry_target(world, holder, dorm, "any", "anywhere")  # 预览"会换谁"
 ```
+
+> `force` 是**带时间**的语义（"等到她回满"），只在排班模拟里生效：
+> `ui.schedule.simulate_schedule(..., entry_force=True)`。一次性 API 不会等待。
+> 实测示例：她红脸时「自律」失效 → 按宿舍基础 4/h 回满 → **恰好走到 24 的那一刻**触发换心情。
 
 **优先级**（两边都能配，规则简单）：
 
 | | 取值 | 谁说了算 |
 |---|---|---|
 | 换不换 | `enabled` 参数 / JSON `enabled` / 都没有 | **显式参数 > JSON > 默认结算**（"调用这个函数"本身就是"要结算"） |
-| 换谁 | `swap_with` 参数 / JSON `swap_with` / 都没有 | **显式参数 > JSON > 「前一位进驻」** |
+| 换谁 / 在哪换 / 换完怎么放 | 同名参数 / JSON 同名字段 / 都没有 | **显式参数 > JSON > 默认**（默认＝前一位进驻、仅同宿舍、换回去） |
 
 命令行 `--entry-events` 与界面上的勾选都是"显式参数"，因此它们**优先于** JSON 里的 `enabled: false`。
 
 「前一位进驻」= `Facility.operators` 里排在触发者之前的那一位（该列表本来就是进驻顺序）。
 幂等：换完她就不再是满心情，重复调用不会再换回来。
+指定的对象不在允许范围内时**不换**，并记一条 `Bucket.EVENT`（group=`entry_swap_skipped`）说明原因。
 
 ### 可数条件（每有 N 个什么）
 
@@ -588,7 +607,7 @@ python main.py --mode base --demo --period 12                           # 先推
 | **一眼看到全部房间** | 看板用 21px 紧凑芯片：控制中枢横排一行，工作区（制造/贸易/发电）与辅助休息区（会客/办公/训练/加工/宿舍）分两列，**一屏放下，不用滚动** |
 | **一眼看到全部干员** | 底部「全员一览」把整个周期出现过的干员（含只出现在别的班次的）全摆出来，带位置标记（`制1`/`宿3`/`中`），按颜色看谁危险 |
 | 逐个位置设干员与心情 | 看板**左键**位置 → 选人/更换/清空；**右键**位置 → 设该干员心情（周期起点） |
-| **进驻事件（换心情）开关** | 工具栏「结算进驻事件（进驻那一刻换心情）」+ 旁边实时旁注（不结算 / 与前一位进驻者互换 / 与「某人」互换）；点「**这是什么／换谁…**」打开对话框：里面有"这是什么"的白话解释 + 换不换 + 与谁换（可指定同宿舍任意一人）。场景 JSON 顶层写了 `entry_events` 时，导入即自动同步到这里 |
+| **进驻事件（换心情）开关** | 工具栏「结算进驻事件（进驻那一刻换心情）」+ 旁边实时旁注（如 `（最累的·任意位置·位置也换·等她满）`）；点「**这是什么／换谁…**」打开设置框，四组选项：**① 在哪换**（仅同宿舍 / 基建任意位置）、**② 换谁**（前一位进驻 / 指定干员 / 全基建最累的那位自动）、**③ 换完怎么放**（把被换满的换回原位 / 位置也一起互换）、**④ 强制换心情**（到点没满就等她回满再换）。场景 JSON 顶层写了 `entry_events` 时，导入即自动同步到这里 |
 | 时间滑动 → 各位置心情实时变化 | 底部滑块；两侧 `◀`/`▶` 与 `←/→` 键 = 15 分钟一档、`Home/End` 跳首尾、`空格` 播放/暂停 |
 | **播放**（看一天怎么走） | ▶ 播放 + **速度倍率 0.5x / 1x / 2x / 4x**（1x = 1 小时/秒，24 秒跑完一天） |
 | 对点：输入干员名 → 整周期心情曲线 | 右侧「对点查询」选人，或直接点「全员一览」里的芯片 → 曲线 + 关键数值（最低/最高及时刻、红脸段数与时长、各班最低） |
@@ -606,8 +625,9 @@ python main.py --mode base --demo --period 12                           # 先推
 | 函数 / 常量 | 签名 | 返回 | 说明 |
 |---|---|---|---|
 | `build_base_layout` | `(data, validate=False)` | `BaseLayout` | 从场景 dict 构建布局（格式见上文「3) 场景 JSON 格式」）；`validate=True` 时做容量/房间数自检并抛 `ValueError` |
-| `apply_entry_events` | `(world, swap_with=None, enabled=None)` | `list[Contribution]` | **进驻事件**（M15a 换心情）：`swap_with` 指定与谁换、`enabled` 强制开关；⚠️ **就地改** `world` 的心情。优先规则见上文 |
+| `apply_entry_events` | `(world, swap_with=None, enabled=None, scope=None, restore_back=None)` | `list[Contribution]` | **进驻事件**（M15a 换心情）：`swap_with` 换谁（人名 / `"any"` 自动挑最累的）、`scope` 范围（`dorm`/`anywhere`）、`restore_back` 换完是否把对方换回原位、`enabled` 强制开关；⚠️ **就地改** `world`。优先规则见上文 |
 | `entry_event_holders` | `(world)` | `list[(干员名, 房间名)]` | 列出可能触发进驻事件的干员（如菲亚梅塔），供界面提示 |
+| `find_entry_target` | `(world, holder, facility, swap_with=None, scope="dorm")` | `(Operator, 说明)` | 预览"会换谁"（界面用它做候选与提示） |
 | `evaluate` | `(world, name, period_hours=0)` | `MoodResult` | single 模式：目标干员时段后的状态 |
 | `evaluate_base` | `(world, period_hours=0)` | `BaseResult` | base 模式：全体干员 + 布局可维持时长 |
 | `compute_net_rate` | `(world, name)` | `Decimal` | 某干员净速率（消耗 − 回复，>0 下降） |
@@ -740,7 +760,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 ## 六、测试（黑盒）
 
 测试为**黑盒测试**：只通过「命令行」「公开 API」与「图形界面的计算核心」断言
-**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **138 个用例全绿**。
+**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **146 个用例全绿**。
 
 ```bash
 # 运行全部测试
