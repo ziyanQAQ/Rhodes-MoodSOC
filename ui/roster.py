@@ -53,9 +53,19 @@ class RosterStrip(tk.Frame):
 
     # ------------------------------------------------------------------ 数据
     def set_operators(self, names: Sequence[str]) -> None:
-        """设置要展示的干员（固定顺序），并重建芯片网格。"""
+        """设置要展示的干员（固定顺序），并重建芯片网格。
+
+        这里先按**当前真实宽度**算好列数再建，免得开局用兜底列数建一次、
+        布局一落定又重建一次（实测那一次重建要 ~110ms，是"切换时卡一下"的来源之一）。
+        """
         self._entries = list(names)
+        self._columns = self._columns_for_width(self.winfo_width())
         self._rebuild()
+
+    def _columns_for_width(self, width: int) -> int:
+        if width < 200:                       # 还没真正布局，保持上次/兜底列数
+            return self._columns or COLUMNS_MAX
+        return max(1, min(COLUMNS_MAX, width // (theme.ROSTER_CHIP_W + 6)))
 
     def set_context(self, tags: Dict[str, str]) -> None:
         """更新"当前班次在哪"的标记（班次切换时调用）。"""
@@ -65,7 +75,8 @@ class RosterStrip(tk.Frame):
                 v.dim = v.operator not in tags
         self.hint.configure(
             text=f"{len(self.chips)} 名干员　左键=对点看曲线　右键=设心情　"
-                 f"（位置标记为当前班次所在房间，「休」=本班次未排班）")
+                 f"（位置标记＝当前班次所在房间，「休」=本班次未排班）"
+                 f"　｜　看板：左键选人/更换/清空·右键设心情")
 
     def update_moods(self, moods: Dict[str, Decimal], quick: bool = False) -> None:
         """时间滑动时更新所有芯片（含"不在本班次"的：他们的心情由轨迹给出）。"""
@@ -104,7 +115,7 @@ class RosterStrip(tk.Frame):
         """
         if event.width < 200:              # 尚未真正布局完，别用窄宽度把网格压成 1 列
             return
-        columns = max(1, min(COLUMNS_MAX, event.width // (theme.ROSTER_CHIP_W + 6)))
+        columns = self._columns_for_width(event.width)
         if columns == self._columns:
             return
         self._columns = columns

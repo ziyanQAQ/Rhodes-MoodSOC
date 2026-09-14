@@ -271,3 +271,95 @@ def ask_shift_hours(parent, labels: Sequence[str], hours: Sequence, cycle: Decim
     dlg = ShiftSettingsDialog(parent, labels, hours, cycle)
     parent.wait_window(dlg)
     return dlg.result
+
+
+class EntryEventDialog(tk.Toplevel):
+    """**进驻事件**（M15a 患难之交）设置：换不换、换谁。
+
+    对话框把"这是什么"写在最上面——这个开关不开也能用，但很多人第一次看到
+    「结算进驻事件」并不知道它指的是"进驻那一刻的一次性心情跳变"。
+    """
+
+    TITLE = "结算进驻事件（M15a 患难之交）"
+
+    def __init__(self, parent, enabled: bool, swap_with, candidates: Sequence[str],
+                 current_holders: Sequence[str] = ()):
+        super().__init__(parent, bg=theme.BG)
+        self.title("进驻事件设置")
+        self.resizable(False, False)
+        self.result = None                     # (enabled: bool, swap_with: Optional[str])
+        self._candidates = list(candidates)
+
+        pad = dict(padx=theme.PAD)
+        tk.Label(self, text="进驻事件 = 干员【进驻那一刻】的一次性心情跳变，不是每小时速率。",
+                 bg=theme.BG, fg=theme.TEXT, justify="left", wraplength=430,
+                 font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(anchor="w", **pad, pady=(theme.PAD, 2))
+        tk.Label(self,
+                 text="典型例子：菲亚梅塔「患难之交」——进驻宿舍时若自身是满心情，\n"
+                      "就与同宿舍的某人【互换心情】（24 点换走对方的 6 点，对方反而变成 24）。\n"
+                      "因为它只发生在进驻瞬间，所以默认【不】结算，需要你在这里明确打开。",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=430,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad, pady=(0, theme.GAP))
+
+        self.enabled = tk.BooleanVar(value=bool(enabled))
+        ttk.Checkbutton(self, text="结算进驻事件（先换心情，再按排班往下算）",
+                        variable=self.enabled).pack(anchor="w", **pad)
+
+        box = tk.LabelFrame(self, text="交换对象", bg=theme.BG, fg=theme.TEXT,
+                            font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1,
+                            relief="groove", labelanchor="nw")
+        box.pack(fill="x", **pad, pady=(theme.GAP, 4))
+        self.mode = tk.StringVar(value="default" if not swap_with else "pick")
+        ttk.Radiobutton(box, text="前一位进驻（宿舍进驻顺序里的上一位，默认）",
+                        value="default", variable=self.mode,
+                        command=self._sync).pack(anchor="w", padx=theme.GAP, pady=(4, 0))
+        row = tk.Frame(box, bg=theme.BG)
+        row.pack(anchor="w", fill="x", padx=theme.GAP, pady=(2, 6))
+        ttk.Radiobutton(row, text="指定干员：", value="pick", variable=self.mode,
+                        command=self._sync).pack(side="left")
+        self.person = tk.StringVar(value=swap_with or (self._candidates[0]
+                                                      if self._candidates else ""))
+        self.person_box = ttk.Combobox(row, textvariable=self.person, state="readonly",
+                                       values=self._candidates, width=14)
+        self.person_box.pack(side="left", padx=(4, 0))
+        holders = "、".join(current_holders) if current_holders else "（本排班里没有）"
+        tk.Label(box, text=f"能换的人：同宿舍的其他干员；触发者：{holders}。"
+                           f"不在同一宿舍的人会被忽略（并给出提示）。",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=420,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
+                                                                pady=(0, 6))
+
+        btns = tk.Frame(self, bg=theme.BG)
+        btns.pack(fill="x", **pad, pady=(theme.GAP, theme.PAD))
+        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
+        ttk.Button(btns, text="应用", style="Accent.TButton",
+                   command=self._ok).pack(side="right", padx=(0, 6))
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self._sync()
+        _modal(self, parent)
+
+    def _sync(self) -> None:
+        self.person_box.configure(state="readonly" if self.mode.get() == "pick" else "disabled")
+
+    def _ok(self) -> None:
+        target = None
+        if self.mode.get() == "pick":
+            target = self.person.get().strip() or None
+            if target is None:
+                messagebox_showinfo_safe(self, "请选择一位干员，或改选「前一位进驻」")
+                return
+        self.result = (bool(self.enabled.get()), target)
+        self.destroy()
+
+
+def messagebox_showinfo_safe(parent, text: str) -> None:
+    from tkinter import messagebox
+    messagebox.showinfo("提示", text, parent=parent)
+
+
+def ask_entry_event(parent, enabled: bool, swap_with, candidates: Sequence[str],
+                    current_holders: Sequence[str] = ()):
+    """返回 `(enabled, swap_with)`；取消返回 None。"""
+    dlg = EntryEventDialog(parent, enabled, swap_with, candidates, current_holders)
+    parent.wait_window(dlg)
+    return dlg.result

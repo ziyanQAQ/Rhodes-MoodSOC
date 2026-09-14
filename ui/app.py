@@ -21,6 +21,7 @@ import tkinter as tk
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from typing import Optional
 
 # 允许**直接运行本文件**（`python ui/app.py` / IDE 的 Run）：直接跑时 `ui` 不是包，
 # 相对导入会失败；把仓库根目录放进 sys.path 后用绝对导入，与 `python -m ui` 等价。
@@ -31,13 +32,20 @@ if str(ROOT) not in sys.path:
 from ui import theme  # noqa: E402
 from ui.board import BaseBoard, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
-from ui.dialogs import ask_mood, ask_operator, ask_shift_hours  # noqa: E402
+from ui.dialogs import ask_entry_event, ask_mood, ask_operator, ask_shift_hours  # noqa: E402
 from ui.roster import RosterStrip  # noqa: E402
 from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
                          default_initial_moods, load_schedule, simulate_schedule)
+from mood_soc import entry_event_holders  # noqa: E402
+from mood_soc.config import FacilityType  # noqa: E402
 
 SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
+
+# 播放：1x = **1 小时/秒**（24 秒跑完一个 24h 周期）；倍率只改推进速度
+PLAY_SPEEDS = ("0.5x", "1x", "2x", "4x")
+PLAY_BASE_HOURS_PER_SEC = Decimal("1")
+PLAY_TICK_MS = 60
 
 
 class MoodSocApp(tk.Tk):
@@ -45,7 +53,8 @@ class MoodSocApp(tk.Tk):
         super().__init__()
         self.title("Rhodes-MoodSOC · 基建心情排班")
         self.geometry("1560x950")
-        self.minsize(1180, 780)
+        # 最小宽度按"工具栏放得下"来定（实测工具栏需要 ~1309px），否则最右侧按钮会被裁掉
+        self.minsize(1320, 780)
         self.configure(bg=theme.BG)
 
         self.schedule: Schedule | None = None
@@ -53,6 +62,8 @@ class MoodSocApp(tk.Tk):
         self.initial_moods: dict = {}          # 手动设过的心情（覆盖布局里的值）
         self.cycles = 1
         self.entry_events = tk.BooleanVar(value=False)
+        self.entry_swap_with: Optional[str] = None     # None = 引擎默认「前一位进驻」
+        self.play_speed = Decimal("1")
         self.current_t = Decimal("0")
         self.curve_operator = ""
         self._playing = False
@@ -62,7 +73,9 @@ class MoodSocApp(tk.Tk):
         self._pending_t = None
         self._refresh_job = None
         self._settle_job = None
+        self._play_last = 0.0
         self._last_refresh = 0.0
+        self._roster_dirty = False
 
         self._init_style()
         self._build_toolbar()
@@ -113,17 +126,30 @@ class MoodSocApp(tk.Tk):
         cb.pack(side="left")
         cb.bind("<<ComboboxSelected>>", lambda _e: self._on_cycles())
 
-        ttk.Checkbutton(bar, text="结算进驻事件（M15a）", variable=self.entry_events,
-                        command=self.recompute).pack(side="left", padx=(16, 0))
-        self.play_btn = ttk.Button(bar, text="▶ 播放", command=self.toggle_play)
-        self.play_btn.pack(side="left", padx=(16, 0))
-        ttk.Button(bar, text="回到起点", command=lambda: self.set_time(Decimal("0"))
-                   ).pack(side="left", padx=(6, 0))
+        ttk.Checkbutton(bar, text="结算进驻事件（进驻那一刻换心情）", variable=self.entry_events,
+                        command=self.recompute).pack(side="left")
+        self.entry_detail = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
+                                     font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.entry_detail.pack(side="left", padx=(6, 4))
+        ttk.Button(bar, text="这是什么／换谁…", command=self.edit_entry_events).pack(
+            side="left", padx=(0, 0))
 
-        self.hint = tk.Label(bar, text="看板：左键选人/更换/清空　右键设心情　下方滑块看心情随时间变化",
-                             bg=theme.BG, fg=theme.MUTED,
-                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        self.hint.pack(side="right")
+        play = tk.Frame(bar, bg=theme.BG)
+        play.pack(side="left", padx=(16, 0))
+        self.play_btn = ttk.Button(play, text="▶ 播放", command=self.toggle_play)
+        self.play_btn.pack(side="left")
+        tk.Label(play, text="速度", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(8, 3))
+        self.speed_var = tk.StringVar(value="1x")
+        speed_box = ttk.Combobox(play, textvariable=self.speed_var, width=4, state="readonly",
+                                values=PLAY_SPEEDS)
+        speed_box.pack(side="left")
+        speed_box.bind("<<ComboboxSelected>>", lambda _e: self._on_speed())
+        tk.Label(play, text="(1x=1h/秒)", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(3, 0))
+        ttk.Button(play, text="回到起点", command=lambda: self.set_time(Decimal("0"))
+                   ).pack(side="left", padx=(8, 0))
+        self._sync_entry_label()
     # ================================================================== 主体
     def _build_body(self):
         body = tk.Frame(self, bg=theme.BG)
@@ -219,6 +245,11 @@ class MoodSocApp(tk.Tk):
         self.schedule = sch
         self.initial_moods.clear()
         self.current_t = Decimal("0")
+        # 场景 JSON 顶层可以带进驻事件配置（换不换 / 换谁）→ 同步到界面的开关与下拉
+        cfg = sch.entry_config()
+        self.entry_events.set(bool(cfg.enabled))
+        self.entry_swap_with = cfg.swap_with
+        self._sync_entry_label()
         self._build_shift_buttons()
         self._sync_operator_box()
         self.recompute(fit_slider=True)
@@ -246,7 +277,8 @@ class MoodSocApp(tk.Tk):
         self.update_idletasks()
         self.traj = simulate_schedule(self.schedule, cycles=self.cycles,
                                       initial_moods=self.initial_moods,
-                                      entry_events=self.entry_events.get())
+                                      entry_events=self.entry_events.get(),
+                                      entry_swap_with=self.entry_swap_with)
         total = self._total_hours()
         if fit_slider or self.current_t > total:
             self.current_t = Decimal("0")
@@ -254,6 +286,7 @@ class MoodSocApp(tk.Tk):
         self.roster.set_operators(self.traj.names)
         self._refresh_layout()
         self._sync_operator_box()
+        self._sync_entry_label()
         self.refresh_view()
         ms = (time.perf_counter() - t0) * 1000
         self.status.configure(
@@ -261,8 +294,12 @@ class MoodSocApp(tk.Tk):
                  f"　干员 {len(self.traj.names)} 名　轨迹节点 {len(self.traj.times)}"
                  f"　重算耗时 {ms:.0f} ms")
 
-    def _refresh_layout(self):
-        """看板只在"当前时刻所在班次的布局"变化时重建（否则只刷新心情）。"""
+    def _refresh_layout(self, quick: bool = False):
+        """看板只在"当前时刻所在班次的布局"变化时刷新（房间结构没变则只换内容）。
+
+        `quick=True`（拖动中）时**先只换看板**，把「全员一览」的位置标记推迟到停手后补——
+        否则拖过班次边界时要额外重画 57 个芯片，会噎一下。
+        """
         idx = self.schedule.index_at(self.current_t)
         shift = self.schedule.shifts[idx]
         sig = (idx, tuple((f.display_name, tuple(o.name for o in f.operators))
@@ -270,7 +307,17 @@ class MoodSocApp(tk.Tk):
         if sig != self._layout_sig:
             self.board.set_layout(shift, sub_title=self._shift_span_text(idx))
             self._layout_sig = sig
-        self.roster.set_context(self._room_tags(shift))
+        if quick:
+            self._roster_dirty = True
+        else:
+            self.roster.set_context(self._room_tags(shift))
+            self._roster_dirty = False
+
+    def _flush_roster_context(self) -> None:
+        """补上拖动期间推迟的「全员一览」位置标记。"""
+        if self._roster_dirty and self.schedule is not None:
+            self.roster.set_context(self._room_tags(self.schedule.shift_at(self.current_t)))
+            self._roster_dirty = False
 
     def _room_tags(self, shift) -> dict:
         """干员 → 当前班次所在房间的标记（`制1`/`宿3`/`中`…）；不在本班次的不在表里。"""
@@ -330,9 +377,10 @@ class MoodSocApp(tk.Tk):
         self._settle_job = self.after(200, self._settle_refresh)
 
     def _settle_refresh(self):
-        """拖动结束后补一次完整刷新（底色/红脸描边/最危险提示都到位）。"""
+        """拖动结束后补一次完整刷新（底色/红脸描边/全员一览标记/最危险提示都到位）。"""
         self._settle_job = None
         if self.winfo_exists():
+            self._flush_roster_context()
             self.refresh_view(quick=False)
 
     def set_time(self, t: Decimal, quick: bool = False):
@@ -346,7 +394,7 @@ class MoodSocApp(tk.Tk):
         self.scale.set(float(t))
         self._setting_scale = False
         if changed_shift:
-            self._refresh_layout()
+            self._refresh_layout(quick=quick)
         self.refresh_view(quick=quick)
 
     def nudge(self, delta: Decimal):
@@ -437,6 +485,64 @@ class MoodSocApp(tk.Tk):
         self.initial_moods.clear()
         if self.schedule:
             self.recompute()
+
+    # ------------------------------------------------------------ 进驻事件（换心情）
+    def _entry_candidates(self):
+        """返回 `(触发者名单, 可交换对象名单)`。
+
+        触发者 = 排班里可能触发 M15a 的干员（如菲亚梅塔）；
+        可交换对象 = 与触发者**同宿舍**的其他干员（跨班次取并集，保序去重）。
+        """
+        holders: list = []
+        mates: list = []
+        if self.schedule is None:
+            return holders, mates
+        for s in self.schedule.shifts:
+            for who, _room in entry_event_holders(s.world):
+                if who not in holders:
+                    holders.append(who)
+            for f in s.world.facilities:
+                if f.ftype != FacilityType.DORMITORY:
+                    continue
+                names = [o.name for o in f.operators]
+                if not any(n in holders for n in names):
+                    continue
+                for n in names:
+                    if n not in holders and n not in mates:
+                        mates.append(n)
+        return holders, mates
+
+    def _sync_entry_label(self):
+        """把当前设置写在开关旁边（不打开对话框也能知道"换不换/换谁"）。
+
+        工具栏宽度紧张，所以这里只写极简状态；完整说明在「这是什么／换谁…」对话框里。
+        """
+        if not self.entry_events.get():
+            self.entry_detail.configure(text="（不结算）")
+        elif self.entry_swap_with:
+            self.entry_detail.configure(text=f"（与「{self.entry_swap_with}」互换）")
+        else:
+            self.entry_detail.configure(text="（与前一位互换）")
+
+    def edit_entry_events(self):
+        """「这是什么／换谁…」：解释这个开关 + 设置换不换、换谁。"""
+        holders, mates = self._entry_candidates()
+        picked = ask_entry_event(self, self.entry_events.get(), self.entry_swap_with,
+                                 mates, holders)
+        if picked is None:
+            return
+        self.entry_events.set(picked[0])
+        self.entry_swap_with = picked[1]
+        self._sync_entry_label()
+        if not holders:
+            self.status.configure(text="本排班里没有能触发进驻事件的干员（如菲亚梅塔），"
+                                        "这个开关暂时不会有任何效果")
+        elif picked[0]:
+            who = f"与「{picked[1]}」" if picked[1] else "与前一位进驻者"
+            self.status.configure(text=f"进驻事件：每班开始时结算一次——{who}互换心情")
+        else:
+            self.status.configure(text="进驻事件：不结算")
+        self.recompute()
 
     def _facilities_of(self, idx: int):
         return [dict(f, operators=list(f.get("operators", [])))
@@ -549,20 +655,37 @@ class MoodSocApp(tk.Tk):
         self._playing = not self._playing
         self.play_btn.configure(text="■ 停止" if self._playing else "▶ 播放")
         if self._playing:
+            self._play_last = time.perf_counter()      # 真实流逝时间的起点
             self._play_tick()
-        elif self._play_job:
-            self.after_cancel(self._play_job)
-            self._play_job = None
+        else:
+            if self._play_job:
+                self.after_cancel(self._play_job)
+                self._play_job = None
+            self.refresh_view(quick=False)      # 停播后补一次完整上色
+
+    def _on_speed(self):
+        """播放倍率：`2x` → 每秒推进 2 小时（1x 是"1 小时/秒"）。"""
+        text = self.speed_var.get().rstrip("xX")
+        try:
+            self.play_speed = Decimal(text)
+        except (InvalidOperation, ValueError):
+            self.play_speed = Decimal("1")
 
     def _play_tick(self):
         if not self._playing or self.traj is None or not self.winfo_exists():
             return
         total = self._total_hours()
-        nxt = self.current_t + Decimal("0.1")
+        # 推进量按**真实流逝时间**算（不是名义间隔）：一次 tick 里还要做刷新，
+        # 用名义 60ms 会让实际速度比标称慢 ~20%（实测 1x 只有 0.78 小时/秒）。
+        now = time.perf_counter()
+        dt = min(max(now - self._play_last, 0.0), 0.5)     # 卡顿后不跳帧
+        self._play_last = now
+        step = PLAY_BASE_HOURS_PER_SEC * self.play_speed * Decimal(str(round(dt, 6)))
+        nxt = self.current_t + step
         if nxt > total:
             nxt = Decimal("0")
-        self.set_time(nxt)
-        self._play_job = self.after(60, self._play_tick)
+        self.set_time(nxt, quick=True)
+        self._play_job = self.after(PLAY_TICK_MS, self._play_tick)
 
     # ================================================================== 收尾
     def destroy(self):

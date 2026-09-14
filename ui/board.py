@@ -59,6 +59,9 @@ ROOM_ABBR = {
     "会客室": "会", "办公室": "办", "训练室": "训", "加工站": "加", "宿舍": "宿",
 }
 
+# 滚轮用的 bindtag：挂在看板的每个控件上，滚轮事件只有落在看板里才被处理
+BOARD_TAG = "MoodBoard"
+
 
 def facility_tag(facility, ordinal: int = 0) -> str:
     """房间的位置标记：单间设施不带序号（"中"），多间带序号（"制2"）。"""
@@ -94,6 +97,8 @@ class BaseBoard(tk.Frame):
         self.on_slot_right = on_slot_right
         self.slots: List[SlotView] = []
         self.chip_by_operator: Dict[str, MoodChip] = {}
+        self._chips: Dict[tuple, MoodChip] = {}      # (设施下标, 座位号) → 芯片（复用用）
+        self._struct_sig = None                      # 房间结构签名：没变就只换内容，不重建控件
 
         self.header = tk.Label(self, text="（未导入排班）", bg=theme.BG, fg=theme.TEXT,
                                font=(theme.FONT_FAMILY, theme.FS_TITLE), anchor="w")
@@ -112,15 +117,55 @@ class BaseBoard(tk.Frame):
                         lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>",
                          lambda e: self.canvas.itemconfigure(self._win, width=e.width))
-        self.canvas.bind_all("<MouseWheel>", self._on_wheel)
+        # 滚轮：**不用 `bind_all`**（那会抢走整个窗口的滚轮：悬停在曲线/全员一览/下拉列表上
+        # 滚一下，看板也跟着滚 —— 这就是"滚轮有问题"）。
+        # 改用 Tk 惯用的 **bindtags**：给看板里的每个控件挂一个自定义 tag，
+        # 滚轮事件只有落在这些控件上才会走到 `_on_wheel`。
+        self.canvas.bind_class(BOARD_TAG, "<MouseWheel>", self._on_wheel)
+        self._join_board_tag(self.canvas)
+        self._join_board_tag(self.inner)
+
+    def _join_board_tag(self, widget) -> None:
+        """把控件（及其子控件）加入看板的滚轮 tag。"""
+        for w in (widget, *widget.winfo_children()):
+            tags = list(w.bindtags())
+            if BOARD_TAG not in tags:
+                w.bindtags(tuple(tags) + (BOARD_TAG,))
 
     def _on_wheel(self, event):
+        """滚轮：只在"内容确实超出可视区"时滚动（一屏放下时什么都不做）。"""
         try:
-            self.canvas.yview_scroll(int(-event.delta / 120), "units")
+            if self.inner.winfo_reqheight() <= self.canvas.winfo_height():
+                return "break"                  # 已经一屏放下，不用滚
         except tk.TclError:
-            pass
+            return None
+        delta = getattr(event, "delta", 0)
+        steps = -int(delta / 120) if delta else 0
+        if steps == 0:                          # 高精度滚轮 / 触控板的小增量
+            steps = -1 if delta > 0 else 1
+        self.canvas.yview_scroll(steps, "units")
+        return "break"
 
     # ------------------------------------------------------------------ 布局
+    @staticmethod
+    def _slots_of(facility) -> int:
+        """该房间画几个位置（容量以外若还有干员也画出来，别把人藏起来）。"""
+        return max(facility.capacity, len(facility.operators), 1)
+
+    def _structure_signature(self, shift) -> tuple:
+        """决定"控件树能不能复用"的结构信息：房间顺序/显示名/容量/座位数。
+
+        只要这些没变（**多数班次切换就是这种情况**：房间一样、人不一样），
+        就不该销毁重建 50 个芯片——那正是"切换班次卡顿"的来源。
+        """
+        return tuple((f.display_name, f.capacity, self._slots_of(f))
+                     for f in shift.world.facilities)
+
+    def _header_text(self, shift, sub_title: str) -> str:
+        n_slots = sum(self._slots_of(f) for f in shift.world.facilities)
+        base = f"{shift.label}　{sub_title}　·　" if sub_title else f"{shift.label}　·　"
+        return (f"{base}{len(shift.world.facilities)} 间房 / "
+                f"{n_slots} 个位置 / {len(shift.operators)} 名干员")
     def _group(self, shift) -> List[tuple]:
         """按设施类型分组 → [(类型名, [设施下标...])]，顺序按 ROW_ORDER。"""
         groups: List[tuple] = []
@@ -169,16 +214,22 @@ class BaseBoard(tk.Frame):
         return [c for c in columns if c]
 
     def set_layout(self, shift, sub_title: str = "") -> None:
-        """按某个班次重建看板（清空旧控件）。"""
+        """按某个班次刷新看板。
+
+        - **房间结构没变**（多数班次切换）→ 只把芯片内容换一遍（快，无控件增删）；
+        - 结构变了（换布局/换房间数）→ 重建控件树。
+        """
+        sig = self._structure_signature(shift)
+        if sig == self._struct_sig and self._chips:
+            self._update_contents(shift, sub_title)
+            return
         for w in self.inner.winfo_children():
             w.destroy()
         self.slots.clear()
         self.chip_by_operator.clear()
-        n_slots = sum(len(f.operators) for f in shift.world.facilities)
-        self.header.configure(
-            text=f"{shift.label}　{sub_title}　·　{len(shift.world.facilities)} 间房 / "
-                 f"{n_slots} 个位置 / {len(shift.operators)} 名干员"
-                 if sub_title else shift.label)
+        self._chips.clear()
+        self._struct_sig = sig
+        self.header.configure(text=self._header_text(shift, sub_title))
 
         groups = self._group(shift)
         # ① 铺满整行的设施（控制中枢）：芯片横排
@@ -196,6 +247,23 @@ class BaseBoard(tk.Frame):
                 col.pack(side="left", fill="both", expand=True, padx=(0, theme.GAP))
                 for idxs in self._rows_of_column(col_groups):
                     self._build_row(col, shift, idxs, horizontal=False)
+
+    def _update_contents(self, shift, sub_title: str = "") -> None:
+        """房间结构没变：只改每个位置的干员与显示（复用已有芯片与卡片）。"""
+        self.header.configure(text=self._header_text(shift, sub_title))
+        self.slots.clear()
+        self.chip_by_operator.clear()
+        for i, f in enumerate(shift.world.facilities):
+            for si in range(self._slots_of(f)):
+                occupant = f.operators[si].name if si < len(f.operators) else None
+                chip = self._chips.get((i, si))
+                if chip is None:
+                    return self.set_layout(shift, sub_title)   # 兜底：结构其实变了
+                chip.set(occupant)
+                view = SlotView(i, si, occupant, chip)
+                self.slots.append(view)
+                if occupant:
+                    self.chip_by_operator[occupant] = chip
 
     def _build_row(self, parent: tk.Frame, shift, idxs: List[int], horizontal: bool) -> None:
         row = tk.Frame(parent, bg=theme.BG)
@@ -249,8 +317,10 @@ class BaseBoard(tk.Frame):
         else:
             chip.pack(fill="x", pady=1)
         chip.set(operator)
+        self._join_board_tag(chip)             # 芯片也吃滚轮（这样滚轮落在芯片上照样滚看板）
         view = SlotView(fac_index, slot_index, operator, chip)
         self.slots.append(view)
+        self._chips[(fac_index, slot_index)] = chip
         if operator:
             self.chip_by_operator[operator] = chip
 

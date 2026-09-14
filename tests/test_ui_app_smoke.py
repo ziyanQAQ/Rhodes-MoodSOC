@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 import tkinter as tk
 import unittest
 from decimal import Decimal
@@ -311,6 +312,186 @@ class Test看板布局(unittest.TestCase):
             self.assertEqual(len(app.roster.chips), len(app.traj.names))
         finally:
             app.destroy()
+
+
+class Test新增交互(unittest.TestCase):
+    """进驻事件开关与小白天说明、播放倍速、滚轮作用域、切换布局的芯片复用。"""
+
+    @classmethod
+    def setUpClass(cls):
+        if not TK_OK:
+            raise unittest.SkipTest("无图形环境（Tk 不可用）")
+        from ui.app import MoodSocApp
+        cls.app = MoodSocApp()
+        cls.app.deiconify()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.destroy()
+
+    def setUp(self):
+        app = self.app
+        app.cycles_var.set("1")
+        app.cycles = 1
+        app.load_paths([SAMPLE])
+        app.geometry("1560x950")
+        for _ in range(2):
+            app.update()
+
+    # ------------------------------------------------------- 进驻事件（换心情）
+    def test_进驻事件开关有说明且状态可见(self):
+        """开关旁的旁注要说清"换不换/换谁"（小白不打开对话框也能知道）。"""
+        from ui import app as app_mod
+        app = self.app
+        app.entry_events.set(False)
+        app._sync_entry_label()
+        self.assertIn("不结算", app.entry_detail.cget("text"))
+        app.entry_events.set(True)
+        app.entry_swap_with = None
+        app._sync_entry_label()
+        self.assertIn("前一位", app.entry_detail.cget("text"))
+        app._sync_entry_label()
+        app.entry_swap_with = "塞雷娅"
+        app._sync_entry_label()
+        self.assertIn("塞雷娅", app.entry_detail.cget("text"))
+
+    def test_进驻事件换心情端到端(self):
+        """设定「菲亚梅塔 24 / 塞雷娅 6」后：开启并指定对象 → 真的互换。"""
+        from ui import app as app_mod
+        app = self.app
+        preset = {"菲亚梅塔": Decimal("24"), "塞雷娅": Decimal("6")}
+        orig_mood, orig_dlg = app_mod.ask_mood, app_mod.ask_entry_event
+        try:
+            app_mod.ask_mood = lambda parent, who, cur, note="": preset.get(who)
+            for who in preset:
+                app._ask_and_set_mood(who)
+        finally:
+            app_mod.ask_mood = orig_mood
+
+        # ① 不开 → 按初始心情
+        app.entry_events.set(False)
+        app.recompute()
+        self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("24"))
+        self.assertEqual(app.traj.mood_at("塞雷娅", 0), Decimal("6"))
+
+        # ② 开启 + 指定「塞雷娅」→ 互换
+        try:
+            app_mod.ask_entry_event = lambda *a, **k: (True, "塞雷娅")
+            app.edit_entry_events()
+        finally:
+            app_mod.ask_entry_event = orig_dlg
+        self.assertTrue(app.entry_events.get())
+        self.assertEqual(app.entry_swap_with, "塞雷娅")
+        self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("6"))
+        self.assertEqual(app.traj.mood_at("塞雷娅", 0), Decimal("24"))
+        self.assertTrue([m for m in app.traj.marks if m.kind == "entry"])
+
+        # ③ 关掉 → 复原（记得清掉手动心情，避免影响其它用例）
+        app.entry_events.set(False)
+        app.initial_moods.clear()
+        app.recompute()
+        self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("24"))
+
+    def test_指定对象不在同宿舍时给出提示(self):
+        """示例排班里「塞雷娅」只在部分班次与菲亚梅塔同宿舍 → 其余班次记"未执行"事件。"""
+        app = self.app
+        app.entry_events.set(True)
+        app.entry_swap_with = "塞雷娅"
+        app.recompute()
+        skipped = [m for m in app.traj.marks
+                   if m.kind == "entry" and "不在" in m.label]
+        self.assertTrue(skipped, "应当记录「未执行」的事件标记")
+
+    # ------------------------------------------------------- 播放倍速
+    def test_播放倍速(self):
+        """1x = 1 小时/秒；2x 的推进量约为 1x 的两倍（按真实流逝时间算）。"""
+        app = self.app
+        measured = {}
+        for speed in ("1x", "2x"):
+            app.speed_var.set(speed)
+            app._on_speed()
+            app.set_time(Decimal("0"))
+            app.toggle_play()
+            t0 = time.perf_counter()
+            while time.perf_counter() - t0 < 0.6:
+                app.update()
+                time.sleep(0.003)
+            elapsed = time.perf_counter() - t0
+            app.toggle_play()
+            measured[speed] = (float(app.current_t), elapsed)
+        one, two = measured["1x"], measured["2x"]
+        self.assertLessEqual(abs(one[0] - one[1]), one[1] * 0.35,
+                             f"1x 应约等于 1 小时/秒（实测 {one}）")
+        self.assertLessEqual(abs(two[0] / one[0] - 2.0), 0.35,
+                             f"2x 应是 1x 的两倍（实测 {measured}）")
+
+    # ------------------------------------------------------- 滚轮作用域
+    def test_滚轮只在看板上生效(self):
+        """看板内容超出可视区时：滚轮落在看板上要滚，落在全员一览/曲线上不能滚。"""
+        app = self.app
+        old_min = app.minsize()
+        app.minsize(1, 1)                           # 临时放开最小尺寸，好把窗口压矮
+        app.geometry("1560x420")                    # 压矮窗口逼出滚动条
+        for _ in range(3):
+            app.update()
+        board = app.board
+        if board.inner.winfo_reqheight() <= board.canvas.winfo_height():
+            app.minsize(*old_min)
+            app.geometry("1560x950")
+            self.skipTest("窗口没能压到需要滚动（环境限制）")
+        board.canvas.yview_moveto(0)
+        app.update()
+        start = board.canvas.yview()
+
+        board.canvas.event_generate("<MouseWheel>", delta=-120)
+        app.update()
+        after_canvas = board.canvas.yview()
+        self.assertNotEqual(after_canvas, start, "在看板上滚轮应当滚动")
+
+        chip = next(iter(board._chips.values()))
+        chip.event_generate("<MouseWheel>", delta=-120)
+        app.update()
+        self.assertNotEqual(board.canvas.yview(), after_canvas, "在位置上滚轮也应当滚动")
+
+        before_roster = board.canvas.yview()
+        app.roster.chips[0].event_generate("<MouseWheel>", delta=-120)
+        app.chart.event_generate("<MouseWheel>", delta=-120)
+        app.update()
+        self.assertEqual(board.canvas.yview(), before_roster,
+                         "滚轮落在全员一览/曲线上时不该动看板")
+        app.minsize(*old_min)
+        app.geometry("1560x950")
+        app.update()
+
+    # ------------------------------------------------------- 切换布局
+    def test_切换班次复用芯片(self):
+        """房间结构没变时切换班次只换内容，不重建控件（旧写法每次要重建 ~50 个芯片）。"""
+        app = self.app
+        app.set_time(Decimal("0"))
+        app.update()
+        chips_before = dict(app.board._chips)
+        names_before = {v.operator for v in app.board.slots if v.operator}
+        self.assertTrue(chips_before)
+        app.set_time(Decimal("12"))                 # 跨到第二个班次
+        app.update()
+        self.assertEqual(set(app.board._chips), set(chips_before))
+        for key, chip in chips_before.items():
+            self.assertIs(app.board._chips[key], chip, "同一个位置应当复用同一个芯片对象")
+        # 内容确实换过了：表头指向新班次，看板上的人在变
+        self.assertIn("Shift 2", app.board.header.cget("text"))
+        names_after = {v.operator for v in app.board.slots if v.operator}
+        self.assertNotEqual(names_after, names_before)
+
+    def test_拖动跨班时推迟全员一览刷新(self):
+        """拖动中跨班：看板立刻换、全员一览标记延后到停手（避免拖动噎顿）。"""
+        app = self.app
+        app.set_time(Decimal("0"))
+        app.refresh_view()
+        self.assertFalse(app._roster_dirty)
+        app.set_time(Decimal("12"), quick=True)     # 模拟拖动
+        self.assertTrue(app._roster_dirty)
+        app._settle_refresh()
+        self.assertFalse(app._roster_dirty)
 
 
 if __name__ == "__main__":
