@@ -54,6 +54,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_bd_spd_000#1': Skill(
         'control_bd_spd_000#1',
@@ -78,6 +80,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_clue_cost&faction_990#1': Skill(
         'control_clue_cost&faction_990#1',
@@ -102,6 +106,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_clue_cost_000#1': Skill(
         'control_clue_cost_000#1',
@@ -126,6 +132,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_clue_cost_010#1': Skill(
         'control_clue_cost_010#1',
@@ -150,6 +158,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_dorm_rec2_000#1': Skill(
         'control_dorm_rec2_000#1',
@@ -174,6 +184,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_dorm_rec2_000#2': Skill(
         'control_dorm_rec2_000#2',
@@ -198,6 +210,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_dorm_rec_000#1': Skill(
         'control_dorm_rec_000#1',
@@ -222,6 +236,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_dorm_rec_001#1': Skill(
         'control_dorm_rec_001#1',
@@ -246,6 +262,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_dorm_rec_002#1': Skill(
         'control_dorm_rec_002#1',
@@ -270,6 +288,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_dorm_rec_tag_001#1': Skill(
         'control_dorm_rec_tag_001#1',
@@ -294,6 +314,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_facCostReset_000#1': Skill(
         'control_facCostReset_000#1',
@@ -318,6 +340,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_meeting&mp_cost_000#1': Skill(
         'control_meeting&mp_cost_000#1',
@@ -342,6 +366,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_meeting&mp_cost_100#1': Skill(
         'control_meeting&mp_cost_100#1',
@@ -366,6 +392,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_meeting_bd_000#1': Skill(
         'control_meeting_bd_000#1',
@@ -390,6 +418,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp&meet_spd_000#1': Skill(
         'control_mp&meet_spd_000#1',
@@ -414,6 +444,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_aegir1_000#1': Skill(
         'control_mp_aegir1_000#1',
@@ -438,6 +470,8 @@ SKILLS = {
         var_min=None,
         basis='abyssal_non_dorm',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_aegir1_000#2': Skill(
         'control_mp_aegir1_000#2',
@@ -462,6 +496,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_aegir1_000#3': Skill(
         'control_mp_aegir1_000#3',
@@ -486,6 +522,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_aegir2_000#1': Skill(
         'control_mp_aegir2_000#1',
@@ -510,6 +548,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_aegir2_010#1': Skill(
         'control_mp_aegir2_010#1',
@@ -534,6 +574,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_bd&trade_000#1': Skill(
         'control_mp_bd&trade_000#1',
@@ -558,6 +600,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_bd_cost_expand_000#1': Skill(
         'control_mp_bd_cost_expand_000#1',
@@ -582,6 +626,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_bd_cost_expand_000#2': Skill(
         'control_mp_bd_cost_expand_000#2',
@@ -606,6 +652,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&bd1_000#1': Skill(
         'control_mp_cost&bd1_000#1',
@@ -630,6 +678,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&bd2_000#1': Skill(
         'control_mp_cost&bd2_000#1',
@@ -654,6 +704,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&bd2_010#1': Skill(
         'control_mp_cost&bd2_010#1',
@@ -678,6 +730,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&bd3_000#1': Skill(
         'control_mp_cost&bd3_000#1',
@@ -702,6 +756,8 @@ SKILLS = {
         var_min=Decimal("40"),
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&bd_up_000#1': Skill(
         'control_mp_cost&bd_up_000#1',
@@ -726,6 +782,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&faction2_000#1': Skill(
         'control_mp_cost&faction2_000#1',
@@ -750,6 +808,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&faction_000#1': Skill(
         'control_mp_cost&faction_000#1',
@@ -774,6 +834,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&faction_020#1': Skill(
         'control_mp_cost&faction_020#1',
@@ -798,6 +860,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&faction_030#1': Skill(
         'control_mp_cost&faction_030#1',
@@ -822,6 +886,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&faction_900#1': Skill(
         'control_mp_cost&faction_900#1',
@@ -846,6 +912,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost&faction_990#1': Skill(
         'control_mp_cost&faction_990#1',
@@ -870,6 +938,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_000#1': Skill(
         'control_mp_cost_000#1',
@@ -894,6 +964,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_001#1': Skill(
         'control_mp_cost_001#1',
@@ -918,6 +990,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_002#1': Skill(
         'control_mp_cost_002#1',
@@ -942,6 +1016,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_003#1': Skill(
         'control_mp_cost_003#1',
@@ -966,6 +1042,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_004#1': Skill(
         'control_mp_cost_004#1',
@@ -990,6 +1068,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_005#1': Skill(
         'control_mp_cost_005#1',
@@ -1014,6 +1094,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_006#1': Skill(
         'control_mp_cost_006#1',
@@ -1038,6 +1120,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_007#1': Skill(
         'control_mp_cost_007#1',
@@ -1062,6 +1146,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_008#1': Skill(
         'control_mp_cost_008#1',
@@ -1086,6 +1172,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_009#1': Skill(
         'control_mp_cost_009#1',
@@ -1110,6 +1198,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_010#1': Skill(
         'control_mp_cost_010#1',
@@ -1134,6 +1224,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_011#1': Skill(
         'control_mp_cost_011#1',
@@ -1158,6 +1250,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_012#1': Skill(
         'control_mp_cost_012#1',
@@ -1182,6 +1276,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_013#1': Skill(
         'control_mp_cost_013#1',
@@ -1206,6 +1302,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_014#1': Skill(
         'control_mp_cost_014#1',
@@ -1230,6 +1328,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_double_000#1': Skill(
         'control_mp_cost_double_000#1',
@@ -1254,6 +1354,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_double_001#1': Skill(
         'control_mp_cost_double_001#1',
@@ -1278,6 +1380,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_cost_reset_000#1': Skill(
         'control_mp_cost_reset_000#1',
@@ -1302,6 +1406,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=True,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_expand_double_000#1': Skill(
         'control_mp_expand_double_000#1',
@@ -1326,6 +1432,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_expand_double_000#2': Skill(
         'control_mp_expand_double_000#2',
@@ -1350,6 +1458,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'control_mp_lonely_000#1': Skill(
         'control_mp_lonely_000#1',
@@ -1374,6 +1484,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_exchangeAp_000#1': Skill(
         'dorm_exchangeAp_000#1',
@@ -1398,6 +1510,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_hireToRecAll_000#1': Skill(
         'dorm_hireToRecAll_000#1',
@@ -1422,6 +1536,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_hireToRecAll_000#2': Skill(
         'dorm_hireToRecAll_000#2',
@@ -1446,6 +1562,8 @@ SKILLS = {
         var_min=None,
         basis='recruit_slot',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_hireToRecAll_001#1': Skill(
         'dorm_hireToRecAll_001#1',
@@ -1470,6 +1588,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_hireToRecAll_001#2': Skill(
         'dorm_hireToRecAll_001#2',
@@ -1494,6 +1614,8 @@ SKILLS = {
         var_min=None,
         basis='recruit_slot',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_hireToRecAll_021#1': Skill(
         'dorm_hireToRecAll_021#1',
@@ -1518,6 +1640,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_hireToRecAll_021#2': Skill(
         'dorm_hireToRecAll_021#2',
@@ -1542,6 +1666,8 @@ SKILLS = {
         var_min=None,
         basis='recruit_slot',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_powToRecAll_000#1': Skill(
         'dorm_powToRecAll_000#1',
@@ -1566,6 +1692,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_powToRecAll_000#2': Skill(
         'dorm_powToRecAll_000#2',
@@ -1590,6 +1718,8 @@ SKILLS = {
         var_min=None,
         basis='power_count',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_powToRecAll_010#1': Skill(
         'dorm_powToRecAll_010#1',
@@ -1614,6 +1744,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_powToRecAll_010#2': Skill(
         'dorm_powToRecAll_010#2',
@@ -1638,6 +1770,8 @@ SKILLS = {
         var_min=None,
         basis='power_count',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_recExcludeOther_000#1': Skill(
         'dorm_recExcludeOther_000#1',
@@ -1662,6 +1796,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&bd_000#1': Skill(
         'dorm_rec_all&bd_000#1',
@@ -1686,6 +1822,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&bd_000#2': Skill(
         'dorm_rec_all&bd_000#2',
@@ -1710,6 +1848,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&group_000#1': Skill(
         'dorm_rec_all&group_000#1',
@@ -1734,6 +1874,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&lv_000#1': Skill(
         'dorm_rec_all&lv_000#1',
@@ -1758,6 +1900,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&lv_100#1': Skill(
         'dorm_rec_all&lv_100#1',
@@ -1782,6 +1926,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&lv_100#2': Skill(
         'dorm_rec_all&lv_100#2',
@@ -1806,6 +1952,8 @@ SKILLS = {
         var_min=None,
         basis='dorm_level',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_000#1': Skill(
         'dorm_rec_all&oneself_000#1',
@@ -1830,6 +1978,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_000#2': Skill(
         'dorm_rec_all&oneself_000#2',
@@ -1854,6 +2004,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_001#1': Skill(
         'dorm_rec_all&oneself_001#1',
@@ -1878,6 +2030,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_001#2': Skill(
         'dorm_rec_all&oneself_001#2',
@@ -1902,6 +2056,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_010#1': Skill(
         'dorm_rec_all&oneself_010#1',
@@ -1926,6 +2082,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_011#1': Skill(
         'dorm_rec_all&oneself_011#1',
@@ -1950,6 +2108,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_012#1': Skill(
         'dorm_rec_all&oneself_012#1',
@@ -1974,6 +2134,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_012#2': Skill(
         'dorm_rec_all&oneself_012#2',
@@ -1998,6 +2160,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_021#1': Skill(
         'dorm_rec_all&oneself_021#1',
@@ -2022,6 +2186,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_021#2': Skill(
         'dorm_rec_all&oneself_021#2',
@@ -2046,6 +2212,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_022#1': Skill(
         'dorm_rec_all&oneself_022#1',
@@ -2070,6 +2238,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_022#2': Skill(
         'dorm_rec_all&oneself_022#2',
@@ -2094,6 +2264,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_042#1': Skill(
         'dorm_rec_all&oneself_042#1',
@@ -2118,6 +2290,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&oneself_042#2': Skill(
         'dorm_rec_all&oneself_042#2',
@@ -2142,6 +2316,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&profession_000#1': Skill(
         'dorm_rec_all&profession_000#1',
@@ -2166,6 +2342,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&single_000#1': Skill(
         'dorm_rec_all&single_000#1',
@@ -2190,6 +2368,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&tag_000#1': Skill(
         'dorm_rec_all&tag_000#1',
@@ -2214,6 +2394,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&tag_000#2': Skill(
         'dorm_rec_all&tag_000#2',
@@ -2238,6 +2420,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&tired_000#1': Skill(
         'dorm_rec_all&tired_000#1',
@@ -2262,6 +2446,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&tired_000#2': Skill(
         'dorm_rec_all&tired_000#2',
@@ -2286,6 +2472,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&tired_100#1': Skill(
         'dorm_rec_all&tired_100#1',
@@ -2310,6 +2498,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&unfull_000#1': Skill(
         'dorm_rec_all&unfull_000#1',
@@ -2334,6 +2524,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&unfull_001#1': Skill(
         'dorm_rec_all&unfull_001#1',
@@ -2358,6 +2550,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all&unfull_001#2': Skill(
         'dorm_rec_all&unfull_001#2',
@@ -2382,6 +2576,8 @@ SKILLS = {
         var_min=None,
         basis='dorm_unfull',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_000#1': Skill(
         'dorm_rec_all_000#1',
@@ -2406,6 +2602,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_010#1': Skill(
         'dorm_rec_all_010#1',
@@ -2430,6 +2628,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_011#1': Skill(
         'dorm_rec_all_011#1',
@@ -2454,6 +2654,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_012#1': Skill(
         'dorm_rec_all_012#1',
@@ -2478,6 +2680,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_013#1': Skill(
         'dorm_rec_all_013#1',
@@ -2502,6 +2706,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_014#1': Skill(
         'dorm_rec_all_014#1',
@@ -2526,6 +2732,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_017#1': Skill(
         'dorm_rec_all_017#1',
@@ -2550,6 +2758,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_020#1': Skill(
         'dorm_rec_all_020#1',
@@ -2574,6 +2784,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_021#1': Skill(
         'dorm_rec_all_021#1',
@@ -2598,6 +2810,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_022#1': Skill(
         'dorm_rec_all_022#1',
@@ -2622,6 +2836,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_023#1': Skill(
         'dorm_rec_all_023#1',
@@ -2646,6 +2862,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_024#1': Skill(
         'dorm_rec_all_024#1',
@@ -2670,6 +2888,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_025#1': Skill(
         'dorm_rec_all_025#1',
@@ -2694,6 +2914,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_026#1': Skill(
         'dorm_rec_all_026#1',
@@ -2718,6 +2940,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_027#1': Skill(
         'dorm_rec_all_027#1',
@@ -2742,6 +2966,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_028#1': Skill(
         'dorm_rec_all_028#1',
@@ -2766,6 +2992,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_029#1': Skill(
         'dorm_rec_all_029#1',
@@ -2790,6 +3018,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_all_999#1': Skill(
         'dorm_rec_all_999#1',
@@ -2814,6 +3044,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_bd_n1_n2_000#1': Skill(
         'dorm_rec_bd_n1_n2_000#1',
@@ -2838,6 +3070,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_bd_n1_n3_000#1': Skill(
         'dorm_rec_bd_n1_n3_000#1',
@@ -2862,6 +3096,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself2_000#1': Skill(
         'dorm_rec_oneself2_000#1',
@@ -2886,6 +3122,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself2_000#2': Skill(
         'dorm_rec_oneself2_000#2',
@@ -2910,6 +3148,8 @@ SKILLS = {
         var_min=None,
         basis='dorm_others',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself2_001#1': Skill(
         'dorm_rec_oneself2_001#1',
@@ -2934,6 +3174,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself2_001#2': Skill(
         'dorm_rec_oneself2_001#2',
@@ -2958,6 +3200,8 @@ SKILLS = {
         var_min=None,
         basis='dorm_others',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself_000#1': Skill(
         'dorm_rec_oneself_000#1',
@@ -2982,6 +3226,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself_001#1': Skill(
         'dorm_rec_oneself_001#1',
@@ -3006,6 +3252,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself_002#1': Skill(
         'dorm_rec_oneself_002#1',
@@ -3030,6 +3278,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself_010#1': Skill(
         'dorm_rec_oneself_010#1',
@@ -3054,6 +3304,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself_011#1': Skill(
         'dorm_rec_oneself_011#1',
@@ -3078,6 +3330,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself_020#1': Skill(
         'dorm_rec_oneself_020#1',
@@ -3102,6 +3356,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself_030#1': Skill(
         'dorm_rec_oneself_030#1',
@@ -3126,6 +3382,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_oneself_040#1': Skill(
         'dorm_rec_oneself_040#1',
@@ -3150,6 +3408,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_000#1': Skill(
         'dorm_rec_single&oneself_000#1',
@@ -3174,6 +3434,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_000#2': Skill(
         'dorm_rec_single&oneself_000#2',
@@ -3198,6 +3460,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_001#1': Skill(
         'dorm_rec_single&oneself_001#1',
@@ -3222,6 +3486,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_001#2': Skill(
         'dorm_rec_single&oneself_001#2',
@@ -3246,6 +3512,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_010#1': Skill(
         'dorm_rec_single&oneself_010#1',
@@ -3270,6 +3538,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_010#2': Skill(
         'dorm_rec_single&oneself_010#2',
@@ -3294,6 +3564,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_011#1': Skill(
         'dorm_rec_single&oneself_011#1',
@@ -3318,6 +3590,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_011#2': Skill(
         'dorm_rec_single&oneself_011#2',
@@ -3342,6 +3616,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_012#1': Skill(
         'dorm_rec_single&oneself_012#1',
@@ -3366,6 +3642,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_012#2': Skill(
         'dorm_rec_single&oneself_012#2',
@@ -3390,6 +3668,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_020#1': Skill(
         'dorm_rec_single&oneself_020#1',
@@ -3414,6 +3694,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_020#2': Skill(
         'dorm_rec_single&oneself_020#2',
@@ -3438,6 +3720,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_021#1': Skill(
         'dorm_rec_single&oneself_021#1',
@@ -3462,6 +3746,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_021#2': Skill(
         'dorm_rec_single&oneself_021#2',
@@ -3486,6 +3772,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_030#1': Skill(
         'dorm_rec_single&oneself_030#1',
@@ -3510,6 +3798,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_030#2': Skill(
         'dorm_rec_single&oneself_030#2',
@@ -3534,6 +3824,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_040#1': Skill(
         'dorm_rec_single&oneself_040#1',
@@ -3558,6 +3850,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&oneself_040#2': Skill(
         'dorm_rec_single&oneself_040#2',
@@ -3582,6 +3876,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&tag_000#1': Skill(
         'dorm_rec_single&tag_000#1',
@@ -3606,6 +3902,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single&tag_000#2': Skill(
         'dorm_rec_single&tag_000#2',
@@ -3630,6 +3928,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_000#1': Skill(
         'dorm_rec_single_000#1',
@@ -3654,6 +3954,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_001#1': Skill(
         'dorm_rec_single_001#1',
@@ -3678,6 +3980,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_010#1': Skill(
         'dorm_rec_single_010#1',
@@ -3702,6 +4006,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_020#1': Skill(
         'dorm_rec_single_020#1',
@@ -3726,6 +4032,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_030#1': Skill(
         'dorm_rec_single_030#1',
@@ -3750,6 +4058,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_031#1': Skill(
         'dorm_rec_single_031#1',
@@ -3774,6 +4084,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_032#1': Skill(
         'dorm_rec_single_032#1',
@@ -3798,6 +4110,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_033#1': Skill(
         'dorm_rec_single_033#1',
@@ -3822,6 +4136,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_1010#1': Skill(
         'dorm_rec_single_1010#1',
@@ -3846,6 +4162,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_P_000#1': Skill(
         'dorm_rec_single_P_000#1',
@@ -3870,6 +4188,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_P_000#2': Skill(
         'dorm_rec_single_P_000#2',
@@ -3894,6 +4214,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_P_001#1': Skill(
         'dorm_rec_single_P_001#1',
@@ -3918,6 +4240,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_P_001#2': Skill(
         'dorm_rec_single_P_001#2',
@@ -3942,6 +4266,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_P_002#1': Skill(
         'dorm_rec_single_P_002#1',
@@ -3966,6 +4292,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_P_002#2': Skill(
         'dorm_rec_single_P_002#2',
@@ -3990,6 +4318,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_power_000#1': Skill(
         'dorm_rec_single_power_000#1',
@@ -4014,6 +4344,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_power_000#2': Skill(
         'dorm_rec_single_power_000#2',
@@ -4038,6 +4370,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_power_001#1': Skill(
         'dorm_rec_single_power_001#1',
@@ -4062,6 +4396,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_power_001#2': Skill(
         'dorm_rec_single_power_001#2',
@@ -4086,6 +4422,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'dorm_rec_single_power_100#1': Skill(
         'dorm_rec_single_power_100#1',
@@ -4110,6 +4448,34 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
+    ),
+    'dorm_rec_toone_000#1': Skill(
+        'dorm_rec_toone_000#1',
+        '头号陪练',
+        SkillKind.DORM_META,
+        Decimal("0.3"),
+        (),
+        None,
+        _cond_target_in_faction("格拉斯哥帮"),
+        note='来源 skill_id=dorm_rec_toone_000 clause=1；family=dorm_meta；template=M17；control_capability=无；target=进驻宿舍时，推进之王对该宿舍中格拉斯哥帮干员恢复效果额外+0.3；condition=（条件槽空：partial_mode=apply）',
+        exclusive=False,
+        pool=False,
+        untranslated=False,
+        count_faction=None,
+        template_id='M17',
+        max_group=None,
+        spread_whitelist=False,
+        partial=True,
+        partial_mode='apply',
+        var_name=None,
+        var_per=None,
+        var_min=None,
+        basis=None,
+        self_only=False,
+        boost_provider="推进之王",
+        boost_group="dorm_group",
     ),
     'hire_spd_cost&char_000#1': Skill(
         'hire_spd_cost&char_000#1',
@@ -4134,6 +4500,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost&char_001#1': Skill(
         'hire_spd_cost&char_001#1',
@@ -4158,6 +4526,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost&clue_000#1': Skill(
         'hire_spd_cost&clue_000#1',
@@ -4182,6 +4552,8 @@ SKILLS = {
         var_min=None,
         basis='recruit_slot',
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_100#1': Skill(
         'hire_spd_cost_100#1',
@@ -4206,6 +4578,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_101#1': Skill(
         'hire_spd_cost_101#1',
@@ -4230,6 +4604,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_110#1': Skill(
         'hire_spd_cost_110#1',
@@ -4254,6 +4630,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_111#1': Skill(
         'hire_spd_cost_111#1',
@@ -4278,6 +4656,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_112#1': Skill(
         'hire_spd_cost_112#1',
@@ -4302,6 +4682,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_120#1': Skill(
         'hire_spd_cost_120#1',
@@ -4326,6 +4708,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_121#1': Skill(
         'hire_spd_cost_121#1',
@@ -4350,6 +4734,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_200#1': Skill(
         'hire_spd_cost_200#1',
@@ -4374,6 +4760,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_210#1': Skill(
         'hire_spd_cost_210#1',
@@ -4398,6 +4786,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_220#1': Skill(
         'hire_spd_cost_220#1',
@@ -4422,6 +4812,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_230#1': Skill(
         'hire_spd_cost_230#1',
@@ -4446,6 +4838,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'hire_spd_cost_999#1': Skill(
         'hire_spd_cost_999#1',
@@ -4470,6 +4864,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_cost_000#1': Skill(
         'manu_cost_000#1',
@@ -4494,6 +4890,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_cost_all_000#1': Skill(
         'manu_cost_all_000#1',
@@ -4518,6 +4916,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_formula_cost_000#1': Skill(
         'manu_formula_cost_000#1',
@@ -4542,6 +4942,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_formula_spd&cost_000#1': Skill(
         'manu_formula_spd&cost_000#1',
@@ -4566,6 +4968,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_formula_spd&cost_001#1': Skill(
         'manu_formula_spd&cost_001#1',
@@ -4590,6 +4994,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_formula_spd&cost_bd_000#1': Skill(
         'manu_formula_spd&cost_bd_000#1',
@@ -4614,6 +5020,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_formula_spd&limit&cost_000#1': Skill(
         'manu_formula_spd&limit&cost_000#1',
@@ -4638,6 +5046,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_formula_spd&limit&cost_010#1': Skill(
         'manu_formula_spd&limit&cost_010#1',
@@ -4662,6 +5072,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_formula_spd&limit&cost_100#1': Skill(
         'manu_formula_spd&limit&cost_100#1',
@@ -4686,6 +5098,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_000#1': Skill(
         'manu_prod_limit&cost_000#1',
@@ -4710,6 +5124,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_0000#1': Skill(
         'manu_prod_limit&cost_0000#1',
@@ -4734,6 +5150,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_001#1': Skill(
         'manu_prod_limit&cost_001#1',
@@ -4758,6 +5176,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_002#1': Skill(
         'manu_prod_limit&cost_002#1',
@@ -4782,6 +5202,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_003#1': Skill(
         'manu_prod_limit&cost_003#1',
@@ -4806,6 +5228,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_010#1': Skill(
         'manu_prod_limit&cost_010#1',
@@ -4830,6 +5254,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_011#1': Skill(
         'manu_prod_limit&cost_011#1',
@@ -4854,6 +5280,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_012#1': Skill(
         'manu_prod_limit&cost_012#1',
@@ -4878,6 +5306,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_020#1': Skill(
         'manu_prod_limit&cost_020#1',
@@ -4902,6 +5332,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_021#1': Skill(
         'manu_prod_limit&cost_021#1',
@@ -4926,6 +5358,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_limit&cost_1020#1': Skill(
         'manu_prod_limit&cost_1020#1',
@@ -4950,6 +5384,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_spd&limit&cost_000#1': Skill(
         'manu_prod_spd&limit&cost_000#1',
@@ -4974,6 +5410,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_spd&limit&cost_001#1': Skill(
         'manu_prod_spd&limit&cost_001#1',
@@ -4998,6 +5436,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_spd&limit&cost_010#1': Skill(
         'manu_prod_spd&limit&cost_010#1',
@@ -5022,6 +5462,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_spd&limit&cost_011#1': Skill(
         'manu_prod_spd&limit&cost_011#1',
@@ -5046,6 +5488,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_spd&limit&cost_020#1': Skill(
         'manu_prod_spd&limit&cost_020#1',
@@ -5070,6 +5514,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_spd&limit&cost_100#1': Skill(
         'manu_prod_spd&limit&cost_100#1',
@@ -5094,6 +5540,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_spd&limit&cost_101#1': Skill(
         'manu_prod_spd&limit&cost_101#1',
@@ -5118,6 +5566,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'manu_prod_spd&limit&cost_110#1': Skill(
         'manu_prod_spd&limit&cost_110#1',
@@ -5142,6 +5592,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&bd_000#1': Skill(
         'meet_spd&bd_000#1',
@@ -5166,6 +5618,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&bd_010#1': Skill(
         'meet_spd&bd_010#1',
@@ -5190,6 +5644,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&cost_100#1': Skill(
         'meet_spd&cost_100#1',
@@ -5214,6 +5670,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&cost_condChar_000#1': Skill(
         'meet_spd&cost_condChar_000#1',
@@ -5238,6 +5696,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&cost_condChar_001#1': Skill(
         'meet_spd&cost_condChar_001#1',
@@ -5262,6 +5722,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&cost_condChar_002#1': Skill(
         'meet_spd&cost_condChar_002#1',
@@ -5286,6 +5748,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&cost_condChar_011#1': Skill(
         'meet_spd&cost_condChar_011#1',
@@ -5310,6 +5774,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&cost_condChar_020#1': Skill(
         'meet_spd&cost_condChar_020#1',
@@ -5334,6 +5800,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&cost_condChar_021#1': Skill(
         'meet_spd&cost_condChar_021#1',
@@ -5358,6 +5826,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&sami_000#1': Skill(
         'meet_spd&sami_000#1',
@@ -5382,6 +5852,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'meet_spd&sami_100#1': Skill(
         'meet_spd&sami_100#1',
@@ -5406,6 +5878,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'power_rec_spd&cost_000#1': Skill(
         'power_rec_spd&cost_000#1',
@@ -5430,6 +5904,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'power_rec_spd&cost_010#1': Skill(
         'power_rec_spd&cost_010#1',
@@ -5454,6 +5930,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_cost&bd2_000#1': Skill(
         'trade_cost&bd2_000#1',
@@ -5478,6 +5956,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_cost&bd2_000#2': Skill(
         'trade_cost&bd2_000#2',
@@ -5502,6 +5982,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_cost&bd2_001#1': Skill(
         'trade_cost&bd2_001#1',
@@ -5526,6 +6008,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_cost&bd2_001#2': Skill(
         'trade_cost&bd2_001#2',
@@ -5550,6 +6034,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_cost_000#1': Skill(
         'trade_cost_000#1',
@@ -5574,6 +6060,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_limit&cost_000#1': Skill(
         'trade_ord_limit&cost_000#1',
@@ -5598,6 +6086,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_limit&cost_P_000#1': Skill(
         'trade_ord_limit&cost_P_000#1',
@@ -5622,6 +6112,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_limit&cost_P_001#1': Skill(
         'trade_ord_limit&cost_P_001#1',
@@ -5646,6 +6138,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_limit&cost_P_010#1': Skill(
         'trade_ord_limit&cost_P_010#1',
@@ -5670,6 +6164,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_limit&cost_P_020#1': Skill(
         'trade_ord_limit&cost_P_020#1',
@@ -5694,6 +6190,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_long_000#1': Skill(
         'trade_ord_long_000#1',
@@ -5718,6 +6216,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_long_010#1': Skill(
         'trade_ord_long_010#1',
@@ -5742,6 +6242,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_spd&cost_000#1': Skill(
         'trade_ord_spd&cost_000#1',
@@ -5766,6 +6268,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_spd&cost_P_000#1': Skill(
         'trade_ord_spd&cost_P_000#1',
@@ -5790,6 +6294,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_vodfox_000#1': Skill(
         'trade_ord_vodfox_000#1',
@@ -5814,6 +6320,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_wt&cost_000#1': Skill(
         'trade_ord_wt&cost_000#1',
@@ -5838,6 +6346,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_wt&cost_001#1': Skill(
         'trade_ord_wt&cost_001#1',
@@ -5862,6 +6372,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_wt&cost_002#1': Skill(
         'trade_ord_wt&cost_002#1',
@@ -5886,6 +6398,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_wt&cost_003#1': Skill(
         'trade_ord_wt&cost_003#1',
@@ -5910,6 +6424,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_wt&cost_004#1': Skill(
         'trade_ord_wt&cost_004#1',
@@ -5934,6 +6450,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_wt&cost_010#1': Skill(
         'trade_ord_wt&cost_010#1',
@@ -5958,6 +6476,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_wt&cost_011#1': Skill(
         'trade_ord_wt&cost_011#1',
@@ -5982,6 +6502,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
     'trade_ord_wt&cost_012#1': Skill(
         'trade_ord_wt&cost_012#1',
@@ -6006,6 +6528,8 @@ SKILLS = {
         var_min=None,
         basis=None,
         self_only=False,
+        boost_provider=None,
+        boost_group=None,
     ),
 }
 
@@ -6078,6 +6602,7 @@ DEFAULT_OPERATORS = {
     '推进之王': ['dorm_rec_all_013#1', 'dorm_rec_all_022#1'],
     '提丰': ['meet_spd&sami_000#1'],
     '摆渡人': ['control_meeting&mp_cost_000#1', 'control_meeting&mp_cost_100#1'],
+    '摩根': ['dorm_rec_toone_000#1'],
     '撷英调香师': ['dorm_rec_all_029#1', 'dorm_rec_all&tired_100#1'],
     '斥罪': ['hire_spd_cost_210#1', 'dorm_hireToRecAll_000#1', 'dorm_hireToRecAll_000#2'],
     '断罪者': ['dorm_rec_single_030#1'],
@@ -6403,6 +6928,8 @@ SKILL_EQUIPS = {
         0, 1, False, None),
     ('摆渡人', 'control_meeting&mp_cost_100#1'): SkillEquip(
         1, 1, True, "control_meeting&mp_cost_000"),
+    ('摩根', 'dorm_rec_toone_000#1'): SkillEquip(
+        0, 1, False, None),
     ('撷英调香师', 'dorm_rec_all&tired_100#1'): SkillEquip(
         2, 1, False, None),
     ('撷英调香师', 'dorm_rec_all_029#1'): SkillEquip(

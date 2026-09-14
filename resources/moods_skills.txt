@@ -168,6 +168,7 @@ dorm_rec_single_power_000,2,降生于冰寒,recover,dorm_single,进驻宿舍时�
 dorm_rec_single_power_001,1,圣城趣事通,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是拉特兰干员，则恢复效果额外+0.45,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_power_001,2,圣城趣事通,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,如果目标是拉特兰干员，则恢复效果额外+0.45,450,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
 dorm_rec_single_power_100,1,天生乐天派,recover,dorm_single,进驻宿舍时，使该宿舍内除自身以外心情未满的某个干,,550,complex,,M09,target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max;partial_mode=apply;partial=true
+dorm_rec_toone_000,1,头号陪练,recover,dorm_meta,进驻宿舍时，推进之王对该宿舍中格拉斯哥帮干员恢复效果额外+0.3,,300,complex,,M17,boost_provider=推进之王;boost_group=dorm_group;stacking=sum;partial_mode=apply;partial=true
 hire_spd_cost&char_000,1,圣女声望,drain,self,self,,-250,auto,,M07a,stacking=sum;partial=false
 hire_spd_cost&char_001,1,雪境归心,drain,self,self,,-250,auto,,M07a,stacking=sum;partial=false
 hire_spd_cost&clue_000,1,救援队·保证体力,drain,self,self,招募位,-100,complex,,M07a,stacking=sum;partial_mode=apply;partial=true;basis=recruit_slot

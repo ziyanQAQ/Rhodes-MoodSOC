@@ -121,6 +121,11 @@ def params_for_clause(skill_id: str, clause: str, family: str, kind: str,
         return "M08", f"exclude_self={excl};stacking=same_kind_max"
     if family == "dorm_single":
         return "M09", "target_policy=minimum_unfull_exclude_provider;stacking=same_kind_max"
+    if family == "dorm_meta":
+        # M17 元修正：**强化他人**在宿舍里的恢复效果（摩根「头号陪练」→ 推进之王 +0.3）。
+        # `boost_provider`（被点名强化的持有者）由人工写在 params 里，分类器不产生该键，
+        # 故上面的「保留手写参数」逻辑会让它原样留存。
+        return "M17", "boost_group=dorm_group;stacking=sum"
     if family == "dorm_self":
         return "M10", "stacking=same_kind_max"
     if family == "dorm_pool":

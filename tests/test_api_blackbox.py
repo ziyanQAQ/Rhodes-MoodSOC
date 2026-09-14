@@ -950,5 +950,59 @@ class Test定向加成M09(unittest.TestCase):
         self.assertEqual(self._single(world, "蓝毒"), Decimal("0"))
 
 
+class Test元修正M17(unittest.TestCase):
+    """M17 元修正：**一名干员强化另一名干员的效果**（摩根「头号陪练」）。
+
+    上游原文（`building_data.json` → `buffs["dorm_rec_toone[000]"]`）：
+        「进驻宿舍时，**推进之王**对该宿舍中**格拉斯哥帮**干员恢复效果额外 **+0.3**」
+    ——摩根自己不提供回复，而是把**推进之王已经算出的那条贡献**顶上去。
+    实现上：把增量补成**同组同技能**的额外贡献，交给 `SAME_KIND_MAX` 先并入该技能小计、
+    再与其他技能取最高（若记成独立技能，会被"同种取最高"当成竞争者而整个丢掉）。
+
+    推进之王「狮心王」= 宿舍群体 +0.2；格拉斯哥帮 = 推进之王 / 摩根 / 达格达 / 因陀罗。
+    """
+
+    @staticmethod
+    def _dorm(members, level=5):
+        return build_base_layout(scenario(
+            {"type": "宿舍", "level": level,
+             "operators": [{"name": m, "mood": 10} for m in members]}))
+
+    @staticmethod
+    def _recover(world, who):
+        """宿舍回复合计（走 MoodLedger 的轴 F 合成，L5 满氛围基础回复 = 4.0）。"""
+        return mood_ledger(world, who).total(Bucket.RECOVER)
+
+    def test_boost_same_faction(self):
+        """同帮成员拿到 0.2 + 0.3 = 0.5（含推进之王自身——她也在格拉斯哥帮里）。"""
+        world = self._dorm(["摩根", "推进之王", "达格达"])
+        for who in ("达格达", "摩根", "推进之王"):
+            self.assertEqual(self._recover(world, who), Decimal("4.50"), who)
+
+    def test_boost_only_for_target_faction(self):
+        """非同帮成员只拿基础 0.2。"""
+        world = self._dorm(["摩根", "推进之王", "路人"])
+        self.assertEqual(self._recover(world, "路人"), Decimal("4.20"))
+
+    def test_boost_requires_modifier_holder(self):
+        """摩根不在宿舍时没有强化。"""
+        world = self._dorm(["推进之王", "达格达"])
+        self.assertEqual(self._recover(world, "达格达"), Decimal("4.20"))
+
+    def test_boost_requires_provider(self):
+        """被点名强化的持有者（推进之王）不在宿舍时，强化无处附着。"""
+        world = self._dorm(["摩根", "达格达"])
+        self.assertEqual(self._recover(world, "达格达"), Decimal("4.00"))
+
+    def test_boost_joins_provider_skill_subtotal(self):
+        """强化必须**并入推进之王那条技能**参与"同种取最高"，而不是单列一条竞争项。
+
+        陪跑：森西「资深料理人」0.15。达格达身上应是 4.0 + max(0.2+0.3, 0.15) = 4.5；
+        若强化被当成独立技能，就会变成 4.0 + max(0.2, 0.15, 0.3) = 4.3。
+        """
+        world = self._dorm(["摩根", "推进之王", "森西", "达格达"])
+        self.assertEqual(self._recover(world, "达格达"), Decimal("4.50"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

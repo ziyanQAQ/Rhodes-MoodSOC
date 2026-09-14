@@ -44,6 +44,7 @@ class SkillKind(str, Enum):
     DORM_SINGLE = "dorm_single"                 # 宿舍：单体回复（同种取最高，锁定目标）
     DORM_TARGETED = "dorm_targeted"             # 宿舍：定向回复（对满足条件的干员加成，可叠加）
     ELIMINATE_SELF = "eliminate_self"           # 消除同设施干员"自身心情消耗"的影响
+    DORM_META = "dorm_meta"                     # 元修正（M17）：强化**他人**在宿舍内的恢复效果
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,9 @@ class Skill:
     # —— 消除类（M13）的两种语义 ——
     self_only: bool = False                          # True = 只消除**自身**的自身消耗影响（若叶睦 互为半身）
                                                      # False = 消除**同设施所有干员**的（槐琥 团队精神 / 令 杯莫停）
+    # —— 元修正（M17）：强化**他人**的效果 ——
+    boost_provider: Optional[str] = None             # 被强化的技能持有者名（摩根「头号陪练」→ "推进之王"）
+    boost_group: Optional[str] = None                # 只强化该提供者在**这个 group** 里的贡献（如 dorm_group）
 
 
 @dataclass(frozen=True)

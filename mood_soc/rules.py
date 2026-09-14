@@ -526,6 +526,37 @@ def _dorm_ledger(world: BaseLayout, op: Operator, facility: Facility,
                                 template=skill.template_id,
                                 detail="（满足条件者叠加求和）" + _vtxt))
 
+    # --- 元修正（M17）：**他人**的恢复效果被强化（摩根「头号陪练」→ 推进之王）---
+    # 上游原文（`dorm_rec_toone[000]`）：「进驻宿舍时，**推进之王**对该宿舍中**格拉斯哥帮**
+    # 干员恢复效果额外 +0.3」——摩根自己不回复，而是把**别人已经算出的那条贡献**顶上去。
+    # 实现：找出被点名提供者（boost_provider）已记入流水账、且 group 匹配（boost_group）的
+    # 贡献，逐条补一条**同组同技能**的增量贡献——于是 `SAME_KIND_MAX` 会把它
+    # 先并入该技能的合计、再与其他技能取最高（正是"恢复效果额外 +0.3"的语义）。
+    # 若把增量记成独立技能，会被"同种取最高"当成竞争者而丢掉。
+    for mod_owner in facility.operators:
+        if not _active(mod_owner):
+            continue
+        for ms in _skills_of(mod_owner, SkillKind.DORM_META):
+            provider = next((o for o in facility.operators
+                             if o.name == ms.boost_provider and _active(o)), None)
+            if provider is None:
+                continue
+            ctx = SkillContext(world, mod_owner, op, facility, variables)
+            if ms.condition is not None and not ms.condition(ctx):
+                continue
+            _ok, amount, vtxt = _scaled_amount(ms, variables, world, facility, op)
+            if not _ok or amount <= ZERO:
+                continue
+            targets = [c for c in lg.of(Bucket.RECOVER)
+                       if c.owner == provider.name
+                       and (not ms.boost_group or c.group == ms.boost_group)]
+            for c in targets:
+                lg.add(Contribution(Bucket.RECOVER, c.label, amount, group=c.group,
+                                    stacking=c.stacking, owner=c.owner, target=c.target,
+                                    skill_id=c.skill_id, skill_name=c.skill_name,
+                                    template=c.template, max_group=c.max_group,
+                                    detail=f"（由 {mod_owner.name}「{ms.name}」强化）" + vtxt))
+
     # --- 池分配：冰酿 0.8 总额平摊给"心情未满"的宿舍成员 ---
     if pool_total > ZERO and pool_skill is not None:
         recipients = _non_full_operators(facility)

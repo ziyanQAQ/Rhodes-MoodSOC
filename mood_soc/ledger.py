@@ -226,13 +226,20 @@ class MoodLedger:
             clamp_note = f"（原始 {raw}，消耗不为负已钳位到 0）" if total != raw else ""
             lines.append(f"{bucket.label}  合计 {total}{clamp_note}")
             hit_max = self._max_group_winners(items)
+            # 「同种取最高」的判负要按**技能实例的小计**比，不能按单条分句的 value 比：
+            # 否则一条获胜技能只要由多个分句组成（「基础 + 额外」/ 被 M17 强化），
+            # 它的每条分句都会被误标成"被更高者覆盖"（实测：摩根强化后 0.2 与 0.3 都被标）。
+            winners = self._same_kind_winners(items)
+            group_best: Dict[str, Decimal] = {}
+            for (g, _inst), v in winners.items():
+                group_best[g] = max(group_best.get(g, ZERO), v)
             for c in items:
                 mark = ""
                 note = []
                 if c.group and c.stacking == Stacking.SAME_KIND_MAX:
                     inst = (c.owner or c.target or "", c.skill_id.split("#", 1)[0] or c.label)
-                    best = self._same_kind_winners(items).get((c.group, inst))
-                    if best is not None and c.value < best:
+                    mine = winners.get((c.group, inst))
+                    if mine is not None and mine < group_best.get(c.group, ZERO):
                         note.append("同种取最高，被更高者覆盖")
                 if c.max_group and (c.max_group, c.owner) not in hit_max:
                     note.append("跨干员取最高，被更高者覆盖")

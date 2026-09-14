@@ -217,6 +217,7 @@ sustain_hours（还能维持/恢复多久，evaluate 输出）：
          + 群体回复（dorm_group，同种取最高；冰酿单独分配）
          + 单体回复（dorm_single，同种取最高，锁定"心情最低且未满且非提供者"的干员）
          + 定向回复（dorm_targeted，满足条件者叠加求和）
+         ± 元修正（M17，dorm_meta）：**他人**把上面某条效果顶高（摩根→推进之王 +0.3，见 §4.28）
          + 冰酿分配（0.8 总额 / 心情未满成员数）
 ```
 
@@ -385,6 +386,22 @@ net == 0     → "心情不变"
       不能用 `DEFAULT_OPERATORS`——锡兰/嘉维尔/蓝毒都是只有生产/训练技能的干员）。
     ⚠️ 遗留简化：`_single_recovery` 的**目标锁定**是全局一名受益者（§8.5），
     所以「毒剂师之友」上游没写「除自身以外」、深靛本可自指，本模型仍把她排除在候选外。
+28. **元修正（M17）：一名干员强化**另一名干员**的效果已实现**（P5b）：
+    上游原文（`buffs["dorm_rec_toone[000]"]`）：「进驻宿舍时，**推进之王**对该宿舍中
+    **格拉斯哥帮**干员恢复效果额外 **+0.3**」——摩根自己不回复，而是把**别人已经算出的那条贡献**顶上去。
+    - 数据：`moods_skills.txt` 新增 `dorm_rec_toone_000`（family=`dorm_meta` → `SkillKind.DORM_META`，
+      template=`M17`），params 为 `boost_provider=推进之王;boost_group=dorm_group`；
+      被强化的**目标**由 `CLAUSE_COND` 的 `_cond_target_in_faction("格拉斯哥帮")` 筛选。
+    - 实现（`rules._dorm_ledger` 的元修正段）：找出被点名提供者（`boost_provider`）已记入流水账、
+      且 `group == boost_group` 的贡献，逐条补一条**同组、同 skill_id、同 owner** 的增量贡献。
+      于是 `SAME_KIND_MAX` 会把它**先并入该技能的合计**、再与其他技能取最高——
+      这正是「恢复效果额外 +0.3」的语义（推进之王 0.2 → 0.5）。
+      ⚠️ 若把增量记成**独立技能**，会被"同种取最高"当成竞争者而整个丢掉，这是本机制最容易写错的地方。
+    - 守卫：`boost_provider` 是点名引用，已被 `check_faction_refs()` 纳入干员名校验。
+29. **流水账 `explain()` 的「同种取最高」判负按**技能小计**比，不按单条分句**（P5b 修）：
+    一条获胜技能若由多个分句组成（「基础 + 每有 N 额外」、或被 M17 强化），
+    旧实现拿每条分句的 `value` 去和"技能小计"比，会把**获胜技能的每条分句都标注成
+    "被更高者覆盖"**（实测：摩根强化后 0.2 与 0.3 都被标）。现改为实例小计 vs 组内最高小计。
 
 ---
 
@@ -410,6 +427,8 @@ net == 0     → "心情不变"
   - `self_only` = 消除类只作用于**自身**（若叶睦「互为半身」）；False = 同设施所有干员（槐琥/令）；
   - `basis` = **计数基准**折算（见 §4.19），如 `power_count`（每有 1 间发电站）、
     `dorm_level`（当前宿舍每级）、`dorm_others`（每有 1 名其他干员）、`recruit_slot`（每个招募位）。
+  - `boost_provider` / `boost_group` = **元修正**（M17）的点名槽：强化谁（持有者名）、
+    强化它哪一组贡献（如 `dorm_group`）；目标筛选仍走 `condition`（见 §4.28）。
   - `template_id` = 分类模板（`M01`~`M17` / `X01`~`X11`，见 §5.5）；
   - `max_group` 非空 = **同组取最高**（轴 F3，官方术语 `cc.c.sui2_1`）；
   - `spread_whitelist=True` = 该技能是**扩散提供者**（玛恩纳公事公办）；
@@ -451,7 +470,7 @@ net == 0     → "心情不变"
 3. **规则引擎**：`rules._active_skill_ids(op)` 一次算好"已解锁 + 未被替换 + 非待译"的技能集合，
    后续 `_skills_of(op, kind)` 全部基于它。要改判断逻辑只动 `rules.py`。
 
-### 5.4 `SkillKind`（10 种）与 value 符号语义（极易错，请牢记）
+### 5.4 `SkillKind`（11 种）与 value 符号语义（极易错，请牢记）
 
 | SkillKind | value 语义 | 叠加方式 | 现有哪些技能（节选） |
 |---|---|---|---|
@@ -465,6 +484,7 @@ net == 0     → "心情不变"
 | `DORM_SINGLE` | 宿舍单体回复（恒正，锁定目标） | 同种取最高 | 使徒/慈悲/疗养等（大量真实技能） |
 | `DORM_TARGETED` | 宿舍定向回复（恒正，满足条件） | 求和 | 刺玫低心情+0.1（mood<18）/ 净化呼吸（mood<20） |
 | `ELIMINATE_SELF` | 消除他人自身消耗（value 恒 0） | — | 槐琥 / 令（限岁） |
+| `DORM_META` | **元修正**：强化**他人**在宿舍的恢复效果（value = 增量，正） | 并入**被强化技能**的小计（轴 F2） | 摩根「头号陪练」→ 推进之王 +0.3（见 §4.28） |
 
 `condition` 是 `Callable(SkillContext)->bool`，`SkillContext` 含 `world / owner / target / facility`；
 条件函数用鸭子类型读 ctx，因此 `skills.py` 不 import `rules.py`（避免循环依赖）。
@@ -601,7 +621,7 @@ MAA 排班转换：`python scripts/maa_to_scenario.py [源] [输出目录]`（�
 8. **数据管道幂等**（P4b 修）：`classify_skills.py --agd` 会重写 `moods_skills.txt` 的
    `template_id` / `params`。它现在**保留手写参数**（`basis=` / `var=` / `var_per=` / `var_min=`）
    与**已存在的人工判定**（`partial` / `partial_mode`），只给新行填初值。
-   实测：重跑一次 `--agd`，249 行参数变化 **0** 行。
+   实测：重跑一次 `--agd`，250 行参数变化 **0** 行。
    ⚠️ 若没有这道保护，重跑分类器会把 P3/P4 手工回填的折算规则**全部抹掉**（已踩过）。
 9. **阵营表已改为上游自动生成**（2026-09 重构）：`OPERATOR_FACTIONS` / `FACTION_MEMBERS` 由
    `scripts/generate_factions.py` 读上游 `cc.g.*` / `cc.tag.*` 生成（28 组 231 条），
@@ -701,6 +721,11 @@ traj = simulate(world, "泡泡", Decimal("12"), step=Decimal("0.1"))   # 深拷�
       ②在 `CLAUSE_COND` 里按 `(skill_id, clause)` 挂上；③名字要能过 `check_faction_refs()`
       （阵营名对 `factions.txt`，干员名对 `operators.txt` 全量）；④**若挂的是 `dorm_single`，
       确认取值走 `MoodLedger.same_kind_winner` 而不是单条分句 `max`**（否则基础分句会把加成吃掉）。
+- [ ] 新增技能是**元修正**（改他人的效果）？→ ①family=`dorm_meta`（→ `SkillKind.DORM_META`）、
+      `template_id=M17`；②params 填 `boost_provider=<被强化的持有者>` 与 `boost_group=<被强化的组>`；
+      ③目标筛选走 `CLAUSE_COND`（`_cond_target_in_faction` / `_cond_target_is`）；
+      ④实现处必须把增量记成**同组同 skill_id 的额外贡献**（并入被强化技能的小计），
+      **不能**记成独立技能——否则会被"同种取最高"当成竞争者丢掉。
 - [ ] 是否手工往 `moods_skills.txt` **补过分句**（上游一个 buff 描述里有多个效果、本地 CSV 没拆）？
       → `classify_skills.py` 是**原地重写**、不重建行，故补的行会保留；但仍要跑一次 `--agd`
       确认参数变化 0 行，并在 `CLAUSE_COND` / 模板注释里写清上游原文出处。

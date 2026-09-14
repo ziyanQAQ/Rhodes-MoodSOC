@@ -80,6 +80,7 @@ FAMILY_KIND = {
     ("recover", "complex"):      "DORM_TARGETED",
     ("recover", "immune"):       "ELIMINATE_SELF",
     ("recover", "no_external"):  "DORM_SELF",       # exclusive=True（菲亚梅塔自律）
+    ("recover", "dorm_meta"):    "DORM_META",       # M17 元修正（摩根 头号陪练）
     # 无法精确建模的机制，映射到相近 kind，后续标"待译"不生效：
     ("recover", "swap"):         "DORM_TARGETED",
     ("recover", "self"):         "DORM_SELF",
@@ -129,6 +130,11 @@ CLAUSE_COND = {
     ("dorm_rec_single_power_001", 2): '_cond_target_in_faction("拉特兰")',          # 圣城趣事通（新约能天使）
     ("dorm_rec_single&tag_000", 2):                                                 # 狩猎好帮手（罗德岛隐秘队）
         '_cond_target_in_faction("怪物猎人小队", "泡影国狩猎小队")',
+    # —— M17 元修正（摩根「头号陪练」）——
+    # 上游原文（`dorm_rec_toone[000]`）：「进驻宿舍时，**推进之王**对该宿舍中
+    # **格拉斯哥帮**干员恢复效果额外 +0.3」——摩根不自己回复，而是**强化别人**的效果；
+    # 被强化的对象由本条件筛选（目标须属格拉斯哥帮），提供者由 boost_provider 指定。
+    ("dorm_rec_toone_000", 1): '_cond_target_in_faction("格拉斯哥帮")',
 }
 
 # 纯布尔、可自动映射的条件（在 target 或 condition 文本中命中）
@@ -414,6 +420,8 @@ def load_skills():
             "var_min": Decimal(params["var_min"]) if params.get("var_min") else None,
             "basis": params.get("basis") or None,
             "self_only": params.get("self_only") == "true",
+            "boost_provider": params.get("boost_provider") or None,
+            "boost_group": params.get("boost_group") or None,
             "spread_whitelist": params.get("spread") == "cc.c.skill",
             "partial": partial,
             "partial_mode": partial_mode,
@@ -594,6 +602,10 @@ def render(skills_by_key, default_operators, equips, traits, factions, var_produ
         lines.append(f'        var_min={_fmt_value(sk["var_min"]) if sk["var_min"] is not None else "None"},')
         lines.append(f'        basis={sk["basis"]!r},')
         lines.append(f'        self_only={sk["self_only"]!r},')
+        bp = f'"{sk["boost_provider"]}"' if sk["boost_provider"] else "None"
+        lines.append(f'        boost_provider={bp},')
+        bg = f'"{sk["boost_group"]}"' if sk["boost_group"] else "None"
+        lines.append(f'        boost_group={bg},')
         lines.append('    ),')
     lines.append('}')
     lines.append('')
@@ -716,6 +728,10 @@ def check_faction_refs(skills_by_key, factions, known_operators=()) -> list[str]
         for fac in (sk.get("count_faction"), sk.get("target_faction")):
             if fac:
                 used.setdefault(fac, []).append(key)
+        # M17 元修正的「被强化者」也是点名引用，同样要校验
+        bp = sk.get("boost_provider")
+        if bp and bp not in known_ops:
+            unknown_ops.setdefault(bp, []).append(key)
     for sid, expr in COOP_COND.items():
         m = re.search(r'_cond_with_cc_faction\("([^"]+)"\)', expr)
         if m:
