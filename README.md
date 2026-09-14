@@ -112,7 +112,12 @@ python main.py --scenario-file x.json --target 菲亚梅塔 --entry-events
     "scope": "anywhere",
     "swap_with": "any",
     "restore_back": true,
-    "force": true
+    "force": true,
+    "per_shift": [
+      {"swap_with": "巫恋", "force": true},
+      {"swap_with": "any"},
+      {"enabled": false}
+    ]
   },
   "facilities": [
     {"type": "宿舍", "level": 5, "operators": [{"name": "菲亚梅塔", "mood": 24}]},
@@ -128,11 +133,31 @@ python main.py --scenario-file x.json --target 菲亚梅塔 --entry-events
 | `swap_with` | 人名 / `"any"` / 省略 | **换谁**：人名 = 指定；`"any"`（或 `"任意"`/`"最累"`）= **自动挑全基建心情最低的那位**；省略 = 「前一位进驻」（`scope=anywhere` 时省略也走自动挑） |
 | `restore_back` | `true`（默认）/ `false` | **换完怎么放**：`true` = 把被换满的那位**换回原位**（两人都留在自己的岗位上，只交换心情）；`false` = **位置也一起互换**（她接管对方岗位、对方进她的位置） |
 | `force` | `false`（默认）/ `true` | **要不要等她**：到该换的时候（每班开始）她不满心情时，`false` = 这次不换；`true` = **一直等到她回满心情的那一刻立刻换** |
+| **`per_shift`** | 数组 / 对象 | **按班次覆盖**上面各项 —— **每个班"用不用、换给谁、要不要强等"都可以不同** |
+
+#### 按班次（3 班 12/6/6 就是典型）
+
+```json
+"per_shift": [
+  {"swap_with": "巫恋", "force": true},   // 第 1 班：换巫恋，点名要换（没满就等她满）
+  {"swap_with": "any"},                   // 第 2 班：自动挑当时最累的那位
+  {"enabled": false}                      // 第 3 班：这一班不换
+]
+```
+
+- 列表写法 = **按班次位置**（第 1/2/3 班）；也支持字典写法用**序号或班次名**定位：
+  `"per_shift": {"2": {"swap_with": null}, "Shift 3 · 6h": {"enabled": false}}`。
+- **逐字段继承**：没写的字段沿用全局；写 `null`（或 `""`）= **明确清空**该字段
+  （`swap_with: null` = 这一班回到"不指定"口径）。
+- 想让某班"明确用同宿舍的前一位进驻"而不受全局 `scope: "anywhere"` 影响：
+  写 `{"swap_with": null, "scope": "dorm"}`。
+- 每班的有效配置可以用 `Schedule.entry_config_for_shift(i)`（界面）或
+  `models.resolve_entry_config(cfg, i, 班次名)`（引擎）算出来。
 
 宽松写法：`"entry_events": true` / `false` / `"某人"`；`"anywhere": true` 等价于 `"scope": "anywhere"`。
 
 ```python
-from mood_soc import apply_entry_events, entry_event_holders, find_entry_target
+from mood_soc import apply_entry_events, entry_event_holders, find_entry_target, entry_target_kind
 # ⚠️ apply_entry_events 就地修改 world（心情；restore_back=False 时还包括位置）
 events = apply_entry_events(world)                                    # 默认：结算，用"前一位进驻"
 events = apply_entry_events(world, swap_with="路人")                   # 指定与谁换
@@ -141,10 +166,12 @@ events = apply_entry_events(world, restore_back=False)                 # 连位�
 events = apply_entry_events(world, enabled=False)                     # 明确不换
 events = entry_event_holders(world)                                   # [(触发者名, 所在房间)] 供界面提示
 target, why = find_entry_target(world, holder, dorm, "any", "anywhere")  # 预览"会换谁"
+entry_target_kind("any", "dorm")                                      # 'auto'（行为与文案同源）
 ```
 
 > `force` 是**带时间**的语义（"等到她回满"），只在排班模拟里生效：
-> `ui.schedule.simulate_schedule(..., entry_force=True)`。一次性 API 不会等待。
+> `ui.schedule.simulate_schedule(..., entry_force=True, entry_per_shift=[...])`。
+> 一次性 API 不会等待（配了 `force` 但她当前没满时会记一条说明，而不是静默）。
 > 实测示例：她红脸时「自律」失效 → 按宿舍基础 4/h 回满 → **恰好走到 24 的那一刻**触发换心情。
 
 **优先级**（两边都能配，规则简单）：
@@ -153,6 +180,7 @@ target, why = find_entry_target(world, holder, dorm, "any", "anywhere")  # 预�
 |---|---|---|
 | 换不换 | `enabled` 参数 / JSON `enabled` / 都没有 | **显式参数 > JSON > 默认结算**（"调用这个函数"本身就是"要结算"） |
 | 换谁 / 在哪换 / 换完怎么放 | 同名参数 / JSON 同名字段 / 都没有 | **显式参数 > JSON > 默认**（默认＝前一位进驻、仅同宿舍、换回去） |
+| **按班次** | `per_shift`（JSON）或界面上的按班次表格 | **界面传的 > JSON 的**；每班内再"逐字段覆盖全局" |
 
 命令行 `--entry-events` 与界面上的勾选都是"显式参数"，因此它们**优先于** JSON 里的 `enabled: false`。
 
@@ -607,7 +635,7 @@ python main.py --mode base --demo --period 12                           # 先推
 | **一眼看到全部房间** | 看板用 21px 紧凑芯片：控制中枢横排一行，工作区（制造/贸易/发电）与辅助休息区（会客/办公/训练/加工/宿舍）分两列，**一屏放下，不用滚动** |
 | **一眼看到全部干员** | 底部「全员一览」把整个周期出现过的干员（含只出现在别的班次的）全摆出来，带位置标记（`制1`/`宿3`/`中`），按颜色看谁危险 |
 | 逐个位置设干员与心情 | 看板**左键**位置 → 选人/更换/清空；**右键**位置 → 设该干员心情（周期起点） |
-| **进驻事件（换心情）开关** | 工具栏「结算进驻事件（进驻那一刻换心情）」+ 旁边实时旁注（如 `（最累的·任意位置·位置也换·等她满）`）；点「**这是什么／换谁…**」打开设置框，四组选项：**① 在哪换**（仅同宿舍 / 基建任意位置）、**② 换谁**（前一位进驻 / 指定干员 / 全基建最累的那位自动）、**③ 换完怎么放**（把被换满的换回原位 / 位置也一起互换）、**④ 强制换心情**（到点没满就等她回满再换）。场景 JSON 顶层写了 `entry_events` 时，导入即自动同步到这里 |
+| **进驻事件（换心情）开关** | 工具栏「结算进驻事件（进驻那一刻换心情）」+ 实时旁注；点「**这是什么／换谁…**」打开设置框，**五组选项**：① 在哪换（仅同宿舍 / 基建任意位置）、② 换谁（前一位进驻 / 指定干员 / 全基建最累的那位自动）、③ 换完怎么放（把被换满的换回原位 / 位置也一起互换）、④ 强制换心情（到点没满就等她回满再换）、**⑤ 按班次**（3 班排班逐班设置"使用 / 换给谁 / 强制"）。应用后状态栏会用一句话复述当前配置（含按班次明细）。场景 JSON 顶层的 `entry_events` 会在导入时自动同步到这里 |
 | 时间滑动 → 各位置心情实时变化 | 底部滑块；两侧 `◀`/`▶` 与 `←/→` 键 = 15 分钟一档、`Home/End` 跳首尾、`空格` 播放/暂停 |
 | **播放**（看一天怎么走） | ▶ 播放 + **速度倍率 0.5x / 1x / 2x / 4x**（1x = 1 小时/秒，24 秒跑完一天） |
 | 对点：输入干员名 → 整周期心情曲线 | 右侧「对点查询」选人，或直接点「全员一览」里的芯片 → 曲线 + 关键数值（最低/最高及时刻、红脸段数与时长、各班最低） |
@@ -628,6 +656,8 @@ python main.py --mode base --demo --period 12                           # 先推
 | `apply_entry_events` | `(world, swap_with=None, enabled=None, scope=None, restore_back=None)` | `list[Contribution]` | **进驻事件**（M15a 换心情）：`swap_with` 换谁（人名 / `"any"` 自动挑最累的）、`scope` 范围（`dorm`/`anywhere`）、`restore_back` 换完是否把对方换回原位、`enabled` 强制开关；⚠️ **就地改** `world`。优先规则见上文 |
 | `entry_event_holders` | `(world)` | `list[(干员名, 房间名)]` | 列出可能触发进驻事件的干员（如菲亚梅塔），供界面提示 |
 | `find_entry_target` | `(world, holder, facility, swap_with=None, scope="dorm")` | `(Operator, 说明)` | 预览"会换谁"（界面用它做候选与提示） |
+| `entry_target_kind` | `(swap_with, scope="dorm")` | `"named"/"auto"/"default"` | 口径判定（**行为与文案同源**，避免"实际自动挑、文案写前一位"） |
+| `resolve_entry_config` | `(cfg, index, label="", overrides=None)` | `EntryEventConfig` | 合并"全局配置 + 某班次覆盖" → 该班的有效配置（按班次生效的关键） |
 | `evaluate` | `(world, name, period_hours=0)` | `MoodResult` | single 模式：目标干员时段后的状态 |
 | `evaluate_base` | `(world, period_hours=0)` | `BaseResult` | base 模式：全体干员 + 布局可维持时长 |
 | `compute_net_rate` | `(world, name)` | `Decimal` | 某干员净速率（消耗 − 回复，>0 下降） |
@@ -760,7 +790,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 ## 六、测试（黑盒）
 
 测试为**黑盒测试**：只通过「命令行」「公开 API」与「图形界面的计算核心」断言
-**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **146 个用例全绿**。
+**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **154 个用例全绿**。
 
 ```bash
 # 运行全部测试
