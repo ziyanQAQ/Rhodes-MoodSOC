@@ -42,9 +42,17 @@ from mood_soc.config import FacilityType  # noqa: E402
 SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
 
-# 播放：1x = **1 小时/秒**（24 秒跑完一个 24h 周期）；倍率只改推进速度
-PLAY_SPEEDS = ("0.5x", "1x", "2x", "4x")
-PLAY_BASE_HOURS_PER_SEC = Decimal("1")
+# 播放速度：单位是 **模拟秒 / 真实秒（s/s）** —— `1x` 就是实时（1 秒推进 1 模拟秒）。
+# 24h 周期在 1x 下要放 24 小时，所以档位往上给到"4 小时/秒"（＝14400x）。
+PLAY_SPEEDS = ("1x", "60x", "600x", "3600x", "14400x")
+PLAY_BASE_SECONDS_PER_SEC = Decimal("1")
+PLAY_SPEED_HINTS = {
+    "1x": "实时",
+    "60x": "1 分/秒",
+    "600x": "10 分/秒",
+    "3600x": "1 小时/秒",
+    "14400x": "4 小时/秒",
+}
 PLAY_TICK_MS = 60
 
 
@@ -53,8 +61,8 @@ class MoodSocApp(tk.Tk):
         super().__init__()
         self.title("Rhodes-MoodSOC · 基建心情排班")
         self.geometry("1560x950")
-        # 最小宽度按"工具栏放得下"来定（实测工具栏需要 ~1309px），否则最右侧按钮会被裁掉
-        self.minsize(1320, 780)
+        # 最小宽度按"工具栏放得下"来定（实测工具栏需要 ~1370px），否则最右侧按钮会被裁掉
+        self.minsize(1400, 780)
         self.configure(bg=theme.BG)
 
         self.schedule: Schedule | None = None
@@ -144,15 +152,17 @@ class MoodSocApp(tk.Tk):
         self.play_btn.pack(side="left")
         tk.Label(play, text="速度", bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(8, 3))
-        self.speed_var = tk.StringVar(value="1x")
-        speed_box = ttk.Combobox(play, textvariable=self.speed_var, width=4, state="readonly",
+        self.speed_var = tk.StringVar(value=PLAY_SPEEDS[0])
+        speed_box = ttk.Combobox(play, textvariable=self.speed_var, width=7, state="readonly",
                                 values=PLAY_SPEEDS)
         speed_box.pack(side="left")
         speed_box.bind("<<ComboboxSelected>>", lambda _e: self._on_speed())
-        tk.Label(play, text="(1x=1h/秒)", bg=theme.BG, fg=theme.MUTED,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(3, 0))
+        self.speed_hint = tk.Label(play, text="", bg=theme.BG, fg=theme.MUTED,
+                                   font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.speed_hint.pack(side="left", padx=(3, 0))
         ttk.Button(play, text="回到起点", command=lambda: self.set_time(Decimal("0"))
                    ).pack(side="left", padx=(8, 0))
+        self._on_speed()
         self._sync_entry_label()
     # ================================================================== 主体
     def _build_body(self):
@@ -755,23 +765,39 @@ class MoodSocApp(tk.Tk):
             self.refresh_view(quick=False)      # 停播后补一次完整上色
 
     def _on_speed(self):
-        """播放倍率：`2x` → 每秒推进 2 小时（1x 是"1 小时/秒"）。"""
-        text = self.speed_var.get().rstrip("xX")
+        """播放速度：单位是 **模拟秒 / 真实秒（s/s）**——`1x` 就是实时。
+
+        例：`3600x` = 每真实秒推进 3600 模拟秒 = **1 小时/秒**（24h 周期 24 秒放完）。
+        工具栏只放短提示（宽度有限），完整解释写进状态栏。
+        """
+        text = self.speed_var.get().strip().rstrip("xX")
         try:
             self.play_speed = Decimal(text)
         except (InvalidOperation, ValueError):
-            self.play_speed = Decimal("1")
+            self.play_speed = PLAY_BASE_SECONDS_PER_SEC
+        label = self.speed_var.get().strip()
+        hint = PLAY_SPEED_HINTS.get(label, "")
+        if hasattr(self, "speed_hint"):
+            self.speed_hint.configure(text=f"＝{hint}" if hint else "")
+        if hasattr(self, "status"):
+            self.status.configure(
+                text=f"播放速度 {label}＝每真实秒推进 {theme.fmt_mood(self.play_speed, 0)} 模拟秒"
+                     + (f"（{hint}）" if hint else "")
+                     + f"，速度单位是「模拟秒/真实秒」；1x 即实时（24h 周期要放 24 小时），"
+                       f"想看完整一天用 3600x")
 
     def _play_tick(self):
         if not self._playing or self.traj is None or not self.winfo_exists():
             return
         total = self._total_hours()
         # 推进量按**真实流逝时间**算（不是名义间隔）：一次 tick 里还要做刷新，
-        # 用名义 60ms 会让实际速度比标称慢 ~20%（实测 1x 只有 0.78 小时/秒）。
+        # 用名义 60ms 会让实际速度比标称慢 ~20%。
+        # 速度单位是 s/s：step(小时) = 基准 × 倍率 × 真实秒数 ÷ 3600。
         now = time.perf_counter()
         dt = min(max(now - self._play_last, 0.0), 0.5)     # 卡顿后不跳帧
         self._play_last = now
-        step = PLAY_BASE_HOURS_PER_SEC * self.play_speed * Decimal(str(round(dt, 6)))
+        step = (PLAY_BASE_SECONDS_PER_SEC * self.play_speed
+                * Decimal(str(round(dt, 6))) / Decimal(3600))
         nxt = self.current_t + step
         if nxt > total:
             nxt = Decimal("0")

@@ -452,13 +452,14 @@ class Test新增交互(unittest.TestCase):
         self.assertTrue(skipped, "应当记录「未执行」的事件标记")
 
     # ------------------------------------------------------- 播放倍速
-    def test_播放倍速(self):
-        """1x = 1 小时/秒；2x 的推进量约为 1x 的两倍（按真实流逝时间算）。"""
+    def test_播放速度单位是秒每秒(self):
+        """速度单位 = **模拟秒 / 真实秒（s/s）**：`1x` 是实时，`3600x` 是 1 小时/秒。"""
         app = self.app
         measured = {}
-        for speed in ("1x", "2x"):
+        for speed in ("1x", "3600x"):
             app.speed_var.set(speed)
             app._on_speed()
+            self.assertEqual(float(app.play_speed), float(speed[:-1]))
             app.set_time(Decimal("0"))
             app.toggle_play()
             t0 = time.perf_counter()
@@ -467,12 +468,19 @@ class Test新增交互(unittest.TestCase):
                 time.sleep(0.003)
             elapsed = time.perf_counter() - t0
             app.toggle_play()
-            measured[speed] = (float(app.current_t), elapsed)
-        one, two = measured["1x"], measured["2x"]
-        self.assertLessEqual(abs(one[0] - one[1]), one[1] * 0.35,
-                             f"1x 应约等于 1 小时/秒（实测 {one}）")
-        self.assertLessEqual(abs(two[0] / one[0] - 2.0), 0.35,
-                             f"2x 应是 1x 的两倍（实测 {measured}）")
+            # 推进量（模拟秒/真实秒）应当 ≈ 标称倍率
+            measured[speed] = (float(app.current_t) * 3600 / elapsed, elapsed)
+        one, fast = measured["1x"], measured["3600x"]
+        self.assertLessEqual(abs(one[0] - 1), 1, f"1x 应约等于 1 模拟秒/秒（实测 {one}）")
+        self.assertLessEqual(abs(fast[0] / 3600 - 1), 0.35,
+                             f"3600x 应约等于 1 小时/秒（实测 {fast}）")
+        # 提示文字要说清这一档是多少
+        app.speed_var.set("3600x")
+        app._on_speed()
+        self.assertIn("小时/秒", app.speed_hint.cget("text"))
+        app.speed_var.set("1x")
+        app._on_speed()
+        self.assertIn("实时", app.speed_hint.cget("text"))
 
     # ------------------------------------------------------- 滚轮作用域
     def test_滚轮只在看板上生效(self):
