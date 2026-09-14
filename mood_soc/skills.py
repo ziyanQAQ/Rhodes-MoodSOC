@@ -1,188 +1,270 @@
-"""mood_soc/skills.py —— 心情类技能定义（游戏规则数据层）。
+"""mood_soc/skills.py —— 心情类技能框架（游戏规则数据层）。
 
-把每条技能抽象成一个 Skill 描述符（数据 + 少量条件函数），
-rules 模块用统一的解释器去执行，从而做到"新增技能 = 新增一条数据"，
-与计算逻辑解耦（低耦合）。
+本模块定义技能的数据模型（Skill / SkillEquip / SkillKind）与条件函数，
+具体技能库数据在 skills_data.py（由 scripts/generate_skills_data.py 自动生成），
+本模块末尾 import 并 re-export，因此其它模块仍可 `from .skills import SKILLS, ...`。
 
 约定（重要）：技能 value 的符号语义
-  - SELF_CONSUME / FACILITY_CONSUME / CC_REDUCE 中的 value 是"心情消耗的增减"，
+  - SELF_CONSUME / FACILITY_CONSUME / ROOM_OTHERS_CONSUME 中的 value 是"心情消耗的增减"，
     负号 = 减少消耗（减免），正号 = 增加消耗（加耗）。
   - CC_RECOVER / DORM_* 中的 value 是"心情回复速率"（恒为正值）。
 
+精英化判断（本项目的核心扩展）：
+  - 解锁/提升信息属于「干员↔技能」绑定（SkillEquip），而非技能本身（Skill），
+    因为同一 skill_id 在不同干员身上解锁等级可能不同。
+  - SkillEquip.unlock_elite：解锁所需精英化等级（0/1/2）
+  - SkillEquip.unlock_level：解锁所需干员等级（1 或 30，三星机械满级用 30）
+  - SkillEquip.enhanced：True = 精英化"提升"（β 替换 α）；False = 独立技能（解锁）
+  - SkillEquip.replaces：提升后替换掉的基础技能 id（None 表示无替换）
+  - 规则引擎按 op.elite >= unlock_elite 且 op.level >= unlock_level 判定是否已解锁，
+    同一 family 内 enhanced 技能解锁后替换其低版本（β 替换 α，不叠加）。
+
 数值均为 decimal.Decimal，保证十进制精确。
-数值与规则来源：《resources/心情消耗回复和工休时间.docx》。
+数值与规则来源：《resources/moods_skills.txt》《resources/operators.txt》。
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
 from typing import Callable, Optional, Tuple
 
-from .config import FacilityType
+from .config import MOOD_MAX, FacilityType
 
 
 class SkillKind(str, Enum):
     """技能作用方式。"""
-    SELF_CONSUME = "self_consume"            # 自身心情消耗增减（正=加耗，负=减耗）
-    FACILITY_CONSUME = "facility_consume"    # 对同设施全体（含自身）的心情消耗增减
-    CC_REDUCE = "cc_reduce"                  # 中枢全局心情消耗减免（同类按干员取最高）
-    CC_RECOVER = "cc_recover"                # 中枢提供的心情回复（作用于工作设施）
-    DORM_SELF = "dorm_self"                  # 宿舍：自身回复（同种取最高）
-    DORM_GROUP = "dorm_group"                # 宿舍：群体回复（同种取最高）
-    DORM_SINGLE = "dorm_single"              # 宿舍：单体回复（同种取最高，锁定目标）
-    DORM_TARGETED = "dorm_targeted"          # 宿舍：定向回复（对满足条件的干员加成，可叠加）
-    ELIMINATE_SELF = "eliminate_self"        # 消除同设施干员"自身心情消耗"的影响
+    SELF_CONSUME = "self_consume"               # 自身心情消耗增减（正=加耗，负=减耗）
+    FACILITY_CONSUME = "facility_consume"       # 对同设施全体（含自身）的心情消耗增减
+    ROOM_OTHERS_CONSUME = "room_others_consume" # 对同设施其他干员（不含自身）的心情消耗增减
+    CC_REDUCE = "cc_reduce"                     # 中枢全局心情消耗减免（同类按干员取最高）
+    CC_RECOVER = "cc_recover"                   # 中枢提供的心情回复（作用于工作设施/中枢/宿舍）
+    DORM_SELF = "dorm_self"                     # 宿舍：自身回复（同种取最高）
+    DORM_GROUP = "dorm_group"                   # 宿舍：群体回复（同种取最高）
+    DORM_SINGLE = "dorm_single"                 # 宿舍：单体回复（同种取最高，锁定目标）
+    DORM_TARGETED = "dorm_targeted"             # 宿舍：定向回复（对满足条件的干员加成，可叠加）
+    ELIMINATE_SELF = "eliminate_self"           # 消除同设施干员"自身心情消耗"的影响
 
 
 @dataclass(frozen=True)
 class Skill:
-    """一条心情类技能。"""
+    """一条心情类技能（一个 skill_id 的一个 clause）。
+
+    facility_types 语义随 kind 而定：
+      - 自身/设施/消除类：owner 所在设施（技能在哪类设施内生效）
+      - CC_RECOVER：回复作用的目标设施（中枢内/宿舍/工作设施）
+      - DORM_*：空（宿舍回复函数内部已限定在宿舍）
+    """
     id: str
     name: str
     kind: SkillKind
     value: Decimal = Decimal("0")
-    facility_types: Tuple[FacilityType, ...] = ()   # 空 = 任意设施
-    target_trait: Optional[str] = None              # 定向技能匹配的阵营（如"岁"）
+    facility_types: Tuple[FacilityType, ...] = ()
+    target_faction: Optional[str] = None            # 定向技能匹配的阵营/标签（如"岁"，见 _factions_of）
     condition: Optional[Callable] = None            # 额外触发条件（接收 SkillContext）
     note: str = ""
+    exclusive: bool = False                          # 独占回复（菲亚梅塔自律：不接受其它来源）
+    pool: bool = False                               # 池分配（冰酿：总额平分给未满成员）
+    untranslated: bool = False                       # 骨架确定但暂不生效（见 partial_mode="hold"）
+    count_faction: Optional[str] = None              # per-count 阵营：value 是"每个该阵营干员"的加成量
+    # —— 分类模板（六轴，见 skill_templates.py）——
+    template_id: str = ""                            # 模板 ID（M01~M17 / X01~X11）
+    max_group: Optional[str] = None                  # 轴 F3：同组内**取最高**而非求和（官方术语 cc.c.sui2_1）
+    spread_whitelist: bool = False                   # 轴 M02c：本技能是"扩散"提供者（玛恩纳公事公办）
+    partial: bool = False                            # 模板已确定但条件槽为空（保留效果骨架）
+    partial_mode: str = ""                           # "" / "apply"（按骨架生效）/ "hold"（保留骨架但不生效）
+    # —— 变量（轴 E4/E5 的"中间货币"版，见 variables.py）——
+    var_name: Optional[str] = None                   # 依赖的变量名（人间烟火 / 热情值 / 无声共鸣…）
+    var_per: Optional[Decimal] = None                # 「每有 N 点 <变量>」→ 值 × floor(变量/N)
+    var_min: Optional[Decimal] = None                # 「<变量> 处于 N 点及以上」→ 门槛条件（不缩放值）
+    # —— 计数基准（轴 E3/E4 的"可数条件"版，见 variables.basis_count）——
+    basis: Optional[str] = None                      # 每有 N 个"什么"：power_count / dorm_level / …
+    # —— 消除类（M13）的两种语义 ——
+    self_only: bool = False                          # True = 只消除**自身**的自身消耗影响（若叶睦 互为半身）
+                                                     # False = 消除**同设施所有干员**的（槐琥 团队精神 / 令 杯莫停）
+
+
+@dataclass(frozen=True)
+class SkillEquip:
+    """一名干员对某技能的装备绑定（解锁/提升信息）。
+
+    之所以与 Skill 分离：同一 skill_id 在不同干员身上解锁等级可能不同，
+    且"提升"（β 替换 α）是干员个体层面的行为。
+    """
+    unlock_elite: int = 0                            # 解锁所需精英化等级
+    unlock_level: int = 1                            # 解锁所需干员等级
+    enhanced: bool = False                           # 是否精英化"提升"（β 替换 α）
+    replaces: Optional[str] = None                   # 提升后替换掉的基础技能 id
 
 
 # ----------------------------------------------------------------------------
-# 条件函数：这里只通过鸭子类型读取上下文（ctx.world / ctx.owner / ...），
+# 条件函数：这里只通过鸭子类型读取上下文（ctx.world / ctx.owner / ctx.target / ctx.facility），
 # 因此本模块无需 import rules，避免循环依赖。
 # ----------------------------------------------------------------------------
-def _with_mogu(ctx) -> bool:
-    """维什戴尔的条件：控制中枢内同时有"魔王"时，额外 +0.1。"""
+def _cond_mood_below_18(ctx) -> bool:
+    """刺玫：目标干员心情低于 18。"""
+    return ctx.target.mood < Decimal("18")
+
+
+def _cond_mood_below_20(ctx) -> bool:
+    """净化呼吸：目标干员心情低于 20。"""
+    return ctx.target.mood < Decimal("20")
+
+
+def _cond_with_cc_mogui(ctx) -> bool:
+    """维什戴尔"巴别塔之帜"条件：控制中枢内同时有"魔王"。"""
     cc = ctx.world.control_center()
     return cc is not None and any(o.name == "魔王" for o in cc.operators)
 
 
-def _mood_below_18(ctx) -> bool:
-    """刺玫的条件：目标干员心情低于 18。"""
-    return ctx.target.mood < Decimal("18")
+def _cond_alone_in_facility(ctx) -> bool:
+    """「该设施内只有自身处于工作状态时」。
+
+    用于会客室 6 条：双面间谍 / 「职业操守」α·β / 我自己的愿望 / 专业经理·α·β。
+    上游原文（`meet_spd&cost_condChar[00x]`）：
+        「进驻会客室时，如果会客室内只有自身处于工作状态时，线索搜集速度提升 X%，
+          心情每小时消耗 +N」
+    → 心情消耗这一半是**有条件的**：只有在会客室里独自一人时才生效。
+    """
+    ops = ctx.facility.operators
+    return len(ops) == 1 and ops[0] is ctx.owner
+
+
+def _cond_target_in_faction(faction: str):
+    """「如果目标是 <阵营/标签> 干员」（资深料理人：莱欧斯小队）。"""
+    def cond(ctx) -> bool:
+        return faction in _factions_of(ctx.target)
+    return cond
+
+
+def _cond_no_abyssal_outside_dorm(ctx) -> bool:
+    """潮汐守望「反之」：没有**其他**深海猎人进驻在宿舍以外的设施。
+
+    上游原文：「每有 1 个深海猎人干员进驻在宿舍以外的设施，则自身心情每小时消耗 +0.5；
+    **反之**则自身心情每小时恢复 +0.5」。
+
+    ⚠️ 解释口径：**排除技能持有者自身**（歌蕾蒂娅自己就在控制中枢＝宿舍以外设施）。
+    若把她自己也算进去，则「每有…」恒 ≥ 1、下面的「反之」分支永远不可达——
+    游戏设计不会写一个恒不可达的分支，故取「其他深海猎人」口径。
+    """
+    for f in ctx.world.facilities:
+        if f.ftype in (FacilityType.DORMITORY, FacilityType.PRIVATE):
+            continue
+        for o in f.operators:
+            if o is ctx.owner:
+                continue
+            if "深海猎人" in _factions_of(o):
+                return False
+    return True
+
+
+def _cond_dorm_abyssals_full_mood(ctx) -> bool:
+    """潮汐守望额外 +0.5：宿舍内的深海猎人**均为满心情**（且没有其他人在宿舍外）。
+
+    口径：要求宿舍内至少有 1 名深海猎人（否则"均为满心情"空真，会把额外 +0.5 白送）。
+    """
+    if not _cond_no_abyssal_outside_dorm(ctx):
+        return False
+    in_dorm = [o for f in ctx.world.all_dormitories() for o in f.operators
+               if o is not ctx.owner and "深海猎人" in _factions_of(o)]
+    return bool(in_dorm) and all(o.mood >= MOOD_MAX for o in in_dorm)
+
+
+def _cond_with_cc_xiangzi(ctx) -> bool:
+    """丰川祥子相关联动：控制中枢内同时有"丰川祥子"。"""
+    cc = ctx.world.control_center()
+    return cc is not None and any(o.name == "丰川祥子" for o in cc.operators)
 
 
 # ----------------------------------------------------------------------------
-# 技能库（示例 / 可扩展）。数值均取自文档中明确给出的例子；
-# 标注"示例值"者表示文档未给出确切数值，仅用于演示机制，实际使用需以游戏数据为准。
+# 阵营 / 标签表：**自动生成**（skills_data.OPERATOR_FACTIONS / FACTION_MEMBERS）。
+#
+# 来源：scripts/generate_factions.py 读上游 `gamedata_const.json → termDescriptionDict`
+#       的 `cc.g.*`（阵营）/ `cc.tag.*`（标签），人工补充见 resources/factions_supplement.txt。
+#
+# ⚠️ 历史上这里有一张手工表，实测是错的（把「米诺斯」6 人误标为「萨尔贡」、
+#    「岁」只收 3/7），故改为上游自动生成。修数据请改上游或 supplement，不要改这里。
 # ----------------------------------------------------------------------------
-SKILLS = {
-    # ---- 自身心情消耗（self_consume）----
-    "泡泡-制造减耗": Skill(
-        "泡泡-制造减耗", "泡泡：进驻制造站时心情每小时消耗 -0.25",
-        SkillKind.SELF_CONSUME, Decimal("-0.25"), (FacilityType.MANUFACTURING,)),
-    "斥罪-办公加耗": Skill(
-        "斥罪-办公加耗", "斥罪：进驻办公室时心情每小时消耗 +0.5",
-        SkillKind.SELF_CONSUME, Decimal("0.5"), (FacilityType.OFFICE,)),
-    "阿罗玛-制造加耗": Skill(
-        "阿罗玛-制造加耗", "阿罗玛：心情每小时消耗 +0.25",
-        SkillKind.SELF_CONSUME, Decimal("0.25"), (FacilityType.MANUFACTURING,)),
-    "火神-制造减耗": Skill(
-        "火神-制造减耗", "火神：心情每小时消耗 -0.25",
-        SkillKind.SELF_CONSUME, Decimal("-0.25"), (FacilityType.MANUFACTURING,)),
-    "夕-自身加耗": Skill(
-        "夕-自身加耗", "夕：自身心情每小时消耗增加（示例值，需实测）",
-        SkillKind.SELF_CONSUME, Decimal("0.3"), (FacilityType.MANUFACTURING,), target_trait="岁"),
-    "重岳-自身加耗": Skill(
-        "重岳-自身加耗", "重岳：自身心情每小时消耗增加（示例值，需实测）",
-        SkillKind.SELF_CONSUME, Decimal("0.3"), (FacilityType.MANUFACTURING,), target_trait="岁"),
+def _factions_of(who):
+    """干员的阵营/标签元组。
 
-    # ---- 设施级心情消耗（facility_consume，作用于同设施全体含自身）----
-    "黍-制造全体减耗": Skill(
-        "黍-制造全体减耗", "黍：进驻制造站时，站内所有干员心情每小时消耗 -0.1",
-        SkillKind.FACILITY_CONSUME, Decimal("-0.1"), (FacilityType.MANUFACTURING,)),
-    "火哨-贸易全体减耗": Skill(
-        "火哨-贸易全体减耗", "火哨：进驻贸易站时，站内干员心情每小时消耗 -0.1",
-        SkillKind.FACILITY_CONSUME, Decimal("-0.1"), (FacilityType.TRADING,)),
-    "巫恋-贸易全体加耗": Skill(
-        "巫恋-贸易全体加耗", "巫恋：进驻贸易站时，全体心情每小时消耗 +0.25",
-        SkillKind.FACILITY_CONSUME, Decimal("0.25"), (FacilityType.TRADING,)),
+    who 可以是干员名（str）或 Operator：
+      - 自动生成的 `OPERATOR_FACTIONS`（上游权威）为基准；
+      - Operator.factions 可额外覆盖/补充（自定义场景用）；
+      - 兼容：Operator.trait 也视为一个阵营（历史 API，如手写 trait="岁"）。
+    """
+    if isinstance(who, str):
+        return OPERATOR_FACTIONS.get(who, ())
+    name = getattr(who, "name", None)
+    facs = list(OPERATOR_FACTIONS.get(name, ()))
+    for extra in (getattr(who, "factions", None) or ()):
+        if extra not in facs:
+            facs.append(extra)
+    trait = getattr(who, "trait", None)
+    if trait and trait not in facs:
+        facs.append(trait)
+    return tuple(facs)
 
-    # ---- 中枢全局减免（cc_reduce，按干员求和后取最高）----
-    "维什戴尔-全局减免": Skill(
-        "维什戴尔-全局减免", "维什戴尔：为发电/制造/贸易/办公/会客提供每小时 0.1 心情减免",
-        SkillKind.CC_REDUCE, Decimal("0.1"),
-        (FacilityType.POWER, FacilityType.MANUFACTURING, FacilityType.TRADING,
-         FacilityType.OFFICE, FacilityType.RECEPTION)),
-    "维什戴尔-魔王加成": Skill(
-        "维什戴尔-魔王加成", "维什戴尔：与魔王同时在中枢上班时，额外提供 0.1（总额 0.2）",
-        SkillKind.CC_REDUCE, Decimal("0.1"),
-        (FacilityType.POWER, FacilityType.MANUFACTURING, FacilityType.TRADING,
-         FacilityType.OFFICE, FacilityType.RECEPTION),
-        condition=_with_mogu),
-    # 文档示例："玛恩纳 + 4 个笑脸在中枢工作，提供 -0.25 的减免"。
-    # 笑脸类技能各自的具体数值文档未逐一给出，这里把合计 0.25 建模为一条示例技能，
-    # 便于复现文档的 160h 示例；实际使用时可按具体笑脸技能拆解。
-    "玛恩纳-笑脸扩散示例": Skill(
-        "玛恩纳-笑脸扩散示例", "示例：玛恩纳 + 4 个笑脸在中枢，合计提供 0.25 心情减免",
-        SkillKind.CC_REDUCE, Decimal("0.25"),
-        (FacilityType.POWER, FacilityType.MANUFACTURING, FacilityType.TRADING,
-         FacilityType.OFFICE, FacilityType.RECEPTION)),
 
-    # ---- 中枢心情回复（cc_recover）----
-    "玛恩纳-中枢回复": Skill(
-        "玛恩纳-中枢回复", "玛恩纳：进驻中枢时，中枢内所有干员心情每小时恢复 +0.05",
-        SkillKind.CC_RECOVER, Decimal("0.05"), (FacilityType.CONTROL_CENTER,)),
-    "玛恩纳-设施回复": Skill(
-        "玛恩纳-设施回复", "玛恩纳：进驻中枢时，发电/办公/会客工作的干员心情每小时恢复 +0.1",
-        SkillKind.CC_RECOVER, Decimal("0.1"),
-        (FacilityType.POWER, FacilityType.OFFICE, FacilityType.RECEPTION)),
+def _cond_with_cc_operator(name: str):
+    """条件：控制中枢内同时有某干员（如"与阿米娅一起进驻控制中枢"）。"""
+    def cond(ctx) -> bool:
+        cc = ctx.world.control_center()
+        return cc is not None and any(o.name == name for o in cc.operators)
+    return cond
 
-    # ---- 宿舍回复 ----
-    "菲亚梅塔-自身回复": Skill(
-        "菲亚梅塔-自身回复", "菲亚梅塔：自身心情每小时恢复 +2，且不接受其它来源的回复",
-        SkillKind.DORM_SELF, Decimal("2")),
-    "冰酿-分配回复": Skill(
-        "冰酿-分配回复", "冰酿：使心情未满的宿舍成员平均分配总计每小时 +0.8 的加成",
-        SkillKind.DORM_GROUP, Decimal("0.8")),   # 实际按 0.8/N 分配，由 rules 特殊处理
-    "刺玫-群体回复": Skill(
-        "刺玫-群体回复", "刺玫：宿舍内所有干员心情每小时恢复 +0.15（同种取最高）",
-        SkillKind.DORM_GROUP, Decimal("0.15")),
-    "遥-明星效应": Skill(
-        "遥-明星效应", "遥：宿舍内所有干员心情每小时恢复 +0.15（同种取最高）",
-        SkillKind.DORM_GROUP, Decimal("0.15")),
-    "刺玫-低心情加成": Skill(
-        "刺玫-低心情加成", "刺玫：宿舍内心情 18 以下的干员恢复效果额外 +0.1（定向回复）",
-        SkillKind.DORM_TARGETED, Decimal("0.1"), condition=_mood_below_18),
 
-    # ---- 消除类（eliminate_self）----
-    "槐琥-消除自身消耗": Skill(
-        "槐琥-消除自身消耗", "槐琥：消除当前制造站内所有干员自身心情消耗的影响",
-        SkillKind.ELIMINATE_SELF, Decimal("0"), (FacilityType.MANUFACTURING,)),
-    "令-消除岁自身消耗": Skill(
-        "令-消除岁自身消耗", "令：消除当前控制中枢内所有岁干员自身心情消耗的影响",
-        SkillKind.ELIMINATE_SELF, Decimal("0"), (FacilityType.CONTROL_CENTER,), target_trait="岁"),
-}
+def _cond_with_facility_operator(name: str):
+    """条件：目标所在设施内同时有某干员（如"德克萨斯与拉普兰德同驻贸易站"）。"""
+    def cond(ctx) -> bool:
+        return any(o.name == name for o in ctx.facility.operators)
+    return cond
+
+
+def _cond_with_cc_faction(faction: str):
+    """条件：控制中枢内存在"其他"某阵营干员（排除技能持有者自身）。
+
+    如摆渡人"英雄的骄傲"：与萨尔贡干员一起进驻控制中枢（摆渡人自己也是萨尔贡，
+    但"一起工作"指其他萨尔贡干员，故排除自身）。
+    """
+    def cond(ctx) -> bool:
+        cc = ctx.world.control_center()
+        return cc is not None and any(
+            o is not ctx.owner and faction in _factions_of(o) for o in cc.operators)
+    return cond
 
 
 # ----------------------------------------------------------------------------
-# 内置干员（名字 -> 技能 id 列表），方便快速搭建场景。
+# 技能库数据（自动生成）：SKILLS / DEFAULT_OPERATORS / SKILL_EQUIPS / TRAITS
 # ----------------------------------------------------------------------------
-DEFAULT_OPERATORS = {
-    "泡泡": ["泡泡-制造减耗"],
-    "斥罪": ["斥罪-办公加耗"],
-    "阿罗玛": ["阿罗玛-制造加耗"],
-    "火神": ["火神-制造减耗"],
-    "黍": ["黍-制造全体减耗"],
-    "火哨": ["火哨-贸易全体减耗"],
-    "巫恋": ["巫恋-贸易全体加耗"],
-    "槐琥": ["槐琥-消除自身消耗"],
-    "令": ["令-消除岁自身消耗"],
-    "夕": ["夕-自身加耗"],
-    "重岳": ["重岳-自身加耗"],
-    "维什戴尔": ["维什戴尔-全局减免", "维什戴尔-魔王加成"],
-    "玛恩纳": ["玛恩纳-中枢回复", "玛恩纳-设施回复"],
-    "菲亚梅塔": ["菲亚梅塔-自身回复"],
-    "冰酿": ["冰酿-分配回复"],
-    "刺玫": ["刺玫-群体回复", "刺玫-低心情加成"],
-    "遥" : ["遥-明星效应"],
-    "魔王": [],                 # 无心情技能，仅用于触发维什戴尔的联动条件
-}
+from .skills_data import (  # noqa: E402
+    DEFAULT_OPERATORS,
+    FACTION_MEMBERS,
+    OPERATOR_FACTIONS,
+    ROOM2_MAX_GROUP,
+    SKILLS,
+    SKILL_EQUIPS,
+    SPREAD_SKILL_IDS,
+    TRAITS,
+)
 
-# 阵营 / 特性
-TRAITS = {
-    "令": "岁",
-    "夕": "岁",
-    "重岳": "岁",
-}
+
+def base_skill_id(skill_id: str) -> str:
+    """由 `skill_id#clause` 取回原始 skill_id（扩散白名单比对用）。"""
+    return skill_id.split("#", 1)[0]
+
+
+__all__ = [
+    "Skill",
+    "SkillEquip",
+    "SkillKind",
+    "SKILLS",
+    "SKILL_EQUIPS",
+    "DEFAULT_OPERATORS",
+    "TRAITS",
+    "OPERATOR_FACTIONS",
+    "FACTION_MEMBERS",
+    "SPREAD_SKILL_IDS",
+    "ROOM2_MAX_GROUP",
+    "base_skill_id",
+]

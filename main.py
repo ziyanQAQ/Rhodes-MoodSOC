@@ -16,6 +16,7 @@
   python main.py --mode base --scenario-file scenarios/demo.json
   python main.py --mode base --demo --period 12             # 先推进 12h 再评估布局可持续性
   python main.py --demo --json-file                        # 额外把结果写入 JSON 文件
+  python main.py --demo --target 泡泡 --explain             # 打印心情流水账（为什么是这个速率）
 """
 from __future__ import annotations
 
@@ -76,6 +77,8 @@ def main() -> int:
                         help="是否额外把结果写入 JSON 文件（默认 False，只打印到标准输出）")
     parser.add_argument("--trace", action="store_true",
                         help="仅 single 模式：附加心情轨迹（时间步进模拟，文本）")
+    parser.add_argument("--explain", action="store_true",
+                        help="仅 single 模式：打印心情流水账（逐条来源 + 轴 F 叠加规则，文本）")
     args = parser.parse_args()
 
     # 1) 场景来源
@@ -103,7 +106,7 @@ def main() -> int:
             print(f"错误：布局中不存在干员「{args.target}」", file=sys.stderr)
             return 1
         # 演示场景缺省 8 小时；自定义场景缺省 0（即仅看当前状态）
-        period = to_decimal(args.period if args.period > 0 else (8.0 if args.demo else 0.0))
+        period = to_decimal(args.period if args.period > 0 else 0.0)
         result = evaluate(world, args.target, period)
         payload = mood_result_to_dict(result, period)
         fname = f"single_{args.target}_{_timestamp()}.json"
@@ -117,7 +120,11 @@ def main() -> int:
         written = dump_json(payload, path)
         print(f"# 已生成结果文件：{written}", file=sys.stderr)
 
-    # 5) 可选：single 模式附轨迹
+    # 5) 可选：single 模式打印心情流水账（why 这个速率）
+    if args.explain and args.mode == "single":
+        print(result.ledger.explain(), file=sys.stderr)
+
+    # 6) 可选：single 模式附轨迹
     if args.trace and args.mode == "single":
         from mood_soc import simulate
         from mood_soc.report import render_trajectory

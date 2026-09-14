@@ -37,16 +37,20 @@ CC_REDUCTION_FULL = Decimal("0.25")  # 中枢放满干员后，全局获得的�
 # 三、设施类型
 # ============================================================================
 class FacilityType(str, Enum):
-    """设施类型。value 使用 ascii 便于序列化；中文名见 FACILITY_LABELS。"""
+    """设施类型。value 使用 ascii 便于序列化；中文名见 FACILITY_LABELS。
+
+    与上游 `building_data.json → rooms` 的 roomType 一一对应（见 FACILITY_TO_ROOM_TYPE）。
+    """
     CONTROL_CENTER = "control_center"   # 控制中枢
     MANUFACTURING = "manufacturing"     # 制造站
     TRADING = "trading"                 # 贸易站
     POWER = "power"                     # 发电站
     RECEPTION = "reception"             # 会客室
-    OFFICE = "office"                   # 办公室
+    OFFICE = "office"                   # 办公室（上游 roomType = HIRE）
     TRAINING = "training"               # 训练室
     WORKSHOP = "workshop"               # 加工站
     DORMITORY = "dormitory"             # 宿舍
+    PRIVATE = "private"                 # 活动室（上游 roomType = PRIVATE，category = CUSTOM_P）
 
 
 FACILITY_LABELS = {
@@ -59,7 +63,115 @@ FACILITY_LABELS = {
     FacilityType.TRAINING: "训练室",
     FacilityType.WORKSHOP: "加工站",
     FacilityType.DORMITORY: "宿舍",
+    FacilityType.PRIVATE: "活动室",
 }
+
+# 本项目设施枚举 ↔ 上游 roomType（用于对照上游 rooms / 技能 roomType 字段）
+FACILITY_TO_ROOM_TYPE = {
+    FacilityType.CONTROL_CENTER: "CONTROL",
+    FacilityType.MANUFACTURING: "MANUFACTURE",
+    FacilityType.TRADING: "TRADING",
+    FacilityType.POWER: "POWER",
+    FacilityType.RECEPTION: "MEETING",
+    FacilityType.OFFICE: "HIRE",
+    FacilityType.TRAINING: "TRAINING",
+    FacilityType.WORKSHOP: "WORKSHOP",
+    FacilityType.DORMITORY: "DORMITORY",
+    FacilityType.PRIVATE: "PRIVATE",
+}
+
+# ============================================================================
+# 设施容量（**上游权威数据**，勿凭印象改）
+#
+# 来源：Kengxxiao/ArknightsGameData → zh_CN/gamedata/excel/building_data.json
+#       · rooms[roomType].maxCount                —— 该类型最多可建几个房间
+#       · rooms[roomType].phases[等级-1].maxStationedNum —— 该等级可进驻人数
+# 快照 commit：0ef7f952dfd018392200157a5c79a6511ba69122（客户端 2.7.71）
+#
+# 复核方式（AGENTS.md §11）：
+#   python -c "import json;d=json.load(open('…/building_data.json',encoding='utf-8'));
+#              print({k:(v['maxCount'],[p['maxStationedNum'] for p in v['phases']])
+#                     for k,v in d['rooms'].items()})"
+# ============================================================================
+FACILITY_MAX_COUNT = {
+    FacilityType.CONTROL_CENTER: 1,
+    FacilityType.MANUFACTURING: 5,
+    FacilityType.TRADING: 5,
+    FacilityType.POWER: 3,
+    FacilityType.RECEPTION: 1,
+    FacilityType.OFFICE: 1,
+    FacilityType.TRAINING: 1,
+    FacilityType.WORKSHOP: 1,
+    FacilityType.DORMITORY: 4,
+    FacilityType.PRIVATE: 6,          # 活动室：最多 6 间，但不能进驻（maxStationedNum = 0）
+}
+
+FACILITY_SLOTS_BY_LEVEL = {
+    FacilityType.CONTROL_CENTER: (1, 2, 3, 4, 5),
+    FacilityType.MANUFACTURING: (1, 2, 3),
+    FacilityType.TRADING: (1, 2, 3),
+    FacilityType.POWER: (1, 1, 1),
+    FacilityType.RECEPTION: (2, 2, 2),
+    FacilityType.OFFICE: (1, 1, 1),
+    FacilityType.TRAINING: (2, 2, 2),   # ①训练位 + ②协助位
+    FacilityType.WORKSHOP: (1, 1, 1),
+    FacilityType.DORMITORY: (5, 5, 5, 5, 5),
+    FacilityType.PRIVATE: (0, 0, 0),    # 活动室不可进驻
+}
+
+# 上游 `roomsWithoutRemoveStaff = ["PRIVATE"]`：活动室的使用者不会被"撤下干员"逻辑移除，
+# 且在多数技能里被**显式排除**（「基建内（不包含副手及活动室使用者）」出现 23 次）。
+ACTIVITY_ROOM_FACILITIES = (FacilityType.PRIVATE,)
+
+
+def facility_max_count(ftype) -> int:
+    """该设施类型最多可建几个房间（-1/未收录视为不限）。"""
+    return FACILITY_MAX_COUNT.get(ftype, -1)
+
+
+def facility_slots(ftype, level: int = 1) -> int:
+    """该设施在指定等级可进驻的人数（超出等级上限时取最后一个）。"""
+    table = FACILITY_SLOTS_BY_LEVEL.get(ftype)
+    if not table:
+        return 0
+    idx = min(max(int(level), 1), len(table)) - 1
+    return table[idx]
+
+
+# ============================================================================
+# 各设施的基础心情消耗速率（点 / 小时）
+#
+# ⚠️ 与 docx 的基本口径一致：工作设施 1.0/h，宿舍 0（宿舍只回复）。
+#    但**加工站是例外**：加工站的心情是"按次消耗"（配方心情消耗，见
+#    resources/skills_registry.txt 的 A2/X08 共 34 条 buff），不搓材料就是 0/h。
+#    旧实现只排除宿舍、其余一律 1.0，导致加工站/训练室被算成 0.75/h（已修）。
+#
+# ⚠️ 训练室的 1.0 是**待确认口径**（见 TRAINING_BASE_CONSUMPTION）。
+# ============================================================================
+# 训练室协助位的基础消耗。上游没有公式实现（纯数据 dump），docx 也未写明。
+# 那 9 条训练室技能写的是「进驻训练室协助位时，心情每小时消耗+1」——
+# 与本项目其它设施一致的解读是「+1 是增量」（如制造站「-0.25」也是增量），
+# 故此处取 1.0，技能生效后合计 2.0/h。**待人工确认**。
+TRAINING_BASE_CONSUMPTION = Decimal("1")
+
+BASE_CONSUMPTION_BY_FACILITY = {
+    FacilityType.CONTROL_CENTER: BASE_CONSUMPTION,
+    FacilityType.MANUFACTURING: BASE_CONSUMPTION,
+    FacilityType.TRADING: BASE_CONSUMPTION,
+    FacilityType.POWER: BASE_CONSUMPTION,
+    FacilityType.RECEPTION: BASE_CONSUMPTION,
+    FacilityType.OFFICE: BASE_CONSUMPTION,
+    FacilityType.TRAINING: TRAINING_BASE_CONSUMPTION,
+    FacilityType.WORKSHOP: Decimal("0"),        # 按次消耗，不是每小时
+    FacilityType.DORMITORY: Decimal("0"),       # 宿舍只回复
+    FacilityType.PRIVATE: Decimal("0"),         # 活动室不消耗
+}
+
+
+def base_consumption(ftype) -> Decimal:
+    """设施的基础心情消耗速率（点/小时）。未收录类型按通用基础值 1.0。"""
+    return BASE_CONSUMPTION_BY_FACILITY.get(ftype, BASE_CONSUMPTION)
+
 
 # 中文名 -> 类型，用于解析用户输入
 _FACILITY_BY_LABEL = {label: t for t, label in FACILITY_LABELS.items()}
@@ -100,11 +212,27 @@ def facility_mood_reduction(ftype, operator_count):
     return min(FACILITY_REDUCTION_STEP * extra, FACILITY_REDUCTION_MAX)
 
 
+# ============================================================================
+# 设施集合（权威来源：官方术语表 gamedata_const.json → termDescriptionDict）
+#   cc.c.room1「部分设施」  = 发电站、人力办公室、会客室
+#   cc.c.room2「其他设施」  = room1 + 制造站 + 贸易站
+#   cc.c.room3「工作场所」  = room2 + 控制中枢 + 训练室
+# 注：scripts/generate_skills_data.py 里有同名的字符串版本（生成器不能 import
+#     mood_soc 包，见该脚本的引导死锁注释）；两处必须保持一致。
+# ============================================================================
+PARTIAL_WORK_FACILITIES = (FacilityType.POWER, FacilityType.OFFICE, FacilityType.RECEPTION)
+WORK_FACILITIES = (FacilityType.POWER, FacilityType.MANUFACTURING, FacilityType.TRADING,
+                   FacilityType.OFFICE, FacilityType.RECEPTION)
+ALL_WORKPLACE_FACILITIES = WORK_FACILITIES + (FacilityType.CONTROL_CENTER, FacilityType.TRAINING)
+
+
 def cc_reduction(cc_operator_count):
     """控制中枢全局心情减免：按中枢进驻人数线性折算，满员（5 人）= 0.25。
 
     文档只给出"放满 -> 0.25"这一锚点；这里采用"按人数线性折算"的建模假设
     （0 人 -> 0，5 人 -> 0.25），并在注释中显式声明。
+    上游佐证：building_data.json 的 controlData.basicCostBuff = -5（每人 -0.05），
+    与 5 人满员 -0.25 完全一致（进驻人数为整数，两种写法等价）。
     """
     count = min(max(int(cc_operator_count), 0), CC_SLOTS)
     ratio = Decimal(count) / Decimal(CC_SLOTS)

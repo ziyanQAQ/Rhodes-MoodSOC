@@ -17,16 +17,29 @@ from decimal import Decimal
 
 from .battery import INF, ZERO, ampere_hour_integration, to_decimal
 from .config import (
-    BASE_CONSUMPTION,
     FACILITY_LABELS,
     MOOD_MAX,
+    WORK_FACILITIES,
     FacilityType,
+    base_consumption,
     cc_reduction,
     dormitory_recovery,
     facility_mood_reduction,
 )
+from .config import DORM_LEVEL_TABLE
+from .ledger import Bucket, Contribution, MoodLedger
+from .variables import BASIS_DOC, VariableLedger, basis_count, collect_variables
 from .models import BaseLayout, BaseResult, Facility, MoodResult, Operator, OperatorResult
-from .skills import SKILLS, SkillKind
+from .skill_templates import Stacking
+from .skills import (
+    SKILLS,
+    SKILL_EQUIPS,
+    SPREAD_SKILL_IDS,
+    SkillEquip,
+    SkillKind,
+    _factions_of,
+    base_skill_id,
+)
 
 
 @dataclass
@@ -36,14 +49,81 @@ class SkillContext:
     owner: Operator        # 技能持有者
     target: Operator       # 技能作用对象
     facility: Facility     # 目标所在设施
+    variables: Optional[VariableLedger] = None   # 基建级变量快照（人间烟火/热情值/无声共鸣…）
+
+
+def _scaled_amount(skill, variables=None, world=None, facility=None, op=None):
+    """折算 skill.value：先按**变量**（`var_*`），再按**计数基准**（`basis`）。
+
+    返回 (是否成立, 折算后的值, 说明文本)：
+      - `var_min`（「<变量> 处于 N 点及以上」）：门槛，值不缩放，不满足则**不成立**；
+      - `var_per`（「每有 N 点 <变量>」）：值 × floor(变量 / N)；
+      - `basis`（「每有 N 间发电站 / 宿舍每级 / 每有 1 名其他干员…」）：值 × 计数；
+      - 两者都没有：原值。
+    """
+    ok, value, detail = True, skill.value, ""
+    # ① 变量（中间货币）
+    if getattr(skill, "var_name", None) and variables is not None:
+        name = skill.var_name
+        cur = variables.get(name)
+        if skill.var_min is not None:
+            ok = variables.at_least(name, skill.var_min)
+            detail += f"（{name} = {cur}，需 ≥ {skill.var_min}）"
+        elif skill.var_per is not None:
+            units = variables.units(name, skill.var_per)
+            value = value * units
+            detail += f"（{name} = {cur}，每 {skill.var_per} 点 → {units} 份）"
+        else:
+            detail += f"（{name} = {cur}）"
+    # ② 计数基准（可数条件）
+    basis = getattr(skill, "basis", None)
+    if basis and world is not None:
+        n = basis_count(world, basis, facility, op)
+        value = value * n
+        detail += f"（{BASIS_DOC.get(basis, basis)} × {n}）"
+    return ok, value, detail
 
 
 # ----------------------------------------------------------------------------
 # 工具函数
 # ----------------------------------------------------------------------------
 def _skills_of(op: Operator, kind: SkillKind):
-    """取干员持有的某类技能列表。"""
-    return [SKILLS[sid] for sid in op.skill_ids if sid in SKILLS and SKILLS[sid].kind == kind]
+    """取干员持有的、当前已解锁且未失效的某类技能列表。
+
+    精英化判断：
+      - 解锁：op.elite >= SkillEquip.unlock_elite 且 op.level >= SkillEquip.unlock_level；
+      - β 替换 α：同一干员同一 family 内，若"提升"技能（enhanced=True）已解锁，
+        则其 replaces 指向的低版本被替换（不叠加）；
+      - 待译技能（untranslated=True）暂不生效。
+    """
+    return [SKILLS[sid] for sid in _active_skill_ids(op) if SKILLS[sid].kind == kind]
+
+
+def _equip_of(op: Operator, sid: str) -> Optional[SkillEquip]:
+    """干员↔技能的装备绑定；无绑定（自定义 skill_id）时返回 None。"""
+    return SKILL_EQUIPS.get((op.name, sid))
+
+
+def _unlocked(op: Operator, sid: str) -> bool:
+    """技能是否已解锁（精英化/等级门槛）。无绑定的自定义技能默认视为已解锁。"""
+    equip = _equip_of(op, sid)
+    if equip is None:
+        return True
+    return op.elite >= equip.unlock_elite and op.level >= equip.unlock_level
+
+
+def _active_skill_ids(op: Operator):
+    """干员当前生效的技能 id 集合（已解锁 + 未被 β 替换 + 非待译）。"""
+    unlocked = {
+        sid for sid in op.skill_ids
+        if sid in SKILLS and not SKILLS[sid].untranslated and _unlocked(op, sid)
+    }
+    # β 替换 α：某技能若被"已解锁的提升技能"replaces 指向，则**整条技能**（含全部分句）被替换。
+    # 注意 `replaces` 存的是 skill_id（不带 #clause），因此按 base_skill_id 剔除，
+    # 否则同一技能的其它分句会漏剔（历史 bug，见 generate_skills_data.load_operators 注释）。
+    replaced = {base_skill_id(e.replaces) for sid in unlocked
+                if (e := _equip_of(op, sid)) is not None and e.replaces}
+    return {sid for sid in unlocked if base_skill_id(sid) not in replaced}
 
 
 def _active(op: Operator) -> bool:
@@ -51,181 +131,412 @@ def _active(op: Operator) -> bool:
     return op.mood > ZERO
 
 
+def _count_faction(facility: Facility, faction: str) -> Decimal:
+    """统计某设施内属于某阵营的干员数（含未进驻的干员不在内）。"""
+    return Decimal(sum(1 for o in facility.operators if faction in _factions_of(o)))
+
+
 def _scope_ok(skill, facility: Facility, target: Operator) -> bool:
     """判断技能的设施范围与阵营条件是否命中。"""
     if skill.facility_types and facility.ftype not in skill.facility_types:
         return False
-    if skill.target_trait and target.trait != skill.target_trait:
+    if skill.target_faction and skill.target_faction not in _factions_of(target):
         return False
     return True
 
 
-# ----------------------------------------------------------------------------
-# 心情消耗
-# ----------------------------------------------------------------------------
-def compute_consumption(world: BaseLayout, op: Operator, facility: Facility) -> Decimal:
-    """计算干员在工作设施内的心情消耗速率（点 / 时，结果 >= 0）。
+# ============================================================================
+# 心情消耗 / 回复：**流水账驱动**
+#
+# 唯一计算路径：先把每一条来源记成 Contribution，再交给 MoodLedger 按轴 F 合成。
+# 好处（对比重构前）：
+#   · 没有"两份逻辑"（带/不带解释各算一遍）——算出来的值天然就是解释里的值；
+#   · 新增叠加规则 = 加一个 Stacking 分支，不再往这里塞 max()/短路；
+#   · 每条来源都带 owner / skill / template，可回答"为什么是这个速率"。
+# ============================================================================
+def consume_ledger(world: BaseLayout, op: Operator, facility: Facility,
+                   variables: Optional[VariableLedger] = None) -> MoodLedger:
+    """构建**消耗侧**流水账。
 
     组成（与文档一致）：
-      基础消耗 1
+      基础消耗 base_consumption(设施类型)   ← 加工站 0（按次消耗）、训练室见 config
       - 设施基础减免 X（制造 / 贸易，按进驻人数）
       - 控制中枢全局减免（满员 0.25）
       ± 干员自身技能（self_consume）
       ± 同设施干员的设施级技能（facility_consume，含自身）
-      - 中枢全局减免技能（cc_reduce，取最高）
-      以及"消除类技能"会移除目标干员自身技能的正负影响。
+      - 中枢全局减免技能（cc_reduce，同干员内求和后跨干员取最高）
+      以及"消除类技能"把「自身技能」这一组整组归零。
     """
+    variables = variables if variables is not None else collect_variables(world)
+    lg = MoodLedger(op.name, facility.display_name, variables=variables)
     if facility.ftype == FacilityType.DORMITORY:
-        return ZERO   # 宿舍内不消耗心情
+        lg.add(Contribution(Bucket.CONSUME, "宿舍内不消耗心情", ZERO, group="base",
+                            template="BASE", target=op.name))
+        return lg
 
-    total = BASE_CONSUMPTION
+    lg.add(Contribution(Bucket.CONSUME, "基础消耗", base_consumption(facility.ftype),
+                        group="base", template="BASE", target=op.name,
+                        detail=f"（{facility.display_name} Lv{facility.level}）"))
 
-    # 1) 设施基础减免 X
-    total -= facility_mood_reduction(facility.ftype, len(facility.operators))
+    reduction = facility_mood_reduction(facility.ftype, len(facility.operators))
+    if reduction:
+        lg.add(Contribution(Bucket.CONSUME, "设施基础减免", -reduction,
+                            group="facility_reduction", template="BASE", target=op.name,
+                            detail=f"（{facility.display_name} {len(facility.operators)} 人："
+                                   f"每多 1 人 -0.05，上限 0.1）"))
 
-    # 2) 控制中枢全局减免
     cc = world.control_center()
-    total -= cc_reduction(len(cc.operators)) if cc else ZERO
+    if cc is not None:
+        cred = cc_reduction(len(cc.operators))
+        if cred:
+            lg.add(Contribution(Bucket.CONSUME, "控制中枢全局减免", -cred,
+                                group="cc_reduction", template="BASE", target=op.name,
+                                detail=f"（中枢 {len(cc.operators)} 人，每人 -0.05）"))
 
-    # 3) 干员自身技能（self_consume，正=加耗 / 负=减耗）
-    self_delta = ZERO
-    for skill in _skills_of(op, SkillKind.SELF_CONSUME):
-        if _active(op) and _scope_ok(skill, facility, op):
-            ctx = SkillContext(world, op, op, facility)
-            if skill.condition is None or skill.condition(ctx):
-                self_delta += skill.value
+    # 自身技能（正=加耗 / 负=减耗）
+    if _active(op):
+        for skill in _skills_of(op, SkillKind.SELF_CONSUME):
+            if not _scope_ok(skill, facility, op):
+                continue
+            ctx = SkillContext(world, op, op, facility, variables)
+            if skill.condition is not None and not skill.condition(ctx):
+                continue
+            ok, amount, vtxt = _scaled_amount(skill, variables, world, facility, op)
+            if not ok:
+                continue
+            lg.add(Contribution(Bucket.CONSUME, "自身消耗", amount,
+                                group="self_consume", owner=op.name, target=op.name,
+                                skill_id=skill.id, skill_name=skill.name,
+                                template=skill.template_id, detail=vtxt))
 
-    # 4) 设施级技能（facility_consume）：同设施所有干员（含自身）对全体生效
+    # 设施级技能：同设施所有干员（含自身）对全体生效
     for other in facility.operators:
+        if not _active(other):
+            continue
         for skill in _skills_of(other, SkillKind.FACILITY_CONSUME):
-            if _active(other) and _scope_ok(skill, facility, op):
-                ctx = SkillContext(world, other, op, facility)
-                if skill.condition is None or skill.condition(ctx):
-                    total += skill.value
+            if not _scope_ok(skill, facility, op):
+                continue
+            ctx = SkillContext(world, other, op, facility, variables)
+            if skill.condition is not None and not skill.condition(ctx):
+                continue
+            ok, amount, vtxt = _scaled_amount(skill, variables, world, facility, op)
+            if not ok:
+                continue
+            lg.add(Contribution(Bucket.CONSUME, "同设施全体消耗", amount,
+                                group="facility_consume", owner=other.name, target=op.name,
+                                skill_id=skill.id, skill_name=skill.name,
+                                template=skill.template_id, detail=vtxt))
 
-    # 5) 中枢全局减免技能（cc_reduce，按干员求和后取最高）
-    total -= _max_cc_reduction(world, op, facility)
-
-    # 6) 消除类：移除目标干员"自身技能"的影响（正负均移除，设施 / 中枢影响不变）
-    if _has_eliminator(world, op, facility):
-        self_delta = ZERO
-
-    total += self_delta
-    return max(ZERO, total)   # 消耗不为负（负值由"回复"侧表达）
-
-
-def _cc_reduction_from(world, owner: Operator, target: Operator, facility: Facility) -> Decimal:
-    """某中枢干员提供的全局减免（对其持有的 cc_reduce 技能求和）。"""
-    if not _active(owner):
-        return ZERO
-    s = ZERO
-    for skill in _skills_of(owner, SkillKind.CC_REDUCE):
-        if skill.facility_types and facility.ftype not in skill.facility_types:
-            continue
-        ctx = SkillContext(world, owner, target, facility)
-        if skill.condition is not None and not skill.condition(ctx):
-            continue
-        s += skill.value
-    return s
-
-
-def _max_cc_reduction(world, target: Operator, facility: Facility) -> Decimal:
-    """中枢全局减免技能：不同干员之间"取最高"。"""
-    cc = world.control_center()
-    if cc is None:
-        return ZERO
-    best = ZERO
-    for owner in cc.operators:
-        best = max(best, _cc_reduction_from(world, owner, target, facility))
-    return best
-
-
-def _has_eliminator(world, target: Operator, facility: Facility) -> bool:
-    """是否存在能消除目标干员"自身心情消耗"影响的干员（槐琥 / 令等）。"""
+    # 同设施**其他**干员（ROOM_OTHERS_CONSUME：当前数据无使用者，低语已改判含自身）
     for other in facility.operators:
-        if other is target:
+        if other is op or not _active(other):
+            continue
+        for skill in _skills_of(other, SkillKind.ROOM_OTHERS_CONSUME):
+            if not _scope_ok(skill, facility, op):
+                continue
+            ctx = SkillContext(world, other, op, facility)
+            if skill.condition is not None and not skill.condition(ctx):
+                continue
+            lg.add(Contribution(Bucket.CONSUME, "同设施他人消耗", skill.value,
+                                group="facility_consume", owner=other.name, target=op.name,
+                                skill_id=skill.id, skill_name=skill.name,
+                                template=skill.template_id))
+
+    # 中枢全局减免技能：同干员内求和 → 跨干员取最高，故聚合成一条带"获胜者"的记录
+    best_value, best_owner, best_skill = ZERO, "", ""
+    if cc is not None:
+        for owner in cc.operators:
+            if not _active(owner):
+                continue
+            per_owner = ZERO
+            for skill in _skills_of(owner, SkillKind.CC_REDUCE):
+                if skill.facility_types and facility.ftype not in skill.facility_types:
+                    continue
+                ctx = SkillContext(world, owner, op, facility)
+                if skill.condition is not None and not skill.condition(ctx):
+                    continue
+                per_owner += skill.value
+                if per_owner > best_value:
+                    best_owner, best_skill = owner.name, skill.name
+            best_value = max(best_value, per_owner)
+    if best_value:
+        lg.add(Contribution(Bucket.CONSUME, "中枢减免技能", -best_value,
+                            group="cc_reduce", template="CC_REDUCE",
+                            owner=best_owner, target=op.name, skill_name=best_skill,
+                            detail="（跨干员取最高：同干员内求和后取最大减免）"))
+
+    # 消除类：把「自身技能」整组归零（正负影响都移除；设施/中枢减免不受影响）
+    # 注意：**包含目标自身**——上游「团队精神：消除当前制造站内**所有**干员自身心情消耗的影响」
+    # 与「杯莫停：消除当前控制中枢内所有岁干员自身心情消耗的影响」都含持有者自己；
+    # 若叶睦「互为半身」更是只消除**自身**（与他人同驻中枢时）。
+    for other in facility.operators:
+        if not _active(other):
             continue
         for skill in _skills_of(other, SkillKind.ELIMINATE_SELF):
+            # 语义区分（上游原文）：
+            #   · 槐琥「团队精神」/ 令「杯莫停」：消除**同设施所有干员**（含他人）的自身消耗影响
+            #   · 若叶睦「互为半身」：消除**自身**的（self_only=True），与他人无关
+            if skill.self_only and other is not op:
+                continue
             if skill.facility_types and facility.ftype not in skill.facility_types:
                 continue
-            if skill.target_trait and target.trait != skill.target_trait:
+            if skill.target_faction and skill.target_faction not in _factions_of(op):
                 continue
-            if not _active(other):
+            # ⚠️ 条件必须求值：若叶睦「互为半身」是「当与丰川祥子一起进驻控制中枢时…」，
+            # 不求值就会变成无条件消除（实测踩过）。
+            ctx = SkillContext(world, other, op, facility, variables)
+            if skill.condition is not None and not skill.condition(ctx):
                 continue
-            return True
-    return False
+            lg.add(Contribution(Bucket.CONSUME, "消除自身消耗影响", ZERO,
+                                group="eliminate", stacking=Stacking.ZERO_PRIORITY,
+                                zeroes_group="self_consume", owner=other.name, target=op.name,
+                                skill_id=skill.id, skill_name=skill.name,
+                                template=skill.template_id,
+                                detail="→ 该干员「自身技能」影响整组归零"))
+            return lg          # 原逻辑为布尔（存在即消除），一条足够
+    return lg
 
 
-# ----------------------------------------------------------------------------
-# 心情回复
-# ----------------------------------------------------------------------------
-def compute_recovery(world: BaseLayout, op: Operator, facility: Facility) -> Decimal:
-    """计算干员的心情回复速率（点 / 时）。"""
+def recovery_ledger(world: BaseLayout, op: Operator, facility: Facility,
+                    variables: Optional[VariableLedger] = None) -> MoodLedger:
+    """构建**回复侧**流水账（宿舍走 `_dorm_ledger`，其余走 `_work_ledger`）。"""
+    variables = variables if variables is not None else collect_variables(world)
     if facility.ftype == FacilityType.DORMITORY:
-        return _dorm_recovery(world, op, facility)
-    return _work_recovery(world, op, facility)
+        return _dorm_ledger(world, op, facility, variables)
+    return _work_ledger(world, op, facility, variables)
 
 
-def _work_recovery(world, op: Operator, facility: Facility) -> Decimal:
-    """工作设施内的回复：来自中枢技能的回复（如玛恩纳）。"""
+def _work_ledger(world: BaseLayout, op: Operator, facility: Facility,
+                 variables: Optional[VariableLedger] = None) -> MoodLedger:
+    """工作设施内的回复：来自中枢内干员的 `CC_RECOVER` 技能。
+
+    三条叠加规则（轴 F，全部来自官方术语表）：
+      1. **求和（F1）**：不同来源默认相加。
+      2. **跨干员取最高（F3，`max_group`）**：官方术语 `cc.c.sui2_1` 规定
+         公事公办 / 孤光共照 / 巴别塔之帜 的 room2 恢复值取最高——
+         实现为「同干员各 clause 先求和，再跨干员取 max」（由 MoodLedger 完成）。
+      3. **扩散（M02c）**：玛恩纳「公事公办」——官方术语 `cc.c.skill` 的 15 条白名单
+         中枢回复技能，额外作用到 room2（其他设施）内工作状态的干员。
+    """
+    variables = variables if variables is not None else collect_variables(world)
+    lg = MoodLedger(op.name, facility.display_name, variables=variables)
     cc = world.control_center()
     if cc is None:
-        return ZERO
-    total = ZERO
+        return lg
+    # 自身回复（非宿舍）：模板 M07b —— 如歌蕾蒂娅「潮汐守望」的「反之」分支
+    # （进驻控制中枢时，若没有其他深海猎人在宿舍以外，则自身心情每小时恢复 +0.5）。
+    # ⚠️ 此前 `_work_ledger` 完全不处理 DORM_SELF 类技能，M07b 从未被求值（结构缺口）。
+    # 用 template_id 区分：M10 = 宿舍自身回复（只在 `_dorm_ledger` 处理），M07b = 非宿舍自身回复。
+    if _active(op):
+        for skill in _skills_of(op, SkillKind.DORM_SELF):
+            if skill.template_id != "M07b":
+                continue
+            ctx = SkillContext(world, op, op, facility, variables)
+            if skill.condition is not None and not skill.condition(ctx):
+                continue
+            _ok, _amount, _vtxt = _scaled_amount(skill, variables, world, facility, op)
+            if not _ok or not _amount:
+                continue
+            lg.add(Contribution(Bucket.RECOVER, "自身回复", _amount, group="self_recover",
+                                owner=op.name, target=op.name, skill_id=skill.id,
+                                skill_name=skill.name, template=skill.template_id,
+                                detail=_vtxt))
+
+    spread_on = _spread_active(world)
     for owner in cc.operators:
         if not _active(owner):
             continue
         for skill in _skills_of(owner, SkillKind.CC_RECOVER):
-            if skill.facility_types and facility.ftype not in skill.facility_types:
+            if not _reaches(skill, facility.ftype, spread_on):
                 continue
-            ctx = SkillContext(world, owner, op, facility)
+            ctx = SkillContext(world, owner, op, facility, variables)
             if skill.condition is not None and not skill.condition(ctx):
                 continue
-            total += skill.value
-    return total
-
-
-def _dorm_recovery(world, op: Operator, facility: Facility) -> Decimal:
-    """宿舍内的回复：基础回复 + 各类干员回复技能。
-
-    规则：不同类型（自身 / 群体 / 单体 / 定向）可叠加；同种类型取最高。
-    菲亚梅塔与冰酿为特殊干员，单独处理。
-    """
-    # --- 特殊：菲亚梅塔，自身 +2 且不接受其它来源（含宿舍基础回复）---
-    if any(sid == "菲亚梅塔-自身回复" for sid in op.skill_ids) and _active(op):
-        return Decimal("2")
-
-    # 基础回复（白字 + 绿字氛围部分）
-    recovery = dormitory_recovery(facility.level, facility.atmosphere)
-
-    # 自身回复（dorm_self，同种取最高）
-    self_r = max(
-        (s.value for s in _skills_of(op, SkillKind.DORM_SELF) if _active(op)),
-        default=ZERO,
-    )
-
-    # 群体回复（dorm_group，同种取最高）；冰酿的"0.8 总额分配"单独算
-    group_r = ZERO
-    icebrew_total = ZERO
-    for other in facility.operators:
-        for s in _skills_of(other, SkillKind.DORM_GROUP):
-            if not _active(other):
+            ok, scaled, vtxt = _scaled_amount(skill, variables, world, facility, op)
+            if not ok:
                 continue
-            if s.id == "冰酿-分配回复":
-                icebrew_total = max(icebrew_total, s.value)   # 冰酿：0.8 总额
+            detail = vtxt
+            if skill.count_faction:
+                amount = scaled * _count_faction(facility, skill.count_faction)
+                detail += f"（每个「{skill.count_faction}」干员 {skill.value}）"
             else:
-                group_r = max(group_r, s.value)
+                amount = scaled
+            if spread_on and base_skill_id(skill.id) in SPREAD_SKILL_IDS \
+                    and facility.ftype in WORK_FACILITIES \
+                    and (not skill.facility_types or facility.ftype not in skill.facility_types):
+                detail += "（玛恩纳「公事公办」扩散）"
+            if skill.max_group:
+                detail += "（跨干员取最高，不叠加）"
+            lg.add(Contribution(
+                Bucket.RECOVER, "中枢回复", amount, group="cc_recover",
+                stacking=Stacking.CROSS_OWNER_MAX if skill.max_group else Stacking.SUM,
+                max_group=skill.max_group or "", owner=owner.name, target=op.name,
+                skill_id=skill.id, skill_name=skill.name, template=skill.template_id,
+                detail=detail))
+    return lg
 
-    # 单体回复（dorm_single，同种取最高，且仅一名干员受益：心情最低且未满者）
-    single_r = _single_recovery(world, op, facility)
 
-    # 定向回复（dorm_targeted，对满足条件的干员加成，可叠加）
-    targeted_r = _targeted_recovery(world, op, facility)
+def _reaches(skill, ftype, spread_on: bool) -> bool:
+    """技能是否作用到目标设施（含玛恩纳「扩散」的额外路径）。"""
+    if not skill.facility_types:
+        return True
+    if ftype in skill.facility_types:
+        return True
+    # 扩散：白名单技能（官方 cc.c.skill）额外作用到 room2「其他设施」
+    return (spread_on
+            and base_skill_id(skill.id) in SPREAD_SKILL_IDS
+            and ftype in WORK_FACILITIES)
 
-    # 冰酿：0.8 总额平均分配给"心情未满"的宿舍成员
-    icebrew_r = _icebrew_recovery(world, op, facility, icebrew_total)
 
-    return recovery + self_r + group_r + single_r + targeted_r + icebrew_r
+def _spread_active(world) -> bool:
+    """中枢内是否存在「扩散」提供者（玛恩纳公事公办）且其未红脸。"""
+    cc = world.control_center()
+    if cc is None:
+        return False
+    for owner in cc.operators:
+        if not _active(owner):
+            continue
+        for skill in _skills_of(owner, SkillKind.CC_RECOVER):
+            if skill.spread_whitelist:
+                return True
+    return False
+
+
+def _dorm_ledger(world: BaseLayout, op: Operator, facility: Facility,
+                 variables: Optional[VariableLedger] = None) -> MoodLedger:
+    """宿舍内的回复流水账：基础回复 + 各类干员回复技能。
+
+    叠加规则：不同类型（基础 / 自身 / 群体 / 单体 / 定向 / 池）之间相加；
+    同种类型内部**取最高**（由 MoodLedger 的 `SAME_KIND_MAX` 完成）。
+    菲亚梅塔为独占（清空一切其它来源），冰酿为池分配。
+    """
+    variables = variables if variables is not None else collect_variables(world)
+    lg = MoodLedger(op.name, facility.display_name, variables=variables)
+
+    # --- 独占：菲亚梅塔「自律」：自身 +2 且不接受其它任何来源（含宿舍基础回复）---
+    if _active(op):
+        exclusives = [s for s in _skills_of(op, SkillKind.DORM_SELF) if s.exclusive]
+        if exclusives:
+            best = max(exclusives, key=lambda s: s.value)
+            lg.add(Contribution(Bucket.RECOVER, "独占回复", best.value, group="dorm_self",
+                                stacking=Stacking.SAME_KIND_MAX, exclusive=True,
+                                owner=op.name, target=op.name, skill_id=best.id,
+                                skill_name=best.name, template=best.template_id,
+                                detail="不接受宿舍基础回复与其它任何来源"))
+            return lg
+
+    # --- 基础回复（白字 + 绿字氛围）---
+    level = facility.level if facility.level in DORM_LEVEL_TABLE else 1
+    atmo_used = facility.atmosphere if facility.atmosphere is not None \
+        else DORM_LEVEL_TABLE[level]["atmosphere_max"]
+    lg.add(Contribution(Bucket.RECOVER, "宿舍基础回复",
+                        dormitory_recovery(facility.level, facility.atmosphere),
+                        group="dorm_base", template="BASE", target=op.name,
+                        detail=f"（1.5 + 0.1×{facility.level} + 0.0004×{atmo_used}）"))
+
+    # --- 中枢干员对宿舍的回复（领袖/战纹/巡心/羁绊相生/无言的慈爱…）---
+    cc = world.control_center()
+    if cc is not None:
+        for owner in cc.operators:
+            if not _active(owner):
+                continue
+            for skill in _skills_of(owner, SkillKind.CC_RECOVER):
+                if facility.ftype not in skill.facility_types:
+                    continue
+                ctx = SkillContext(world, owner, op, facility)
+                if skill.condition is not None and not skill.condition(ctx):
+                    continue
+                _ok, amount, vtxt = _scaled_amount(skill, variables, world, facility, op)
+                if not _ok:
+                    continue
+                if skill.count_faction:
+                    amount = amount * _count_faction(facility, skill.count_faction)
+                    detail = f"（宿舍内每个「{skill.count_faction}」干员 {skill.value}）"
+                else:
+                    detail = "（同种效果取最高）"
+                lg.add(Contribution(Bucket.RECOVER, "中枢→宿舍回复", amount,
+                                    group="cc_dorm", owner=owner.name, target=op.name,
+                                    skill_id=skill.id, skill_name=skill.name,
+                                    template=skill.template_id, detail=detail + vtxt))
+
+    # --- 自身回复（dorm_self，同种取最高）---
+    if _active(op):
+        for skill in _skills_of(op, SkillKind.DORM_SELF):
+            if skill.exclusive:
+                continue
+            ctx = SkillContext(world, op, op, facility, variables)
+            if skill.condition is not None and not skill.condition(ctx):
+                continue
+            _ok, _amount, _vtxt = _scaled_amount(skill, variables, world, facility, op)
+            if not _ok:
+                continue
+            lg.add(Contribution(Bucket.RECOVER, "宿舍自身回复", _amount,
+                                group="dorm_self", stacking=Stacking.SAME_KIND_MAX,
+                                owner=op.name, target=op.name, skill_id=skill.id,
+                                skill_name=skill.name, template=skill.template_id,
+                                detail="（同种效果取最高）" + _vtxt))
+
+    # --- 群体回复（dorm_group，同种取最高）；冰酿的池分配单独处理 ---
+    pool_total = ZERO
+    pool_skill = None
+    for other in facility.operators:
+        if not _active(other):
+            continue
+        for skill in _skills_of(other, SkillKind.DORM_GROUP):
+            if skill.pool:
+                if skill.value > pool_total:
+                    pool_total, pool_skill = skill.value, skill
+                continue
+            # ⚠️ 条件必须求值：资深料理人「如果目标是莱欧斯小队干员，则恢复效果额外 +0.15」
+            # 就是一个**按目标筛选**的群体回复条件；不求值会对所有人无条件生效（实测踩过）。
+            ctx = SkillContext(world, other, op, facility, variables)
+            if skill.condition is not None and not skill.condition(ctx):
+                continue
+            _ok, _amount, _vtxt = _scaled_amount(skill, variables, world, facility, op)
+            lg.add(Contribution(Bucket.RECOVER, "宿舍群体回复", _amount,
+                                group="dorm_group", stacking=Stacking.SAME_KIND_MAX,
+                                owner=other.name, target=op.name, skill_id=skill.id,
+                                skill_name=skill.name, template=skill.template_id,
+                                detail="（同种效果取最高）" + _vtxt))
+
+    # --- 单体回复（dorm_single，同种取最高，仅一名受益者）---
+    single, s_owner, s_skill = _single_recovery(world, op, facility)
+    if single:
+        lg.add(Contribution(Bucket.RECOVER, "宿舍单体回复", single, group="dorm_single",
+                            stacking=Stacking.SAME_KIND_MAX, owner=s_owner, target=op.name,
+                            skill_id=s_skill.id if s_skill else "",
+                            skill_name=s_skill.name if s_skill else "",
+                            template=s_skill.template_id if s_skill else "",
+                            detail="（锁定心情最低且未满、非提供者的一名干员；同种取最高）"))
+
+    # --- 定向回复（dorm_targeted：满足条件者，求和）---
+    for provider in facility.operators:
+        if not _active(provider):
+            continue
+        for skill in _skills_of(provider, SkillKind.DORM_TARGETED):
+            ctx = SkillContext(world, provider, op, facility, variables)
+            if skill.condition is not None and not skill.condition(ctx):
+                continue
+            _ok, _amount, _vtxt = _scaled_amount(skill, variables, world, facility, op)
+            if not _ok:
+                continue
+            lg.add(Contribution(Bucket.RECOVER, "宿舍定向回复", _amount,
+                                group="dorm_targeted", owner=provider.name, target=op.name,
+                                skill_id=skill.id, skill_name=skill.name,
+                                template=skill.template_id,
+                                detail="（满足条件者叠加求和）" + _vtxt))
+
+    # --- 池分配：冰酿 0.8 总额平摊给"心情未满"的宿舍成员 ---
+    if pool_total > ZERO and pool_skill is not None:
+        recipients = _non_full_operators(facility)
+        if recipients and op in recipients:
+            lg.add(Contribution(Bucket.RECOVER, "宿舍池分配", pool_total / len(recipients),
+                                group="dorm_pool", stacking=Stacking.POOL,
+                                owner=pool_skill.name, target=op.name,
+                                skill_id=pool_skill.id, skill_name=pool_skill.name,
+                                template=pool_skill.template_id, pool_share=len(recipients),
+                                detail=f"（总额 {pool_total} 由 {len(recipients)} 名未满成员均分）"))
+    return lg
 
 
 def _non_full_operators(facility: Facility):
@@ -233,72 +544,100 @@ def _non_full_operators(facility: Facility):
     return [o for o in facility.operators if o.mood < MOOD_MAX]
 
 
-def _icebrew_recovery(world, op: Operator, facility: Facility, total: Decimal) -> Decimal:
-    """冰酿：总额 total 平均分配给心情未满的宿舍成员。"""
-    if total <= ZERO:
-        return ZERO
-    recipients = _non_full_operators(facility)
-    if op not in recipients:
-        return ZERO
-    return total / len(recipients)
-
-
 def _targeted_recovery(world, op: Operator, facility: Facility) -> Decimal:
-    """定向回复（dorm_targeted）：对满足条件的目标干员进行加成，可叠加。"""
-    total = ZERO
-    for provider in facility.operators:
-        for s in _skills_of(provider, SkillKind.DORM_TARGETED):
-            if not _active(provider):
-                continue
-            ctx = SkillContext(world, provider, op, facility)
-            if s.condition is not None and not s.condition(ctx):
-                continue
-            total += s.value
-    return total
+    """定向回复（dorm_targeted）的合计值（保留给外部调用；主计算路径见 `_dorm_ledger`）。"""
+    lg = _dorm_ledger(world, op, facility)
+    return sum((c.value for c in lg.of(Bucket.RECOVER) if c.group == "dorm_targeted"), ZERO)
 
 
-def _single_recovery(world, op: Operator, facility: Facility) -> Decimal:
-    """单体回复：取同种最高值，作用于"心情最低且未满"的一名干员。
+def _single_recovery(world, op: Operator, facility: Facility):
+    """单体回复：返回 (值, 提供者名, 技能)。
 
+    取同种最高值，作用于"心情最低且未满"的一名干员。
     说明：文档中的单体回复存在"进驻顺序 / 快照锁定"等复杂机制，
     此处采用可实现的简化：锁定心情最低、未满且不持有单体回复技能的干员。
     """
     providers = [o for o in facility.operators
-                 if _skills_of(o, SkillKind.DORM_SINGLE) and _active(o)]
+                 if _active(o) and _skills_of(o, SkillKind.DORM_SINGLE)]
     if not providers:
-        return ZERO
+        return ZERO, "", None
 
-    # 选出受益人：心情最低、未满、且不是单体回复提供者（宿管优先服务他人）
     candidates = [o for o in _non_full_operators(facility) if o not in providers]
     if not candidates:
-        return ZERO
+        return ZERO, "", None
     beneficiary = min(candidates, key=lambda o: o.mood)
     if op is not beneficiary:
-        return ZERO
+        return ZERO, "", None
 
-    # 取所有提供者（含条件命中者）中的最高单体回复值
-    best = ZERO
+    best, best_owner, best_skill = ZERO, "", None
     for provider in providers:
         for s in _skills_of(provider, SkillKind.DORM_SINGLE):
             ctx = SkillContext(world, provider, beneficiary, facility)
             if s.condition is not None and not s.condition(ctx):
                 continue
-            best = max(best, s.value)
-    return best
+            _ok, amount, _vtxt = _scaled_amount(s, None, world, facility, beneficiary)
+            if not _ok:
+                continue
+            if amount > best:
+                best, best_owner, best_skill = amount, provider.name, s
+    return best, best_owner, best_skill
+
+
+def compute_consumption(world: BaseLayout, op: Operator, facility: Facility,
+                        ledger: MoodLedger = None) -> Decimal:
+    """干员的心情消耗速率（点/时，结果 >= 0）。
+
+    `ledger` 非空时，把本次的全部来源追加进去（用于 `--explain` / 调试）。
+    """
+    lg = consume_ledger(world, op, facility)
+    if ledger is not None:
+        ledger.items.extend(lg.items)
+    return max(ZERO, lg.total(Bucket.CONSUME))
+
+
+def compute_recovery(world: BaseLayout, op: Operator, facility: Facility,
+                     ledger: MoodLedger = None) -> Decimal:
+    """干员的心情回复速率（点/时）。`ledger` 非空时同时记录来源。"""
+    lg = recovery_ledger(world, op, facility)
+    if ledger is not None:
+        ledger.items.extend(lg.items)
+    return lg.total(Bucket.RECOVER)
 
 
 # ----------------------------------------------------------------------------
 # 顶层查询：净速率 / 剩余心情 / 剩余工作时间 / 工休比
 # ----------------------------------------------------------------------------
-def compute_net_rate(world: BaseLayout, operator_name: str) -> Decimal:
-    """干员的净消耗速率（点 / 时）。>0 心情下降，<0 心情上升。"""
+def mood_ledger(world: BaseLayout, operator_name: str) -> MoodLedger:
+    """**完整流水账**：消耗 + 回复 + 净速率（唯一计算路径，见 ledger.py）。
+
+    这是"让内部完全理解干员心情机制"的入口：
+        lg = mood_ledger(world, "刺玫"); print(lg.explain())
+    会逐条列出：谁（owner）→ 哪条技能（skill/template）→ 作用于谁 → 多少值
+    → 按轴 F 哪条规则合成（同种取最高 / 跨干员取最高 / 池分配 / 归零 / 独占）。
+    """
     op = world.get_operator(operator_name)
     if op is None:
         raise KeyError(f"基建布局中不存在干员：{operator_name}")
     facility = world.facility_of(operator_name)
     if facility is None:
+        lg = MoodLedger(operator_name, "（不在基建内）")
+        lg.add(Contribution(Bucket.CONSUME, "未进驻任何设施：不消耗也不回复", ZERO,
+                            group="base", template="BASE", target=operator_name))
+        return lg
+    variables = collect_variables(world)
+    lg = consume_ledger(world, op, facility, variables)
+    lg.items.extend(recovery_ledger(world, op, facility, variables).items)
+    return lg
+
+
+def compute_net_rate(world: BaseLayout, operator_name: str) -> Decimal:
+    """干员的净消耗速率（点 / 时）。>0 心情下降，<0 心情上升。"""
+    op = world.get_operator(operator_name)
+    if op is None:
+        raise KeyError(f"基建布局中不存在干员：{operator_name}")
+    if world.facility_of(operator_name) is None:
         return ZERO   # 不在任何设施内，视为既不消耗也不回复
-    return compute_consumption(world, op, facility) - compute_recovery(world, op, facility)
+    return mood_ledger(world, operator_name).net_rate()
 
 
 def remaining_mood_after(world: BaseLayout, operator_name: str, hours) -> Decimal:
@@ -432,6 +771,7 @@ def evaluate(world: BaseLayout, operator_name: str, period_hours=Decimal("0")) -
         remaining_mood=remaining,
         sustain_hours=sustain,
         state=state,
+        ledger=mood_ledger(world, operator_name),
     )
 
 
