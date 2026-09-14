@@ -9,6 +9,12 @@
 >    不写多段说明、不加 `feat:`/`fix:` 前缀。一次提交只做一件事（改了代码就别把无关文档混进来，
 >    除非该文档是这次改动的同步更新）。
 >
+> 3. **`AGENTS.md` 有指令预算上限（65536 字节）**：超了会被**截断**，尾部对读者不可见
+>    ——"读不到的文档等于不存在"。§4 只写**规则与铁律**（结论 + 关键出处），
+>    长篇"怎么发现的 / bug 史 / 证据链"写进 `resources/mood_engine_design.md`
+>    （P 阶段叙事）或 `resources/data_lookup_policy.md`（查证记录），这里只留一行指针。
+>    新增内容前先自查大小：`(Get-Item AGENTS.md).Length`。
+>
 > 面向后续接手本项目的 AI / 编码智能体。目标：读完本文件即可理解"这个项目在做什么、
 > 怎么算的、代码长什么样、如何改如何测"，无需逐行重读源码。
 > 更偏"人"的完整说明见同目录 `README.md`；两者规则一致，本文件侧重"快速上手 + 精确规则 + 易错点"。
@@ -87,6 +93,7 @@ Rhodes-MoodSOC/
 │                          + factions.txt / factions_supplement.txt（阵营/标签表，上游生成）
 │                          + variable_producers.txt（变量产出者表，人间烟火/热情值/无声共鸣）
 │                          + mood_engine_design.md（架构诊断与重构设计）
+│                          + data_lookup_policy.md（数据查找策略全文 + 上游缺失清单）
 │                          + skill_taxonomy.md（技能分类大纲：六轴 + 模板字典）
 │                          + AGD_心情技能数据源分析.md（上游仓库结构分析 + 待判定清单，非代码依赖）
 ├── README.md              面向人类的完整说明
@@ -317,18 +324,11 @@ net == 0     → "心情不变"
 14. **各设施基础消耗不同**（P1 修正）：旧实现只排除宿舍、其余一律 1.0，把**加工站算成 0.75/h**。
     现在按 `config.base_consumption(ftype)`：工作设施 1.0、**加工站 0**（按配方/按次消耗，不搓材料就是 0）、
     活动室 0、宿舍 0、训练室 1.0（见下条）；加工站的证据见 §4.31。
-15. **训练室已建模，基础消耗 1.0/h 有两条独立佐证**（P5c 完成）：
-    - 需求文档 `docx` **第 4 段**：「干员工作时，在无额外心情加减的情况下，每小时的**基础消耗速率为 1 点心情**」
-      ——不区分设施，训练室同样适用（这就是 `TRAINING_BASE_CONSUMPTION = 1` 的依据，
-      **不再是"按增量语义猜的"**）；
-    - 上游 `building_data.json → buffs`：**9 条**训练室 buff 原文均为「…时，心情每小时消耗 **+1**」：
-      `train_cost&profession[140]` 工作狂 / `[320]` 过量训练 / `[340]` 索然无味 / `[350]` 何须解脱 /
-      `[360]` 变异 / `[380]` 斗争渴望、`train_spd_bd[000]` 与人乐、`train_spd_doubleProf3[100]` 兴之所至·β、
-      `train_spd_power_down[000]` “手段应当有效”。
-    → 这 9 条已作为 `SELF_CONSUME +1`（`M07a`，family=`self`）进 `moods_skills.txt`，
-      `FACILITY_BY_PREFIX["train"] = "TRAINING"`；持有人净消耗 **2.0/h**，同设施其他人仍 1.0/h。
-    ⚠️ 上游 `trainingData` 只有训练**速度**常量（`basicSpeedBuff=0.05`），没有心情常量——
-      所以训练室的 1.0/h 来自 docx 而非上游，别去 upstream 找。
+15. **训练室已建模**（P5c）：`TRAINING_BASE_CONSUMPTION = 1`，依据是**docx 第 4 段**
+    「干员工作时…每小时的**基础消耗速率为 1 点心情**」（不是猜的）；上游只有训练**速度**常量。
+    另 9 条 buff 原文均为「…时，心情每小时消耗 **+1**」，已作 `SELF_CONSUME +1`
+    （`M07a`/family=`self`）入库 → 持有人净 **2.0/h**，同设施其他人 1.0/h。
+    清单与完整证据链见 `resources/data_lookup_policy.md`。
 16. **变量（中间货币）已纳入模型**（P3）：官方术语表 `cc.bd*` 共 26 种，其中
     **人间烟火 / 热情值 / 无声共鸣** 会影响心情，另有派生变量 **心情落差**（= 24 − 当前心情）。
     `mood_soc/variables.py` 的 `VariableLedger` + `resources/variable_producers.txt` 负责产出，
@@ -403,12 +403,11 @@ net == 0     → "心情不变"
     - 数据：`moods_skills.txt` 新增 `dorm_rec_toone_000`（family=`dorm_meta` → `SkillKind.DORM_META`，
       template=`M17`），params 为 `boost_provider=推进之王;boost_group=dorm_group`；
       被强化的**目标**由 `CLAUSE_COND` 的 `_cond_target_in_faction("格拉斯哥帮")` 筛选。
-    - 实现（`rules._dorm_ledger` 的元修正段）：找出被点名提供者（`boost_provider`）已记入流水账、
-      且 `group == boost_group` 的贡献，逐条补一条**同组、同 skill_id、同 owner** 的增量贡献。
-      于是 `SAME_KIND_MAX` 会把它**先并入该技能的合计**、再与其他技能取最高——
-      这正是「恢复效果额外 +0.3」的语义（推进之王 0.2 → 0.5）。
-      ⚠️ 若把增量记成**独立技能**，会被"同种取最高"当成竞争者而整个丢掉，这是本机制最容易写错的地方。
-    - 守卫：`boost_provider` 是点名引用，已被 `check_faction_refs()` 纳入干员名校验。
+    - 实现（`rules._dorm_ledger` 元修正段）：把增量补成**同组、同 skill_id、同 owner** 的额外贡献，
+      由 `SAME_KIND_MAX` 并入被强化技能的小计（推进之王 0.2 → 0.5）。
+      ⚠️ **记成独立技能就会被"同种取最高"当竞争者丢掉**——本机制最容易写错的地方。
+    - `boost_provider` 是点名引用，已纳入 `check_faction_refs()` 校验。
+    - 完整实现说明见 `resources/skill_taxonomy.md` §5.7。
 29. **进驻事件（M15a）已实现**：**患难之交**（菲亚梅塔）。上游原文（`buffs["dorm_exchangeAp[000]"]`）：
     「进驻宿舍时，**如果自身为满心情**，则与当前宿舍**前一位进驻**的干员互换心情」。
     它不是"每小时 ±N 点"而是**进驻那一刻的状态跳变**，因此：
@@ -416,22 +415,18 @@ net == 0     → "心情不变"
       （CLI：`main.py --entry-events`），事件本身记为 `Bucket.EVENT` 展示用。
     - ⚠️ **会就地修改** `world` 的干员心情；`evaluate` / `evaluate_base` **不**自动调用
       （它是布局初始化语义，不是速率语义）。重复调用幂等（换完她就不再满心情）。
-    - 「前一位进驻」= `Facility.operators` 里排在触发者之前的那一位——
-      布局的 `operators` **本来就是有序列表**（进驻顺序），无需额外的队列结构。
+    - 「前一位进驻」= `Facility.operators[idx-1]`——该列表**本来就是进驻顺序**，无需新结构。
       条件挂 `CLAUSE_COND` 的 `_cond_self_full_mood`；调度按 `template_id == "M15a"`
-      （`rules._template_skills`，与 §4.25 的 M07b 同一约定）。
+      （`rules._template_skills`，与 §4.25 的 M07b 同一约定）。详见 `skill_taxonomy.md` §5.8。
 30. **流水账 `explain()` 的「同种取最高」判负按**技能小计**比，不按单条分句**（P5b 修）：
     一条获胜技能若由多个分句组成（「基础 + 每有 N 额外」、或被 M17 强化），
     旧实现拿每条分句的 `value` 去和"技能小计"比，会把**获胜技能的每条分句都标注成
     "被更高者覆盖"**（实测：摩根强化后 0.2 与 0.3 都被标）。现改为实例小计 vs 组内最高小计。
-31. **加工站不建每小时模型，且这次是查出来的**（P5c）：上游 `building_data.json` 里
-    **加工站相关且提到「心情」的 buff 共 35 条**，原文**全部**是「**配方**心情消耗」
-    （`workshop_formula_cost*` / `cost2` / `cost3` / `cost4` / `cost5` / `lolxh` / `rub` / `proc_cost`），
-    例如「心情消耗为 4 的配方全部 -1 心情消耗」「相应配方的心情消耗**恒定**为 2」「全部除以 4」。
-    → 印证 `base_consumption(WORKSHOP) = 0`：加工站**没有**每小时消耗，心情是按**次**扣的。
-    ⚠️ 但**配方本身的心情消耗在上游数据 dump 里没有字段**（`workshopFormulas` 68 条只有
-      `apCost/goldCost/costs/…`，全库递归搜 `mood` 无命中），故"每次加工扣多少心情"**无法从上游落库**，
-      35 条 X08 buff 与棘刺「爆炸艺术」一并保持登记不建模。别用 `apCost/180000` 之类的巧合反推。
+31. **加工站不建每小时模型**（P5c）：上游加工站提到「心情」的 buff **35 条全是「配方心情消耗」**
+    （「心情消耗为 4 的配方 -1」「相应配方恒定为 2」「全部除以 4」）→ 印证
+    `base_consumption(WORKSHOP) = 0`，心情按**次**扣。⚠️ **配方心情消耗在上游 dump 里没有字段**，
+    故无法落库：35 条 `X08` 与棘刺「爆炸艺术」保持登记不建模。**别用 `apCost/180000` 之类巧合反推。**
+    完整查证记录（含"哪些数据上游根本没有"清单）见 `resources/data_lookup_policy.md`。
 
 ---
 
@@ -777,62 +772,27 @@ traj = simulate(world, "泡泡", Decimal("12"), step=Decimal("0.1"))   # 深拷�
 
 > **策略（强制）**：遇到任何"不知道的数据"——技能原文 / 数值 / 解锁精英化与等级 /
 > 阵营成员名单 / 设施集合定义 / 全局常量 / 机制术语——**先去
-> [Kengxxiao/ArknightsGameData](https://github.com/Kengxxiao/ArknightsGameData) 查证**，
-> 不要凭印象写、不要猜、不要从二手资料誊抄。
+> [Kengxxiao/ArknightsGameData](https://github.com/Kengxxiao/ArknightsGameData) 查证**
+> （`zh_CN/gamedata/excel/`）。**不要凭印象写、不要猜、不要从二手资料誊抄。**
 > 本项目 `resources/*.txt` 与 `mood_soc/skills_data.py` 都只是**上游的派生物**；
-> 派生物与上游不一致时，**以上游为准**并修正派生物。
+> 两者不一致时**以上游为准**，并修正派生物。
 
-上游佐证过本项目多个关键规则（`cc.c.skill` 玛恩纳扩散白名单 15 条、`cc.c.sui2_1` room2 取最高、
-`cc.c.room1~3` 设施集合、`cc.g.*`/`cc.tag.*` 阵营名册、`controlData.basicCostBuff = -5`
-每人 -0.05、`dormData.phases[].manpowerRecover` 160~200）——**这些都是查出来的，不是推出来的**。
+> 📄 **完整策略见 `resources/data_lookup_policy.md`**（拉取命令、四个坑、查完之后的三件事、
+> 以及"哪些数据上游根本没有"的清单）。下面只留最小速查。
 
-### 11.1 去哪儿查（按问题类型）
+### 去哪儿查
 
 | 想知道什么 | 查哪个文件（相对 `zh_CN/gamedata/excel/`） |
 |---|---|
-| 干员有哪些基建技能、技能原文、数值、房间类型、解锁阶段 | `building_data.json` → `buffs`（755 条定义）+ `chars[].buffChar[].buffData[]`（`buffId` + `cond{phase,level}`） |
+| 干员基建技能 / 原文 / 数值 / 房间 / 解锁阶段 | `building_data.json` → `buffs`（755 条）+ `chars[].buffChar[].buffData[]`（`buffId` + `cond{phase,level}`） |
 | 干员 id ↔ 中文名 | `character_table.json`（`charId` → `name`） |
-| 术语含义、阵营/标签成员名单、设施集合、抽象变量、全局机制 | `gamedata_const.json` → `termDescriptionDict`（`cc.c.skill`、`cc.c.sui2_1`、`cc.c.room1~3`、`cc.g.*`、`cc.tag.*`、`cc.bd*`、`cc.bd.costdrop`…） |
-| 中枢减免 / 宿舍基础回复 / 制造贸易人数修正 | `building_data.json` 顶层：`controlData.basicCostBuff`、`dormData.phases[].manpowerRecover`、`dormData.phases[].decorationLimit`、`manufactStationBuff`、`manufactManpowerCostByNum`、`tradingManpowerCostByNum` |
-| 战斗技能 / 模组数值 | `skill_table.json` / `uniequip_table.json`（⚠️ 与**基建心情无关**，别混；模组只有剧情文案会提"心情"） |
+| 术语 / 阵营与标签名册 / 设施集合 / 抽象变量 | `gamedata_const.json` → `termDescriptionDict`（`cc.c.skill`、`cc.c.sui2_1`、`cc.c.room1~3`、`cc.g.*`、`cc.tag.*`、`cc.bd*`） |
+| 中枢减免 / 宿舍基础回复 / 制造贸易人数修正 | `building_data.json` 顶层：`controlData.basicCostBuff`、`dormData.phases[].manpowerRecover`、`manufactManpowerCostByNum`、`tradingManpowerCostByNum` |
+| 战斗技能 / 模组 | `skill_table.json` / `uniequip_table.json`（⚠️ 与基建心情**无关**） |
 
-### 11.2 怎么拉（**不要整仓 clone**，几百 MB）
+**两条最容易踩的**（详见完整文档）：
 
-```powershell
-# 1) 无 blob 稀疏克隆：只取目录树，秒级完成
-git clone --filter=blob:none --depth 1 --no-checkout https://github.com/Kengxxiao/ArknightsGameData <目标目录>
-# 2) 只检出 excel 表（按需惰性下载）
-git -C <目标目录> sparse-checkout init --cone
-git -C <目标目录> sparse-checkout set zh_CN/gamedata/excel
-git -C <目标目录> checkout
-# 3) 记录版本（结论要可追溯）
-git -C <目标目录> rev-parse HEAD
-```
-
-上游只保留 `zh_CN` 一个服（无 en/ja/ko）；`zh_CN/gamedata/excel/` 下 59 个 `.json`。
-建议把克隆目录放在**本仓库之外**（如 `%TEMP%` 或项目同级），不要提交进本仓库。
-
-### 11.3 必须知道的四个坑
-
-1. **这是纯数据 dump，没有公式实现**。`zh_CN/gamedata/[uc]lua/` 只有 `hotfixes/*.lua` 片段，
-   拿不到完整客户端逻辑。所以"心情消耗/回复/工休怎么算"仍以
-   `resources/心情消耗回复和工休时间.docx` 为准；上游只提供
-   **技能文本 / 数值 / 解锁 / 名册 / 集合 / 术语**。
-2. **buffId 的中括号**：上游是 `control_mp_cost[008]`，本项目 CSV 是 `control_mp_cost_008`
-   （`[` → `_`、`]` → 删）。已核对：**209/209 一一对应，无歧义**。
-3. **β 替换 α 上游不标**：上游把 α、β 当作两个独立 buff，**没有 `replaces` 字段**。
-   本项目 `operators.txt` 的 `enhanced` 列是自行推断的结果，别指望从上游直接读到。
-4. **描述带富文本标记**：`<@cc.kw>12</>`（关键字）、`<$cc.c.room1>部分设施</>`（术语引用）、
-   `<@cc.vup>+0.1</>`（增益）。清洗正则：
-   `re.sub(r'</?(?:@cc\.\w+|\$cc\.\w+)>', '', s)`。
-
-### 11.4 查完之后必须做的三件事
-
-1. 修正 `resources/moods_skills.txt` / `operators.txt`（或对应的上游派生物）
-   → 重跑 `scripts/classify_skills.py --agd <目标目录>`（新 buff 会落进覆盖台账）
-   → 重跑 `scripts/generate_skills_data.py`
-   → 跑全量 unittest（`.venv/Scripts/python.exe -m unittest discover -s tests`）。
-2. 若该数据**推翻了既有假设**，同步更新 §8「建模假设/近似」或
-   `resources/skill_taxonomy.md` §5「决策记录」，避免下次又被当成 bug 或又被猜一遍。
-3. 结论要**可追溯**：注明取自哪个文件 + 字段名（+ 必要时 commit hash），
-   而不是只写一个数值。
+1. **上游是纯数据 dump，没有公式实现**——「心情消耗/回复怎么算」以
+   `resources/心情消耗回复和工休时间.docx` 为准，上游只提供**文本/数值/解锁/名册/集合/术语**。
+2. **有些数据上游根本没有**（如加工站**配方**的心情消耗）——查不到就如实记录"查不到"，
+   **不要用 `apCost/180000` 之类的巧合反推**。已确认缺失的清单在完整文档里。
