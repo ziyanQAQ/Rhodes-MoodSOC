@@ -10,7 +10,17 @@ from decimal import Decimal, InvalidOperation
 from tkinter import ttk
 from typing import List, Optional, Sequence
 
+from mood_soc.models import ENTRY_WHEN_LABELS, ENTRY_WHEN_MODES, normalize_entry_when
+
 from . import theme
+
+# 「什么时候换」在下拉里的短标签（按班次用）
+WHEN_LABELS = {
+    "immediate": "立即（强制）",
+    "wait": "等她回满",
+    "full": "只在她满时",
+}
+LABEL_TO_WHEN = {v: k for k, v in WHEN_LABELS.items()}
 
 
 def _center(win: tk.Toplevel, parent: tk.Misc) -> None:
@@ -274,10 +284,15 @@ def ask_shift_hours(parent, labels: Sequence[str], hours: Sequence, cycle: Decim
 
 
 class EntryEventDialog(tk.Toplevel):
-    """**进驻事件**（M15a 患难之交）设置：换不换、在哪换、换谁、换完怎么放、要不要强等。
+    """**进驻事件**（M15a 患难之交）设置 —— 只保留三组互不重叠的选项。
 
-    对话框把"这是什么"写在最上面——这个开关不开也能用，但很多人第一次看到
-    「结算进驻事件」并不知道它指的是"进驻那一刻的一次性心情跳变"。
+    | 组 | 内容 |
+    |---|---|
+    | ① 换谁 | 同宿舍前一位进驻 / 同宿舍指定干员 / 全基建最累的那位 / 全基建指定干员（**每个选项自带范围**，不会再出现"任意位置 + 前一位进驻"这种矛盾组合） |
+    | ② 换完之后 | 把他换回原位（只换心情）/ 位置也一起互换 |
+    | ③ 什么时候换 | **强制立刻换（默认）** / 等她回满再换 / 只在她满心情时换（游戏原口径） |
+
+    外加「④ 按班次」逐班覆盖上面三项。对话框开头用白话解释"进驻事件是什么"。
     """
 
     TITLE = "结算进驻事件（M15a 患难之交）"
@@ -288,12 +303,12 @@ class EntryEventDialog(tk.Toplevel):
 
     def __init__(self, parent, enabled: bool, swap_with, candidates: Sequence[str],
                  current_holders: Sequence[str] = (), scope: str = "dorm",
-                 restore_back: bool = True, force: bool = False,
+                 restore_back: bool = True, when: str = "immediate",
                  shift_labels: Sequence[str] = (), per_shift: Sequence = ()):
         super().__init__(parent, bg=theme.BG)
         self.title("进驻事件设置（换心情）")
         self.resizable(False, False)
-        self.result = None      # (enabled, swap_with, scope, restore_back, force, per_shift)
+        self.result = None      # (enabled, swap_with, scope, restore_back, when, per_shift)
         self._candidates = list(candidates)
         self._shift_labels = list(shift_labels)
         self._per_shift_in = list(per_shift)
@@ -303,10 +318,10 @@ class EntryEventDialog(tk.Toplevel):
                  bg=theme.BG, fg=theme.TEXT, justify="left", wraplength=470,
                  font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(anchor="w", **pad, pady=(theme.PAD, 2))
         tk.Label(self,
-                 text="典型例子：菲亚梅塔「患难之交」——进驻宿舍时若自身是满心情，\n"
-                      "就与某人【互换心情】（她拿 24 换走对方的 6 点，对方反而变成 24）。\n"
-                      "因为它只发生在进驻瞬间，所以默认【不】结算，需要你在这里明确打开。\n"
-                      "下面四项决定「在哪换、换谁、换完怎么放、要不要等她」——默认值就是游戏原口径。",
+                 text="典型例子：菲亚梅塔「患难之交」——进驻宿舍时与某人【互换心情】\n"
+                      "（她拿 24 换走对方的 6 点，对方反而变成 24）。\n"
+                      "它只发生在进驻瞬间，所以默认【不】结算，需要你在这里明确打开。\n"
+                      "下面三组决定「换谁、换完怎么放、什么时候换」；默认＝游戏原口径。",
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=470,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad, pady=(0, theme.GAP))
 
@@ -314,117 +329,112 @@ class EntryEventDialog(tk.Toplevel):
         ttk.Checkbutton(self, text="结算进驻事件（先换心情，再按排班往下算）",
                         variable=self.enabled, command=self._sync).pack(anchor="w", **pad)
 
-        # ① 范围
-        box1 = tk.LabelFrame(self, text="① 在哪换（换心情的范围）", bg=theme.BG, fg=theme.TEXT,
+        # ① 换谁（把"在哪换"合并进来：每个选项都自带范围，不会再出现矛盾组合）
+        box1 = tk.LabelFrame(self, text="① 换谁", bg=theme.BG, fg=theme.TEXT,
                              font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1, relief="groove",
                              labelanchor="nw")
         box1.pack(fill="x", **pad, pady=(theme.GAP, 4))
-        self.scope = tk.StringVar(value="anywhere" if scope == "anywhere" else "dorm")
-        ttk.Radiobutton(box1, text="仅同一宿舍（游戏原口径：换「前一位进驻」的那位）",
-                        value="dorm", variable=self.scope, command=self._sync
-                        ).pack(anchor="w", padx=theme.GAP, pady=(4, 0))
-        ttk.Radiobutton(box1, text="基建任意位置（任何设施上的干员都能换）",
-                        value="anywhere", variable=self.scope, command=self._sync
-                        ).pack(anchor="w", padx=theme.GAP, pady=(0, 6))
-
-        # ② 对象
-        box2 = tk.LabelFrame(self, text="② 换谁（交换对象）", bg=theme.BG, fg=theme.TEXT,
-                             font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1, relief="groove",
-                             labelanchor="nw")
-        box2.pack(fill="x", **pad, pady=(0, 4))
         target = (swap_with or "").strip()
         auto = target.lower() in ("any", "auto", "anyone") or target in ("任意", "最累", "谁都可以")
-        if not target:
-            mode = "default" if scope != "anywhere" else "auto"
+        if auto:
+            mode = "auto"
+        elif target:
+            mode = "anywhere_person" if scope == "anywhere" else "dorm_person"
         else:
-            mode = "auto" if auto else "pick"
+            mode = "prev"
         self.mode = tk.StringVar(value=mode)
-        self.prev_radio = ttk.Radiobutton(box2, text="前一位进驻（宿舍进驻顺序里的上一位）",
-                                          value="default", variable=self.mode, command=self._sync)
-        self.prev_radio.pack(anchor="w", padx=theme.GAP, pady=(4, 0))
-        self.auto_radio = ttk.Radiobutton(
-            box2, text="全基建最累的那位（自动挑心情最低的）", value="auto",
-            variable=self.mode, command=self._sync)
-        self.auto_radio.pack(anchor="w", padx=theme.GAP, pady=(0, 0))
-        row = tk.Frame(box2, bg=theme.BG)
-        row.pack(anchor="w", fill="x", padx=theme.GAP, pady=(0, 4))
-        self.pick_radio = ttk.Radiobutton(row, text="指定干员：", value="pick",
-                                          variable=self.mode, command=self._sync)
-        self.pick_radio.pack(side="left")
-        self.person = tk.StringVar(value=(target if mode == "pick" else
-                                          (self._candidates[0] if self._candidates else "")))
-        self.person_box = ttk.Combobox(row, textvariable=self.person, state="readonly",
-                                       values=self._candidates, width=14)
-        self.person_box.pack(side="left", padx=(4, 0))
+        self.person = tk.StringVar(value=(target if (target and not auto)
+                                          else (self._candidates[0] if self._candidates else "")))
+        opts = [
+            ("prev", "同宿舍的前一位进驻（默认，游戏原口径）", None),
+            ("dorm_person", "同宿舍的指定干员：", "person"),
+            ("auto", "全基建最累的那位（自动挑心情最低的）", None),
+            ("anywhere_person", "全基建任意位置的指定干员（同上那个人）", None),
+        ]
+        for value, label, extra in opts:
+            row = tk.Frame(box1, bg=theme.BG)
+            row.pack(anchor="w", fill="x", padx=theme.GAP, pady=(3 if value == "prev" else 0, 0))
+            ttk.Radiobutton(row, text=label, value=value, variable=self.mode,
+                            command=self._sync).pack(side="left")
+            if extra == "person":
+                self.person_box = ttk.Combobox(row, textvariable=self.person, state="readonly",
+                                               values=self._candidates, width=16)
+                self.person_box.pack(side="left", padx=(4, 0))
         holders = "、".join(current_holders) if current_holders else "（本排班里没有）"
-        tk.Label(box2, text=f"触发者：{holders}。指定对象若不在允许范围内，该班次不换并给出提示。",
+        tk.Label(box1, text=f"触发者：{holders}。前两项限同一宿舍；后两项可换基建任意位置"
+                            f"（任何设施上的干员）。指定的人不在允许范围内时该班次不换并给出提示。",
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=460,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
-                                                                pady=(0, 6))
+                                                                pady=(4, 6))
 
-        # ③ 换完怎么放
-        box3 = tk.LabelFrame(self, text="③ 换完之后（被换满的那个人怎么放）", bg=theme.BG,
+        # ② 换完之后
+        box2 = tk.LabelFrame(self, text="② 换完之后（被换满的那个人怎么放）", bg=theme.BG,
                              fg=theme.TEXT, font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1,
                              relief="groove", labelanchor="nw")
-        box3.pack(fill="x", **pad, pady=(0, 4))
+        box2.pack(fill="x", **pad, pady=(0, 4))
         self.restore = tk.StringVar(value="back" if restore_back else "swap")
-        ttk.Radiobutton(box3, text="把他换回原位（默认）——两人都留在自己的岗位上，只交换心情",
+        ttk.Radiobutton(box2, text="把他换回原位（默认）——两人都留在自己的岗位上，只交换心情",
                         value="back", variable=self.restore).pack(anchor="w", padx=theme.GAP,
                                                                   pady=(4, 0))
-        ttk.Radiobutton(box3, text="位置也一起互换——她接管对方岗位，对方进她的位置",
+        ttk.Radiobutton(box2, text="位置也一起互换——她接管对方岗位，对方进她的位置",
                         value="swap", variable=self.restore).pack(anchor="w", padx=theme.GAP,
                                                                   pady=(0, 6))
 
-        # ④ 强制等待
-        box4 = tk.LabelFrame(self, text="④ 强制换心情（到点了但她没满）", bg=theme.BG,
+        # ③ 什么时候换（三选一；默认＝强制立刻换）
+        box3 = tk.LabelFrame(self, text="③ 什么时候换", bg=theme.BG,
                              fg=theme.TEXT, font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1,
                              relief="groove", labelanchor="nw")
-        box4.pack(fill="x", **pad, pady=(0, 4))
-        self.force = tk.BooleanVar(value=bool(force))
-        ttk.Checkbutton(box4, text="等她回满心情的那一刻再换", variable=self.force
-                        ).pack(anchor="w", padx=theme.GAP, pady=(4, 0))
-        tk.Label(box4, text="不勾选：到她该换的时候（每班开始）心情不满 → 这一次就不换了；\n"
-                            "勾选：一直等到她回满那一刻立刻换（她本次能换出去的心情更多，"
-                            "但可能要等到班次中段）。",
+        box3.pack(fill="x", **pad, pady=(0, 4))
+        self.when = tk.StringVar(value=normalize_entry_when(when) or "immediate")
+        for value, label in (
+            ("immediate", "强制立刻换（默认）——只要设了就换，不管她满不满、也不管对方心情是多少"),
+            ("wait", "到点没满就等她回满再换——她本次能换出去更多，但可能等到班次中段"),
+            ("full", "只在她满心情时换（游戏原口径）——不满就这一次不换"),
+        ):
+            ttk.Radiobutton(box3, text=label, value=value,
+                            variable=self.when).pack(anchor="w", padx=theme.GAP,
+                                                     pady=(4 if value == "immediate" else 0, 0))
+        tk.Label(box3, text="「对方心情」不构成任何限制：哪怕双方都是 24，也会照做"
+                            "（数值不变，但「位置也一起互换」时位置照换）。",
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=460,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
-                                                                pady=(0, 6))
+                                                                pady=(4, 6))
 
-        # ⑤ 按班次（覆盖上面的默认）
-        box5 = tk.LabelFrame(self, text="⑤ 按班次（不填就跟随上面的默认；3 班排班可逐班不同）",
+        # ④ 按班次（覆盖上面的默认）
+        box5 = tk.LabelFrame(self, text="④ 按班次（不填就跟随上面的默认；3 班排班可逐班不同）",
                              bg=theme.BG, fg=theme.TEXT,
                              font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1, relief="groove",
                              labelanchor="nw")
         box5.pack(fill="x", **pad, pady=(0, 4))
-        self.shift_rows = []            # [(使用 BooleanVar, 换谁 StringVar, 强制 BooleanVar)]
+        self.shift_rows = []            # [(使用 BooleanVar, 换谁 StringVar, 什么时候 StringVar)]
         if self._shift_labels:
             hdr = tk.Frame(box5, bg=theme.BG)
             hdr.pack(fill="x", padx=theme.GAP, pady=(4, 0))
-            for text, width in (("班次", 22), ("使用", 5), ("换给谁", 20), ("强制", 5)):
+            for text, width in (("班次", 20), ("使用", 5), ("换给谁", 18), ("什么时候换", 14)):
                 tk.Label(hdr, text=text, bg=theme.BG, fg=theme.MUTED, width=width, anchor="w",
                          font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
             values = [self.INHERIT, self.DEFAULT_TARGET, self.AUTO] + self._candidates
+            when_values = [self.INHERIT] + [WHEN_LABELS[m] for m in ENTRY_WHEN_MODES]
             for i, label in enumerate(self._shift_labels):
                 row = tk.Frame(box5, bg=theme.BG)
                 row.pack(fill="x", padx=theme.GAP, pady=(2, 0))
-                tk.Label(row, text=f"{i + 1}. {label}", bg=theme.BG, fg=theme.TEXT, width=22,
+                tk.Label(row, text=f"{i + 1}. {label}", bg=theme.BG, fg=theme.TEXT, width=20,
                          anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
                 use = tk.BooleanVar(value=True)
                 tk.Checkbutton(row, text="", variable=use, bg=theme.BG,
                                activebackground=theme.BG, highlightthickness=0).pack(
-                    side="left", padx=(6, 0))
+                    side="left", padx=(4, 0))
                 who = tk.StringVar(value=self.INHERIT)
                 ttk.Combobox(row, textvariable=who, state="readonly", values=values,
-                             width=18).pack(side="left", padx=(6, 6))
-                strong = tk.BooleanVar(value=False)
-                tk.Checkbutton(row, text="", variable=strong, bg=theme.BG,
-                               activebackground=theme.BG, highlightthickness=0).pack(side="left")
-                self.shift_rows.append((use, who, strong))
+                             width=16).pack(side="left", padx=(4, 6))
+                when_var = tk.StringVar(value=self.INHERIT)
+                ttk.Combobox(row, textvariable=when_var, state="readonly", values=when_values,
+                             width=12).pack(side="left")
+                self.shift_rows.append((use, who, when_var))
             tk.Label(box5,
-                     text="使用＝这个班要不要换；换给谁＝这一班的交换对象；"
-                          "强制＝这一班到点没满就等她回满再换。\n"
-                          "「跟随上面的默认」= 用 ①~④ 的设置；"
-                          "「前一位进驻」= 这一班明确按同宿舍口径（不受①「任意位置」影响）。",
+                     text="使用＝这个班要不要换；换给谁＝这一班的交换对象（同上面四选一）；"
+                          "什么时候换＝这一班的触发方式。\n"
+                          "「跟随上面的默认」= 用 ①~③ 的设置；全都没改的班不会生成覆盖项。",
                      bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=460,
                      font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
                                                                     pady=(4, 6))
@@ -446,7 +456,7 @@ class EntryEventDialog(tk.Toplevel):
     # ------------------------------------------------------------------ 按班次
     def _load_per_shift(self) -> None:
         """把已有的按班次配置填进表格（`EntryShiftOverride` → 三个控件）。"""
-        for i, (use, who, strong) in enumerate(self.shift_rows):
+        for i, (use, who, when_var) in enumerate(self.shift_rows):
             ov = next((o for o in self._per_shift_in if o.matches(i, self._shift_labels[i])), None)
             if ov is None:
                 continue
@@ -459,15 +469,17 @@ class EntryEventDialog(tk.Toplevel):
                     who.set(self.AUTO)
                 else:
                     who.set(ov.swap_with)
-            if ov.force is not None:
-                strong.set(bool(ov.force))
+            if ov.when is not None:
+                when_var.set(WHEN_LABELS.get(ov.when, self.INHERIT))
+            elif ov.force is not None:              # 旧字段兜底
+                when_var.set(WHEN_LABELS["wait" if ov.force else "full"])
 
     def _collect_per_shift(self) -> list:
         """把表格收成 `EntryShiftOverride` 列表（只写"改过的"项，其余留给默认）。"""
         from mood_soc.models import EntryShiftOverride
 
         out = []
-        for i, (use, who, strong) in enumerate(self.shift_rows):
+        for i, (use, who, when_var) in enumerate(self.shift_rows):
             target = who.get()
             swap_with = None
             scope = None
@@ -479,47 +491,50 @@ class EntryEventDialog(tk.Toplevel):
                 swap_with = "any"
             elif target != self.INHERIT:
                 swap_with = target
+            label = when_var.get()
+            when = LABEL_TO_WHEN.get(label) if label != self.INHERIT else None
             use_on = bool(use.get())
-            force_on = bool(strong.get())
-            # 全都跟随默认（使用=是、对象=跟随、强制=否）→ 不生成覆盖项
-            if use_on and swap_with is None and not force_on:
+            # 全都跟随默认（使用=是、对象=跟随、时机=跟随）→ 不生成覆盖项
+            if use_on and swap_with is None and when is None:
                 continue
             out.append(EntryShiftOverride(key=i + 1, enabled=use_on, swap_with=swap_with,
-                                          scope=scope, force=force_on))
+                                          scope=scope, when=when))
         return out
 
     def _sync(self) -> None:
-        """按"范围"联动可选对象：仅同宿舍时才有「前一位进驻」；关掉总开关则全部置灰。"""
+        """关掉总开关时把 ① 下的控件置灰；只有"指定干员"两项才需要下拉。"""
         on = self.enabled.get()
-        anywhere = self.scope.get() == "anywhere"
-        if anywhere and self.mode.get() == "default":
-            self.mode.set("auto")               # 任意位置下没有"同宿舍前一位"可言
-        if not anywhere and self.mode.get() == "auto" and not self._candidates:
-            self.mode.set("default")
-        state = "normal" if on else "disabled"
-        for w in (self.prev_radio, self.auto_radio, self.pick_radio):
-            w.state(["!disabled"] if state == "normal" else ["disabled"])
-        self.prev_radio.state(["disabled"] if anywhere else ["!disabled"])
-        self.person_box.configure(state="readonly" if (on and self.mode.get() == "pick")
-                                  else "disabled")
+        mode = self.mode.get()
+        needs_person = mode in ("dorm_person", "anywhere_person")
+        self.person_box.configure(state="readonly" if (on and needs_person) else "disabled")
+        for child in self.winfo_children():
+            if isinstance(child, tk.LabelFrame) and str(child.cget("text")).startswith("①"):
+                for w in child.winfo_children():
+                    for w2 in ([w] + list(w.winfo_children())):
+                        try:
+                            w2.state(["!disabled"] if on else ["disabled"])
+                        except (tk.TclError, AttributeError):
+                            pass
 
     def _ok(self) -> None:
         enabled = bool(self.enabled.get())
-        scope = self.scope.get()
         restore_back = self.restore.get() == "back"
-        force = bool(self.force.get())
+        when = self.when.get()
+        mode = self.mode.get()
+        scope = "anywhere" if mode in ("auto", "anywhere_person") else "dorm"
         swap_with = None
         if enabled:
-            mode = self.mode.get()
-            if mode == "pick":
+            if mode in ("dorm_person", "anywhere_person"):
                 swap_with = self.person.get().strip() or None
                 if swap_with is None:
-                    messagebox_showinfo_safe(self, "请选择一位干员，或改选「自动挑最累的」/「前一位进驻」")
+                    messagebox_showinfo_safe(
+                        self, "请选择一位干员，或改选「全基建最累的那位」/「前一位进驻」")
                     return
             elif mode == "auto":
                 swap_with = "any"
-            # mode == "default" → None（引擎默认「前一位进驻」）
-        self.result = (enabled, swap_with, scope, restore_back, force, self._collect_per_shift())
+            # mode == "prev" → None（引擎默认「前一位进驻」，scope=dorm）
+        self.result = (enabled, swap_with, scope, restore_back, when,
+                       self._collect_per_shift())
         self.destroy()
 
 
@@ -530,11 +545,11 @@ def messagebox_showinfo_safe(parent, text: str) -> None:
 
 def ask_entry_event(parent, enabled: bool, swap_with, candidates: Sequence[str],
                     current_holders: Sequence[str] = (), scope: str = "dorm",
-                    restore_back: bool = True, force: bool = False,
+                    restore_back: bool = True, when: str = "immediate",
                     shift_labels: Sequence[str] = (), per_shift: Sequence = ()):
-    """返回 `(enabled, swap_with, scope, restore_back, force, per_shift)`；取消返回 None。"""
+    """返回 `(enabled, swap_with, scope, restore_back, when, per_shift)`；取消返回 None。"""
     dlg = EntryEventDialog(parent, enabled, swap_with, candidates, current_holders,
-                           scope=scope, restore_back=restore_back, force=force,
+                           scope=scope, restore_back=restore_back, when=when,
                            shift_labels=shift_labels, per_shift=per_shift)
     parent.wait_window(dlg)
     return dlg.result

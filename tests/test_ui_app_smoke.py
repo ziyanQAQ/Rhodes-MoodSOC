@@ -349,7 +349,7 @@ class Test新增交互(unittest.TestCase):
         app.entry_events.set(True)
         app.entry_swap_with = None
         app.entry_scope = "dorm"
-        app.entry_force = False
+        app.entry_when = "immediate"
         app.entry_restore_back = True
         app._sync_entry_label()
         self.assertIn("前一位", app.entry_detail.cget("text"))
@@ -359,7 +359,7 @@ class Test新增交互(unittest.TestCase):
         # 任意位置 + 自动挑 + 等她满 + 位置也换 → 旁注用紧凑写法带出这几项
         app.entry_swap_with = "any"
         app.entry_scope = "anywhere"
-        app.entry_force = True
+        app.entry_when = "wait"
         app.entry_restore_back = False
         app._sync_entry_label()
         text = app.entry_detail.cget("text")
@@ -391,7 +391,7 @@ class Test新增交互(unittest.TestCase):
 
         # ② 开启 + 指定「塞雷娅」（仅同宿舍）→ 互换
         try:
-            app_mod.ask_entry_event = lambda *a, **k: (True, "塞雷娅", "dorm", True, False)
+            app_mod.ask_entry_event = lambda *a, **k: (True, "塞雷娅", "dorm", True, "immediate")
             app.edit_entry_events()
         finally:
             app_mod.ask_entry_event = orig_dlg
@@ -399,7 +399,7 @@ class Test新增交互(unittest.TestCase):
         self.assertEqual(app.entry_swap_with, "塞雷娅")
         self.assertEqual(app.entry_scope, "dorm")
         self.assertTrue(app.entry_restore_back)
-        self.assertFalse(app.entry_force)
+        self.assertEqual(app.entry_when, "immediate")
         self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("6"))
         self.assertEqual(app.traj.mood_at("塞雷娅", 0), Decimal("24"))
         self.assertTrue([m for m in app.traj.marks if m.kind == "entry"])
@@ -420,14 +420,14 @@ class Test新增交互(unittest.TestCase):
             app_mod.ask_mood = lambda parent, who, cur, note="": preset.get(who)
             for who in preset:
                 app._ask_and_set_mood(who)
-            app_mod.ask_entry_event = lambda *a, **k: (True, "any", "anywhere", False, True)
+            app_mod.ask_entry_event = lambda *a, **k: (True, "any", "anywhere", False, "wait")
             app.edit_entry_events()
         finally:
             app_mod.ask_mood, app_mod.ask_entry_event = orig_mood, orig_dlg
         self.assertEqual(app.entry_swap_with, "any")
         self.assertEqual(app.entry_scope, "anywhere")
         self.assertFalse(app.entry_restore_back)
-        self.assertTrue(app.entry_force)
+        self.assertEqual(app.entry_when, "wait")
         events = [m for m in app.traj.marks if m.kind == "entry"]
         self.assertTrue(events, "应当发生了一次换心情")
         self.assertTrue(any("自动挑" in m.label for m in events))
@@ -436,7 +436,7 @@ class Test新增交互(unittest.TestCase):
         app.entry_events.set(False)
         app.entry_scope = "dorm"
         app.entry_restore_back = True
-        app.entry_force = False
+        app.entry_when = "immediate"
         app.entry_swap_with = None
         app.initial_moods.clear()
         app.recompute()
@@ -540,7 +540,7 @@ class Test新增交互(unittest.TestCase):
         self.assertNotEqual(names_after, names_before)
 
     def test_按班次面板与逐班联动(self):
-        """「按班次」面板：每班一行（使用 / 换给谁 / 强制），预填已有配置，应用后逐班生效。"""
+        """「按班次」面板：每班一行（使用 / 换给谁 / 什么时候换），预填已有配置，应用后逐班生效。"""
         from mood_soc.models import EntryShiftOverride
         from ui.dialogs import EntryEventDialog
 
@@ -550,17 +550,18 @@ class Test新增交互(unittest.TestCase):
         self.assertEqual(len(labels), 3)
         dlg = EntryEventDialog(app, True, None, cands, holders, scope="anywhere",
                               shift_labels=labels,
-                              per_shift=[EntryShiftOverride(key=1, swap_with="巫恋", force=True),
+                              per_shift=[EntryShiftOverride(key=1, swap_with="巫恋", when="wait"),
                                          EntryShiftOverride(key=3, enabled=False)])
         try:
             app.update()
             self.assertEqual(len(dlg.shift_rows), 3)
-            self.assertEqual(dlg.shift_rows[0][1].get(), "巫恋")     # 预填对象
-            self.assertTrue(dlg.shift_rows[0][2].get())              # 预填强制
-            self.assertFalse(dlg.shift_rows[2][0].get())             # 第 3 班预填"不用"
+            self.assertEqual(dlg.shift_rows[0][1].get(), "巫恋")             # 预填对象
+            self.assertEqual(dlg.shift_rows[0][2].get(), "等她回满")          # 预填触发方式
+            self.assertEqual(dlg.shift_rows[1][2].get(), "（跟随上面的默认）")  # 未覆盖
+            self.assertFalse(dlg.shift_rows[2][0].get())                     # 第 3 班预填"不用"
             dlg._ok()
-            self.assertEqual([(o.key, o.enabled, o.swap_with, o.force) for o in dlg.result[5]],
-                             [(1, True, "巫恋", True), (3, False, None, False)])
+            self.assertEqual([(o.key, o.enabled, o.swap_with, o.when) for o in dlg.result[5]],
+                             [(1, True, "巫恋", "wait"), (3, False, None, None)])
         finally:
             dlg.destroy()
 
@@ -568,7 +569,7 @@ class Test新增交互(unittest.TestCase):
         app.entry_scope = "anywhere"
         app.entry_swap_with = None
         app.entry_restore_back = True
-        app.entry_force = False
+        app.entry_when = "immediate"
         app.entry_per_shift = list(dlg.result[5])
         app._sync_entry_label()
         app.recompute()

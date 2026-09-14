@@ -38,6 +38,7 @@ from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
                          default_initial_moods, load_schedule, simulate_schedule)
 from mood_soc import entry_event_holders, entry_target_kind  # noqa: E402
 from mood_soc.config import FacilityType  # noqa: E402
+from mood_soc.models import normalize_entry_when  # noqa: E402
 
 SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
@@ -73,7 +74,7 @@ class MoodSocApp(tk.Tk):
         self.entry_swap_with: Optional[str] = None     # None = 默认「前一位进驻」；"any" = 自动挑最累的
         self.entry_scope = "dorm"                      # "dorm" 仅同宿舍 / "anywhere" 基建任意位置
         self.entry_restore_back = True                 # True = 换回去（只换心情、位置不变）
-        self.entry_force = False                       # True = 到点没满就等她回满再换
+        self.entry_when = "immediate"                  # immediate（强制立刻换）/ wait（等她满）/ full（只在她满时）
         self.entry_per_shift: list = []                # 按班次覆盖（EntryShiftOverride 列表）
         self.play_speed = Decimal("1")
         self.current_t = Decimal("0")
@@ -274,7 +275,7 @@ class MoodSocApp(tk.Tk):
         self.entry_swap_with = cfg.swap_with
         self.entry_scope = getattr(cfg, "scope", "dorm")
         self.entry_restore_back = bool(getattr(cfg, "restore_back", True))
-        self.entry_force = bool(getattr(cfg, "force", False))
+        self.entry_when = normalize_entry_when(getattr(cfg, "when", None)) or "immediate"
         self.entry_per_shift = list(getattr(cfg, "per_shift", []) or [])
         self._sync_entry_label()
         self._build_shift_buttons()
@@ -308,7 +309,7 @@ class MoodSocApp(tk.Tk):
                                       entry_swap_with=self.entry_swap_with,
                                       entry_scope=self.entry_scope,
                                       entry_restore_back=self.entry_restore_back,
-                                      entry_force=self.entry_force,
+                                      entry_when=self.entry_when,
                                       entry_per_shift=self.entry_per_shift or None)
         total = self._total_hours()
         if fit_slider or self.current_t > total:
@@ -547,17 +548,20 @@ class MoodSocApp(tk.Tk):
                   if n not in holders and n not in mates]
         return holders, mates + others
 
+    def _when_token(self, when: str) -> str:
+        """「什么时候换」的紧凑说法（默认的"强制立刻"不写，省工具栏宽度）。"""
+        return {"wait": "等她满", "full": "仅满心情"}.get(when, "")
+
     def _sync_entry_label(self):
         """把当前设置写在开关旁边（极简；完整说明在「这是什么／换谁…」对话框里）。
 
         工具栏宽度紧张，所以用紧凑写法：`（最累的·任意位置·等她满）`；
-        配了按班次覆盖时改成 `（按班次：1巫恋·2最累·3不用）`。
+        配了按班次覆盖时只写 `（按班次）`，明细进状态栏。
         """
         if not self.entry_events.get():
             self.entry_detail.configure(text="（不结算）")
             return
         if self.entry_per_shift:
-            # 明细放状态栏（工具栏宽度有限，这里只留一个短标记）
             self.entry_detail.configure(text="（按班次）")
             return
         if self.entry_swap_with == "any" or entry_target_kind(self.entry_swap_with,
@@ -572,8 +576,9 @@ class MoodSocApp(tk.Tk):
             bits.append("任意位置")
         if not self.entry_restore_back:
             bits.append("位置也换")
-        if self.entry_force:
-            bits.append("等她满")
+        token = self._when_token(self.entry_when)
+        if token:
+            bits.append(token)
         suffix = "·" + "·".join(bits) if bits else ""
         self.entry_detail.configure(text=f"（{target}{suffix}）")
 
@@ -593,7 +598,9 @@ class MoodSocApp(tk.Tk):
             scope = ov.scope or self.entry_scope
             kind = entry_target_kind(raw, scope)
             who = {"auto": "最累", "named": raw, "default": "默认"}[kind]
-            parts.append(f"{i + 1}{who}" + ("·强等" if ov.force else ""))
+            when = ov.when or self.entry_when
+            token = self._when_token(when)
+            parts.append(f"{i + 1}{who}" + (f"·{token}" if token else ""))
         return "（按班次：" + "·".join(parts) + "）" if parts else "（前一位）"
 
     def _entry_summary(self) -> str:
@@ -609,7 +616,9 @@ class MoodSocApp(tk.Tk):
             who = "同宿舍的前一位进驻者"
         where = "基建任意位置" if self.entry_scope == "anywhere" else "仅同一宿舍"
         after = "换完后两人都留在原位" if self.entry_restore_back else "换完后位置也对调"
-        when = "；到点没满就等她回满再换" if self.entry_force else ""
+        when = {"immediate": "；强制立刻换（不看双方心情）",
+                "wait": "；到点没满就等她回满再换",
+                "full": "；只在她满心情时换（游戏原口径）"}.get(self.entry_when, "")
         text = f"进驻事件：每班开始时结算——与{who}互换心情（{where}，{after}）{when}"
         if self.entry_per_shift:
             text += f"　｜　按班次覆盖：{self._per_shift_brief()[1:-1]}"
@@ -620,7 +629,7 @@ class MoodSocApp(tk.Tk):
         holders, mates = self._entry_candidates()
         picked = ask_entry_event(self, self.entry_events.get(), self.entry_swap_with,
                                  mates, holders, scope=self.entry_scope,
-                                 restore_back=self.entry_restore_back, force=self.entry_force,
+                                 restore_back=self.entry_restore_back, when=self.entry_when,
                                  shift_labels=(self.schedule.shift_labels() if self.schedule else ()),
                                  per_shift=self.entry_per_shift)
         if picked is None:
@@ -629,13 +638,13 @@ class MoodSocApp(tk.Tk):
         enabled, swap_with = picked[0], picked[1]
         scope = picked[2] if len(picked) > 2 else self.entry_scope
         restore_back = picked[3] if len(picked) > 3 else self.entry_restore_back
-        force = picked[4] if len(picked) > 4 else self.entry_force
+        when = normalize_entry_when(picked[4]) if len(picked) > 4 else self.entry_when
         per_shift = picked[5] if len(picked) > 5 else self.entry_per_shift
         self.entry_events.set(enabled)
         self.entry_swap_with = swap_with
         self.entry_scope = scope
         self.entry_restore_back = restore_back
-        self.entry_force = force
+        self.entry_when = when or "immediate"
         self.entry_per_shift = list(per_shift or [])
         self._sync_entry_label()
         self.recompute()                      # 先重算（recompute 会写状态栏）
