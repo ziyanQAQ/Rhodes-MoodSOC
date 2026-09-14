@@ -62,7 +62,7 @@ BASIS_DOC = {
     "dorm_level": "当前宿舍每级",
     "dorm_unfull": "该宿舍每有 1 名心情未满干员",
     "dorm_others": "该宿舍内每有 1 名其他干员",
-    "abyssal_non_dorm": "每有 1 个进驻在宿舍以外设施的「深海猎人」干员",
+    "abyssal_non_dorm": "每有 1 个进驻在宿舍以外设施的「深海猎人」干员（含持有者自身）",
 }
 
 # 产出者条件（读当前快照）
@@ -157,9 +157,11 @@ def basis_count(world, basis: str, facility=None, op=None) -> Decimal:
     if basis == "sui_non_dorm":
         return Decimal(min(_count_in_facilities(world, "岁"), 5))
     if basis == "abyssal_non_dorm":
-        # 排除技能持有者自身：歌蕾蒂娅自己就在控制中枢（宿舍以外），
-        # 若把她算进去则「每有」恒 ≥1、潮汐守望的「反之」分支永不可达（见 skills 里的说明）。
-        return Decimal(_count_in_facilities(world, "深海猎人", exclude=op))
+        # **含技能持有者自身**（用户拍板，见 documents/04-特殊机制.md 第 23 条）：
+        # 歌蕾蒂娅自己就进驻在控制中枢（＝宿舍以外的设施），所以她在工作设施里时本项恒 ≥ 1。
+        # 推论：「反之」（＝宿舍以外没有深海猎人）随之不可达，故潮汐守望的
+        # `#2`/`#3` 两个回复分句在本模型中不会生效（登记保留，见 skills 里的说明）。
+        return Decimal(_count_in_facilities(world, "深海猎人"))
     # —— 以下需要目标设施 / 目标干员 ——
     if basis == "power_count":
         return Decimal(world.count_of_type(FacilityType.POWER))
@@ -177,10 +179,12 @@ def basis_count(world, basis: str, facility=None, op=None) -> Decimal:
     return Decimal("1")
 
 
-def _count_in_facilities(world, faction: str, exclude=None) -> int:
-    """「宿舍/活动室以外设施」里某阵营的进驻干员数（上限由调用方处理）。
+def _count_in_facilities(world, faction: str) -> int:
+    """「宿舍/活动室以外设施」里某阵营的**进驻**干员数（上限由调用方处理）。
 
-    `exclude`：排除的干员（通常是技能持有者自身）。
+    ⚠️ 现在**不排除任何人**（含技能持有者自身）——潮汐守望的口径见
+    `basis_count` 的 `abyssal_non_dorm` 分支与 `documents/04-特殊机制.md` 第 23 条。
+    副手不算（`Facility.operators` 只含进驻者）；活动室使用者同样不算。
     """
     from .skills import _factions_of
     count = 0
@@ -188,8 +192,6 @@ def _count_in_facilities(world, faction: str, exclude=None) -> int:
         if f.ftype in (FacilityType.DORMITORY, FacilityType.PRIVATE):
             continue
         for o in f.operators:
-            if o is exclude:
-                continue
             if faction in _factions_of(o):
                 count += 1
     return count

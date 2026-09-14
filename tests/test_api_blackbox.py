@@ -748,12 +748,12 @@ class Test可数条件与替换链(unittest.TestCase):
         self.assertEqual(self._recover(["流明"]), Decimal("4.15"))
 
     def test_abyssal_non_dorm_basis(self):
-        """潮汐守望：每有 1 个进驻在宿舍以外设施的**其他**深海猎人，自身消耗 +0.5。
+        """潮汐守望：每有 1 个进驻在宿舍以外设施的深海猎人（**含持有者自身**），自身消耗 +0.5。
 
-        ⚠️ 口径：「其他」= 排除歌蕾蒂娅自身。上游原文两条分支
-        「每有 1 个…宿舍以外的设施，则自身心情每小时消耗 +0.5；**反之**则自身心情每小时恢复 +0.5」
-        ——若把她自己也算进去，则「每有」恒 ≥1、「反之」永不触发（游戏不会写死分支），
-        故取「其他深海猎人」口径；该分支行为在本用例中一并断言。
+        ⚠️ 口径（用户拍板，见 `documents/04-特殊机制.md` 第 23 条）：**不排除歌蕾蒂娅自己**。
+        她进驻控制中枢即"宿舍以外"，故本项恒 ≥ 1。
+        推论：「反之则自身心情每小时恢复 +0.5」及其后续的「宿舍内深海猎人为满心情额外 +0.5」
+        两个分句**不可达**——本用例把这一点锁死（它们保留在数据里但不产生回复）。
         """
         def ledger(extra_facs):
             world = build_base_layout(scenario(
@@ -762,20 +762,28 @@ class Test可数条件与替换链(unittest.TestCase):
                 *extra_facs))
             return mood_ledger(world, "歌蕾蒂娅")
 
-        # 只有歌蕾蒂娅自己 → 无其他深海猎人在宿舍外 → 「反之」自身 +0.5 恢复
-        lg = ledger([])
-        self.assertEqual(lg.total(Bucket.CONSUME), Decimal("0.75"))
-        self.assertEqual(lg.total(Bucket.RECOVER), Decimal("0.55"))   # 0.5 反之 + 0.05 集群狩猎
+        def m07b_rows(lg):
+            return [c for c in lg.of(Bucket.RECOVER) if c.template == "M07b"]
 
-        # 幽灵鲨在制造站 → ×1 → 消耗 +0.5（「反之」分支不再生效）
-        lg = ledger([{"type": "制造站", "level": 3, "operators": ["幽灵鲨"]}])
+        # 只有歌蕾蒂娅自己 → 她自己就在宿舍以外 → ×1 → 消耗 0.75 + 0.5
+        # 回复只剩集群狩猎 0.05（「反之」不成立）
+        lg = ledger([])
         self.assertEqual(lg.total(Bucket.CONSUME), Decimal("1.25"))
         self.assertEqual(lg.total(Bucket.RECOVER), Decimal("0.05"))
+        self.assertEqual(m07b_rows(lg), [])
 
-        # 幽灵鲨在宿舍且满心情 → 反之 +0.5，且「为满心情」额外 +0.5
+        # 幽灵鲨在制造站（宿舍以外）→ ×2 → 消耗 0.75 + 1.0
+        lg = ledger([{"type": "制造站", "level": 3, "operators": ["幽灵鲨"]}])
+        self.assertEqual(lg.total(Bucket.CONSUME), Decimal("1.75"))
+        self.assertEqual(lg.total(Bucket.RECOVER), Decimal("0.05"))
+        self.assertEqual(m07b_rows(lg), [])
+
+        # 幽灵鲨在宿舍且满心情 → 她**不在**宿舍以外，故计数仍只有歌蕾蒂娅自己；
+        # 「反之」「满心情额外」都以「宿舍以外没有深海猎人」为前提，故仍不生效
         lg = ledger([{"type": "宿舍", "level": 5, "operators": [{"name": "幽灵鲨", "mood": "24"}]}])
-        self.assertEqual(lg.total(Bucket.CONSUME), Decimal("0.75"))
-        self.assertEqual(lg.total(Bucket.RECOVER), Decimal("1.05"))
+        self.assertEqual(lg.total(Bucket.CONSUME), Decimal("1.25"))
+        self.assertEqual(lg.total(Bucket.RECOVER), Decimal("0.05"))
+        self.assertEqual(m07b_rows(lg), [])
 
     def test_unconditional_mood_clause_with_truncated_condition(self):
         """挑大梁：上游原文里「每有 1 名黑钢国际干员」修饰的是**生产力**，心情 -0.15 是无条件的。"""

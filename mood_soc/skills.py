@@ -177,30 +177,32 @@ def _cond_self_full_mood(ctx) -> bool:
 
 
 def _cond_no_abyssal_outside_dorm(ctx) -> bool:
-    """潮汐守望「反之」：没有**其他**深海猎人进驻在宿舍以外的设施。
+    """潮汐守望「反之」：没有深海猎人进驻在宿舍以外的设施。
 
     上游原文：「每有 1 个深海猎人干员进驻在宿舍以外的设施，则自身心情每小时消耗 +0.5；
     **反之**则自身心情每小时恢复 +0.5」。
 
-    ⚠️ 解释口径：**排除技能持有者自身**（歌蕾蒂娅自己就在控制中枢＝宿舍以外设施）。
-    若把她自己也算进去，则「每有…」恒 ≥ 1、下面的「反之」分支永远不可达——
-    游戏设计不会写一个恒不可达的分支，故取「其他深海猎人」口径。
+    ⚠️ 口径（用户拍板）：**含技能持有者自身**，与 `variables.basis_count` 的
+    `abyssal_non_dorm` 分支同一口径（那边也把她自己数进去）。因此：
+    歌蕾蒂娅自己就进驻在控制中枢（＝宿舍以外）时，本条件恒为 False，
+    潮汐守望的「反之」恢复分支（`#2`）与依赖它的「宿舍内深海猎人满心情」（`#3`）
+    在实际布局中**不可达**——两个分句保留在数据里备查，但不产生回复。
+    详见 `documents/04-特殊机制.md` 第 23 条。
     """
     for f in ctx.world.facilities:
         if f.ftype in (FacilityType.DORMITORY, FacilityType.PRIVATE):
             continue
         for o in f.operators:
-            if o is ctx.owner:
-                continue
             if "深海猎人" in _factions_of(o):
                 return False
     return True
 
 
 def _cond_dorm_abyssals_full_mood(ctx) -> bool:
-    """潮汐守望额外 +0.5：宿舍内的深海猎人**均为满心情**（且没有其他人在宿舍外）。
+    """潮汐守望额外 +0.5：宿舍内的深海猎人**均为满心情**。
 
     口径：要求宿舍内至少有 1 名深海猎人（否则"均为满心情"空真，会把额外 +0.5 白送）。
+    该分句以「反之」（`_cond_no_abyssal_outside_dorm`）为前提，故随其一起不可达（见上）。
     """
     if not _cond_no_abyssal_outside_dorm(ctx):
         return False
