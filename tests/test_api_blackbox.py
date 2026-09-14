@@ -11,7 +11,8 @@ from __future__ import annotations
 import unittest
 from decimal import Decimal
 
-from mood_soc import build_base_layout, evaluate, evaluate_base, simulate, time_to_mood
+from mood_soc import (apply_entry_events, build_base_layout, evaluate, evaluate_base,
+                       simulate, time_to_mood)
 from mood_soc.config import (FacilityType, WORK_FACILITIES, facility_max_count,
                              facility_slots)
 from mood_soc.output import base_result_to_dict, mood_result_to_dict
@@ -1002,6 +1003,73 @@ class Test元修正M17(unittest.TestCase):
         """
         world = self._dorm(["摩根", "推进之王", "森西", "达格达"])
         self.assertEqual(self._recover(world, "达格达"), Decimal("4.50"))
+
+
+class Test进驻事件M15a(unittest.TestCase):
+    """M15a 进驻事件：**患难之交**（菲亚梅塔）。
+
+    上游原文（`building_data.json` → `buffs["dorm_exchangeAp[000]"]`）：
+        「进驻宿舍时，**如果自身为满心情**，则与当前宿舍**前一位进驻**的干员互换心情」
+
+    这类技能不是"每小时 ±N 点"，而是**进驻那一刻的状态跳变**，所以既不进速率流水账、
+    也不进时间积分，而是由显式 API `apply_entry_events(world)`（CLI：`--entry-events`）结算。
+    「前一位进驻」= `Facility.operators` 里排在触发者之前的那一位（该列表本来就是进驻顺序）。
+    """
+
+    @staticmethod
+    def _world(pairs, ftype="宿舍"):
+        return build_base_layout(scenario(
+            {"type": ftype, "level": 5,
+             "operators": [{"name": n, "mood": m} for n, m in pairs]}))
+
+    @staticmethod
+    def _moods(world):
+        return [o.mood for o in world.facilities[0].operators]
+
+    def test_swap_when_self_full(self):
+        """满心情 → 与前一位互换（菲亚梅塔 24 换走对方的 6）。"""
+        world = self._world([("路人", 6), ("菲亚梅塔", 24)])
+        events = apply_entry_events(world)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(self._moods(world), [Decimal("24"), Decimal("6")])
+
+    def test_no_swap_when_not_full(self):
+        """自身不满心情 → 不触发。"""
+        world = self._world([("路人", 6), ("菲亚梅塔", 20)])
+        self.assertEqual(apply_entry_events(world), [])
+        self.assertEqual(self._moods(world), [Decimal("6"), Decimal("20")])
+
+    def test_no_swap_without_previous_occupant(self):
+        """她是宿舍里第一个进驻的（没有"前一位"）→ 不触发。"""
+        world = self._world([("菲亚梅塔", 24), ("路人", 6)])
+        self.assertEqual(apply_entry_events(world), [])
+        self.assertEqual(self._moods(world), [Decimal("24"), Decimal("6")])
+
+    def test_order_matters(self):
+        """「前一位进驻」由布局的**顺序**决定——调换顺序换的是另一个人。"""
+        world = self._world([("达格达", 3), ("路人", 6), ("菲亚梅塔", 24)])
+        apply_entry_events(world)
+        self.assertEqual(self._moods(world), [Decimal("3"), Decimal("24"), Decimal("6")])
+
+    def test_idempotent(self):
+        """互换后她不再是满心情 → 重复调用不会换回来。"""
+        world = self._world([("路人", 6), ("菲亚梅塔", 24)])
+        apply_entry_events(world)
+        self.assertEqual(apply_entry_events(world), [])
+        self.assertEqual(self._moods(world), [Decimal("24"), Decimal("6")])
+
+    def test_only_in_dormitory(self):
+        """技能限定宿舍：其它设施不结算。"""
+        world = self._world([("路人", 6), ("菲亚梅塔", 24)], ftype="制造站")
+        self.assertEqual(apply_entry_events(world), [])
+        self.assertEqual(self._moods(world), [Decimal("6"), Decimal("24")])
+
+    def test_not_applied_by_default(self):
+        """`evaluate` **不**自动结算进驻事件——它是显式开关（CLI `--entry-events`）。"""
+        world = self._world([("路人", 6), ("菲亚梅塔", 24)])
+        self.assertEqual(evaluate(world, "菲亚梅塔", Decimal("0")).initial_mood, Decimal("24"))
+        apply_entry_events(world)
+        self.assertEqual(evaluate(world, "菲亚梅塔", Decimal("0")).initial_mood, Decimal("6"))
 
 
 if __name__ == "__main__":

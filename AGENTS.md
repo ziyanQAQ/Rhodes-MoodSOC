@@ -398,7 +398,18 @@ net == 0     → "心情不变"
       这正是「恢复效果额外 +0.3」的语义（推进之王 0.2 → 0.5）。
       ⚠️ 若把增量记成**独立技能**，会被"同种取最高"当成竞争者而整个丢掉，这是本机制最容易写错的地方。
     - 守卫：`boost_provider` 是点名引用，已被 `check_faction_refs()` 纳入干员名校验。
-29. **流水账 `explain()` 的「同种取最高」判负按**技能小计**比，不按单条分句**（P5b 修）：
+29. **进驻事件（M15a）已实现**：**患难之交**（菲亚梅塔）。上游原文（`buffs["dorm_exchangeAp[000]"]`）：
+    「进驻宿舍时，**如果自身为满心情**，则与当前宿舍**前一位进驻**的干员互换心情」。
+    它不是"每小时 ±N 点"而是**进驻那一刻的状态跳变**，因此：
+    - **不进速率流水账、不进时间积分**，而是走显式 API **`rules.apply_entry_events(world)`**
+      （CLI：`main.py --entry-events`），事件本身记为 `Bucket.EVENT` 展示用。
+    - ⚠️ **会就地修改** `world` 的干员心情；`evaluate` / `evaluate_base` **不**自动调用
+      （它是布局初始化语义，不是速率语义）。重复调用幂等（换完她就不再满心情）。
+    - 「前一位进驻」= `Facility.operators` 里排在触发者之前的那一位——
+      布局的 `operators` **本来就是有序列表**（进驻顺序），无需额外的队列结构。
+      条件挂 `CLAUSE_COND` 的 `_cond_self_full_mood`；调度按 `template_id == "M15a"`
+      （`rules._template_skills`，与 §4.25 的 M07b 同一约定）。
+30. **流水账 `explain()` 的「同种取最高」判负按**技能小计**比，不按单条分句**（P5b 修）：
     一条获胜技能若由多个分句组成（「基础 + 每有 N 额外」、或被 M17 强化），
     旧实现拿每条分句的 `value` 去和"技能小计"比，会把**获胜技能的每条分句都标注成
     "被更高者覆盖"**（实测：摩根强化后 0.2 与 0.3 都被标）。现改为实例小计 vs 组内最高小计。
@@ -556,6 +567,7 @@ python main.py --demo
 python main.py --demo --target 斥罪 --period 8
 python main.py --demo --target 泡泡 --trace          # 附心情轨迹
 python main.py --demo --target 泡泡 --explain        # 打印心情流水账（为什么是这个速率）
+python main.py --demo --target 菲亚梅塔 --entry-events  # 先结算**进驻事件**（M15a 患难之交心情互换）再测算
 python main.py --demo --json-file                   # 额外把结果写入 results/ 下的 JSON 文件（默认只打印到 stdout）
 
 # 自定义场景（single）
@@ -603,8 +615,8 @@ MAA 排班转换：`python scripts/maa_to_scenario.py [源] [输出目录]`（�
    实收：不生效子句 **37 → 31**（6 条本就正确的单体回复重新生效）；P3/P4a/P4b 又逐步降到 **3 条**
    （变量 + 可数基准 + 分支条件全部落地）。
    要彻底启用剩余子句，需实现 per-count 变量（人间烟火等）与 `COND_MARKERS` 扩充
-   ——**这两项 P3/P4a 已完成，当前仅剩 3 条 `hold`**（投资·α/β 需贸易站订单类型、
-   患难之交需进驻顺序）。
+   ——**这两项 P3/P4a 已完成，P5b 又落地了 M15a（患难之交，见 §4.29），当前仅剩 2 条 `hold`**
+   （投资·α/β 需贸易站订单类型这类"环境事实"）。
 3. **布局容量与房间数取自上游**：`config.FACILITY_MAX_COUNT`（`rooms[].maxCount`）与
    `FACILITY_SLOTS_BY_LEVEL`（`rooms[].phases[lv].maxStationedNum`）。`BaseLayout.validate()`
    只**报告**问题、不抛异常（历史场景可能刻意超容量）；`build_base_layout(validate=True)` 才抛。
@@ -644,6 +656,7 @@ build_base_layout                                       # scenario
 compute_net_rate, evaluate, evaluate_base, remaining_mood_after,
 remaining_work_hours, time_to_mood, work_rest_ratio      # rules
 consume_ledger, recovery_ledger, mood_ledger             # rules（流水账，可解释）
+apply_entry_events                                       # rules（进驻事件，M15a；**就地改心情**）
 Bucket, Contribution, MoodLedger                         # ledger（记录层）
 VariableLedger, collect_variables, basis_count, mood_drop # variables（变量账本 + 可数基准）
 FacilityType, unit 查询：of_type/count_of_type/all_dormitories/
@@ -726,6 +739,11 @@ traj = simulate(world, "泡泡", Decimal("12"), step=Decimal("0.1"))   # 深拷�
       ③目标筛选走 `CLAUSE_COND`（`_cond_target_in_faction` / `_cond_target_is`）；
       ④实现处必须把增量记成**同组同 skill_id 的额外贡献**（并入被强化技能的小计），
       **不能**记成独立技能——否则会被"同种取最高"当成竞争者丢掉。
+- [ ] 新增的是**进驻事件**（"进驻那一刻"的一次性跳变，而不是每小时速率）？
+      → ①`template_id=M15a`、`partial_mode=apply`；②条件挂 `CLAUSE_COND`；
+      ③在 `rules.apply_entry_events` 里按模板调度、记 `Bucket.EVENT`；
+      ④**不要**把它塞进 `consume_ledger`/`recovery_ledger`（那不是速率），
+      也不要在 `evaluate` 里偷偷改世界——它是显式开关（`--entry-events`）。
 - [ ] 是否手工往 `moods_skills.txt` **补过分句**（上游一个 buff 描述里有多个效果、本地 CSV 没拆）？
       → `classify_skills.py` 是**原地重写**、不重建行，故补的行会保留；但仍要跑一次 `--agd`
       确认参数变化 0 行，并在 `CLAUSE_COND` / 模板注释里写清上游原文出处。

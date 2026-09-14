@@ -55,7 +55,7 @@ control_mp_cost_reset_000,1,互为半身,recover,immune,当与丰川祥子一起
 control_mp_expand_double_000,1,巴别塔之帜,recover,work_area,进驻控制中枢时，<$cc.c.room2>其他设,,100,auto,wisadel_fixed,M02b,scope=room2;max_group=room2_recover;partial=false
 control_mp_expand_double_000,2,巴别塔之帜,recover,work_area,进驻控制中枢时，<$cc.c.room2>其他设,当魔王进驻控制中枢,100,complex,,M02b,scope=room2;max_group=room2_recover;partial_mode=hold;partial=true
 control_mp_lonely_000,1,公事公办,recover,work_area,进驻控制中枢时，<$cc.c.room1>部分设,,100,auto,mlynar_fixed_spread,M02c,value_scope=room1;spread=cc.c.skill;max_group=room2_recover;partial=false
-dorm_exchangeAp_000,1,患难之交,recover,swap,进驻宿舍时，如果自身为满心情，则与当前宿舍前一位,,,complex,,M15a,swap_with=previous_occupant;partial_mode=hold;partial=true
+dorm_exchangeAp_000,1,患难之交,recover,swap,进驻宿舍时，如果自身为满心情，则与当前宿舍前一位,,,complex,,M15a,swap_with=previous_occupant;partial_mode=apply;partial=true
 dorm_hireToRecAll_000,1,寻同路人,recover,dorm_group,进驻宿舍时，该宿舍内所有干员心情每小时恢复+0.,,150,auto,,M08,exclude_self=false;stacking=same_kind_max;partial=false
 dorm_hireToRecAll_000,2,寻同路人,recover,dorm_group,进驻宿舍时，该宿舍内所有干员心情每小时恢复+0.,每个招募位（不包含初始招募位）= 办公室等级,50,complex,,M08,exclude_self=false;stacking=same_kind_max;partial_mode=apply;partial=true;basis=recruit_slot
 dorm_hireToRecAll_001,1,无瑕心·α,recover,dorm_group,进驻宿舍时，该宿舍内所有干员心情每小时恢复+0.,,100,auto,,M08,exclude_self=false;stacking=same_kind_max;partial=false

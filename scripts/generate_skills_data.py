@@ -135,6 +135,11 @@ CLAUSE_COND = {
     # **格拉斯哥帮**干员恢复效果额外 +0.3」——摩根不自己回复，而是**强化别人**的效果；
     # 被强化的对象由本条件筛选（目标须属格拉斯哥帮），提供者由 boost_provider 指定。
     ("dorm_rec_toone_000", 1): '_cond_target_in_faction("格拉斯哥帮")',
+    # —— M15a 进驻事件（患难之交）——
+    # 上游原文（`dorm_exchangeAp[000]`）：「进驻宿舍时，**如果自身为满心情**，则与当前宿舍
+    # **前一位进驻**的干员互换心情」——不是速率，而是进驻瞬间的状态跳变，
+    # 由 `rules.apply_entry_events`（`main.py --entry-events`）结算。
+    ("dorm_exchangeAp_000", 1): "_cond_self_full_mood",
 }
 
 # 纯布尔、可自动映射的条件（在 target 或 condition 文本中命中）
@@ -564,6 +569,7 @@ def render(skills_by_key, default_operators, equips, traits, factions, var_produ
     lines.append('    _cond_dorm_abyssals_full_mood,')
     lines.append('    _cond_target_in_faction,')
     lines.append('    _cond_target_is,')
+    lines.append('    _cond_self_full_mood,')
     lines.append(')')
     lines.append('')
     lines.append('')

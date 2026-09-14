@@ -87,6 +87,28 @@ print(mood_ledger(world, "刺玫").explain())
 数据形态：`family=dorm_meta` → `SkillKind.DORM_META`、`template_id=M17`、
 `params` 里的 `boost_provider`（强化谁）+ `boost_group`（强化哪一组）。
 
+### 进驻事件（M15a：患难之交）
+
+有一类技能的效果不是"每小时 ±N 点"，而是**进驻那一刻的一次性跳变**。典型是
+菲亚梅塔「患难之交」：
+
+> 进驻宿舍时，**如果自身为满心情**，则与当前宿舍**前一位进驻**的干员互换心情
+
+因为它是**布局初始化**语义而非速率语义，所以走**显式开关**（默认不结算）：
+
+```bash
+python main.py --scenario-file x.json --target 菲亚梅塔 --entry-events
+# [进驻事件] [M15a] 菲亚梅塔「患难之交」　（与「前一位进驻」的 路人 互换：菲亚梅塔 24 → 6，路人 6 → 24）
+```
+
+```python
+from mood_soc import apply_entry_events          # ⚠️ 就地修改 world 的干员心情
+events = apply_entry_events(world)               # 返回事件流水账（Bucket.EVENT）
+```
+
+「前一位进驻」= `Facility.operators` 里排在触发者之前的那一位（该列表本来就是进驻顺序）。
+幂等：换完她就不再是满心情，重复调用不会再换回来。
+
 ### 可数条件（每有 N 个什么）
 
 「每有 1 间发电站」「当前宿舍每级」「每个招募位」「每有 1 名其他干员」这类条件**可以从布局直接数出来**，
@@ -340,6 +362,7 @@ Rhodes-MoodSOC/
 | `--out-dir` | 目录 | `results` | JSON 文件输出目录（仅配合 `--json-file` 生效） |
 | `--json-file` | flag | 关 | 是否额外把结果写入 JSON 文件（默认只打印到 stdout） |
 | `--trace` | flag | 关 | 仅 single 模式：附加心情轨迹（时间步进模拟，输出到 stderr） |
+| `--entry-events` | flag | 关 | 先结算**进驻事件**（M15a 患难之交心情互换）再测算；不指定则按布局给出的心情原样测算 |
 
 **场景来源优先级**：`--demo` > `--scenario-file`；两者都不给则打印帮助并退出。
 

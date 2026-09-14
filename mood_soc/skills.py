@@ -167,6 +167,15 @@ def _cond_target_is(*names: str):
     return cond
 
 
+def _cond_self_full_mood(ctx) -> bool:
+    """「进驻时**自身为满心情**」——M15a 患难之交的触发条件。
+
+    上游原文（`dorm_exchangeAp[000]`）：「进驻宿舍时，**如果自身为满心情**，
+    则与当前宿舍**前一位进驻**的干员互换心情」。
+    """
+    return ctx.owner.mood >= MOOD_MAX
+
+
 def _cond_no_abyssal_outside_dorm(ctx) -> bool:
     """潮汐守望「反之」：没有**其他**深海猎人进驻在宿舍以外的设施。
 

@@ -91,7 +91,7 @@
 | `M12` | 宿舍 定向/条件回复 | `B3`→`C5` | `value`、`condition` | `F1` | 3 | ⚠️ 部分条件槽空 |
 | `M13` | 消除自身消耗影响 | `B4`→`C2` | `filter?`（`sui`/`all`） | `F7` | 3 | ✅ 槐琥 / 令 / 若叶睦 |
 | `M14` | 独占回复 | `B3`→`C1` | `value` | `F7` 短路 | 1 | ✅ 菲亚梅塔 |
-| `M15a` | 心情互换/顺序 | `B3`→`C5` | `swap_with=previous_occupant` | — | 1 | ❌ 未实现（`hold`） |
+| `M15a` | 心情互换/顺序 | `B3`→`C5` | `swap_with=previous_occupant`、`condition` | —（**进驻事件**，非速率） | 1 | ✅ **已实现**（患难之交，见 §5.8） |
 | `M15b` | 触发式恢复一次心情 | `B0`→`C1` | `trigger`、`amount=recipe_cost` | — | 0（在未收录的 50 条里） | ❌ 未实现 |
 | `M16` | 心情当条件（效果非心情） | `B0`→`C1` | `mood_condition`、`real_effect` | `F1` | 0 | 📋 登记不建模（6 buff） |
 | `M17` | **强化他人恢复效果（元修正）** | `B3`→`C5` | `boost_provider`、`boost_group`、`condition`（目标筛选） | 并入被强化技能小计（`F2`） | 1 | ✅ **已实现**（摩根 头号陪练，见 §5.7） |
@@ -254,6 +254,26 @@ value = 450 千分位，条件挂在 `generate_skills_data.CLAUSE_COND`：
 
 ⚠️ 生效范围仅限**宿舍**（`_dorm_ledger` 内的元修正段）；被强化者必须与摩根在**同一设施**且未红脸。
 
+### 5.8 `M15a` 进驻事件：**进驻那一刻**的状态跳变（实现）
+
+上游原文（`dorm_exchangeAp[000]`）：「进驻宿舍时，**如果自身为满心情**，则与当前宿舍
+**前一位进驻**的干员互换心情」。
+
+**关键判断**：这不是速率。塞进 `consume_ledger`/`recovery_ledger` 是错的（那是"每小时"），
+塞进时间积分也是错的（它只在 t=0 发生一次）。它是**布局初始化**语义，所以：
+
+| 要素 | 取值 / 做法 |
+|---|---|
+| 数据 | `template_id=M15a`，`partial_mode=apply`（原为 `hold`） |
+| 触发条件 | `CLAUSE_COND` → `_cond_self_full_mood`（自身心情 == 24） |
+| 调度 | `rules._template_skills(op, "M15a")`（按模板而非 kind，同 §4.25 的 M07b） |
+| 结算入口 | **`rules.apply_entry_events(world)`**，CLI `--entry-events`；**就地**改心情 |
+| 流水账 | 记为 `Bucket.EVENT`（不参与 rate），`--entry-events` 时打印到 stderr |
+| 「前一位进驻」 | `Facility.operators[idx-1]`——**该列表本来就是进驻顺序**，无需新结构 |
+
+`evaluate` / `evaluate_base` **不**自动调用它：函数名承诺"只读测算"，在里面偷偷改世界是陷阱。
+幂等性由条件本身保证（换完她就不再满心情）。
+
 ---
 
 ## 6. 导入新干员技能的流程
@@ -286,7 +306,8 @@ value = 450 千分位，条件挂在 `generate_skills_data.CLAUSE_COND`：
 
 ## 7. 已知缺口（下一步）
 
-1. **`M15a` 心情互换**（菲亚梅塔 患难之交）、**`M15b` 触发式恢复**（棘刺 爆炸艺术）：骨架已登记，引擎未实现。
+1. **`M15b` 触发式恢复**（棘刺「爆炸艺术」）：需要**加工次数**这一环境事实（"每 2 次加工没有产出副产品"），
+   布局里没有"今天搓了几次材料"的信息，故仍登记不建模。
 2. **加工站按次消耗模型**：`X08` 的配方心情消耗按"每次合成"计，目前未纳入每小时速率
    （`base_consumption(WORKSHOP) = 0`，见 AGENTS.md §4.14）。
 4. **训练室 9 条技能的设施级口径待人工确认**：`TRAINING_BASE_CONSUMPTION` 暂取 1（AGENTS.md §4.15）。
@@ -295,6 +316,7 @@ value = 450 千分位，条件挂在 `generate_skills_data.CLAUSE_COND`：
    需先补这两类"环境事实"，否则无法求值。
 
 **已完成（原缺口清单，保留以便追溯）**：
+- ✅ `M15a` 进驻事件（患难之交，见 §5.8）
 - ✅ `M17` 元修正（摩根 头号陪练，见 §5.7）
 - ✅ `M09` 定向加成 +0.45（见 §5.6）
 - ✅ per-count 变量数值化（`cc.bd*` 26 种，`resources/variable_producers.txt` + `mood_soc/variables.py`）

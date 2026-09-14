@@ -99,6 +99,15 @@ def _skills_of(op: Operator, kind: SkillKind):
     return [SKILLS[sid] for sid in _active_skill_ids(op) if SKILLS[sid].kind == kind]
 
 
+def _template_skills(op: Operator, template_id: str):
+    """按**模板**取已生效技能（用于 M07b / M15a 这类「模板即机制」的技能）。
+
+    这类技能的 `kind` 只是把它落到某个相近的族里，真正的机制由模板决定，
+    所以调度按 `template_id` 而不是按 `kind`（与 §4.25 的 M07b 同一约定）。
+    """
+    return [SKILLS[sid] for sid in _active_skill_ids(op) if SKILLS[sid].template_id == template_id]
+
+
 def _equip_of(op: Operator, sid: str) -> Optional[SkillEquip]:
     """干员↔技能的装备绑定；无绑定（自定义 skill_id）时返回 None。"""
     return SKILL_EQUIPS.get((op.name, sid))
@@ -628,6 +637,46 @@ def _single_recovery(world, op: Operator, facility: Facility, variables=None):
     if rep is None or value <= ZERO:
         return ZERO, "", None
     return value, rep.owner, by_inst.get((rep.owner, base_skill_id(rep.skill_id)))
+
+
+def apply_entry_events(world: BaseLayout):
+    """**进驻瞬间的一次性结算**（M15a 心情互换），就地修改 `world` 的干员心情。
+
+    为什么单独一个入口：这类技能的效果不是「每小时 ±N 点」，而是**进驻那一刻的状态跳变**，
+    所以它既不该进 `consume_ledger`/`recovery_ledger`（那不是速率），也不该进时间积分。
+    它是**布局初始化**语义，因此做成显式 API，由调用方决定是否应用（`main.py --entry-events`）。
+
+    ⚠️ **会就地修改** `world.operators[].mood`；返回本次结算的事件流水账（`Bucket.EVENT`），
+    供 `--explain` 展示。重复调用是幂等的：互换后触发者不再是满心情，条件不再成立。
+
+    已实现：**患难之交**（菲亚梅塔，`dorm_exchangeAp[000]`）
+      上游原文：「进驻宿舍时，如果**自身为满心情**，则与当前宿舍**前一位进驻**的干员互换心情」。
+      「前一位进驻」= `Facility.operators` 里排在触发者之前的那一位——
+      布局的 `operators` **本来就是有序列表**（进驻顺序），所以不需要额外的队列结构。
+    """
+    events = []
+    for facility in world.facilities:
+        if facility.ftype != FacilityType.DORMITORY:
+            continue
+        for idx, op in enumerate(facility.operators):
+            if idx == 0 or not _active(op):
+                continue
+            for skill in _template_skills(op, "M15a"):
+                ctx = SkillContext(world, op, op, facility)
+                if skill.condition is not None and not skill.condition(ctx):
+                    continue
+                other = facility.operators[idx - 1]
+                if other.mood == op.mood:
+                    continue
+                before = (op.mood, other.mood)
+                op.mood, other.mood = before[1], before[0]
+                events.append(Contribution(
+                    Bucket.EVENT, "心情互换", ZERO, group="entry_swap",
+                    owner=op.name, target=other.name, skill_id=skill.id,
+                    skill_name=skill.name, template=skill.template_id,
+                    detail=f"（与「前一位进驻」的 {other.name} 互换：{op.name} "
+                           f"{before[0]} → {before[1]}，{other.name} {before[1]} → {before[0]}）"))
+    return events
 
 
 def compute_consumption(world: BaseLayout, op: Operator, facility: Facility,

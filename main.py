@@ -27,7 +27,7 @@ import sys
 from datetime import datetime
 from decimal import Decimal
 
-from mood_soc import build_base_layout, evaluate, evaluate_base
+from mood_soc import apply_entry_events, build_base_layout, evaluate, evaluate_base
 from mood_soc.battery import to_decimal
 from mood_soc.output import base_result_to_dict, dump_json, mood_result_to_dict, to_json_string
 
@@ -79,6 +79,9 @@ def main() -> int:
                         help="仅 single 模式：附加心情轨迹（时间步进模拟，文本）")
     parser.add_argument("--explain", action="store_true",
                         help="仅 single 模式：打印心情流水账（逐条来源 + 轴 F 叠加规则，文本）")
+    parser.add_argument("--entry-events", action="store_true", default=False,
+                        help="应用**进驻瞬间的一次性结算**（M15a 患难之交心情互换）后再测算；"
+                             "不指定则按布局给出的心情原样测算")
     args = parser.parse_args()
 
     # 1) 场景来源
@@ -91,6 +94,12 @@ def main() -> int:
         return 0
 
     world = build_base_layout(data)
+
+    # 1.5) 进驻事件（可选）：M15a 患难之交等"进驻瞬间的一次性结算"，会**就地**改心情。
+    #      做成显式开关而不是默认行为：它是布局初始化语义，而非每小时速率。
+    if args.entry_events:
+        for ev in apply_entry_events(world):
+            print(f"[进驻事件] {ev.source()}　{ev.detail}", file=sys.stderr)
 
     # 2) 按模式测算并组装 JSON
     if args.mode == "base":
