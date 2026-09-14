@@ -18,7 +18,7 @@ from mood_soc.config import (FacilityType, WORK_FACILITIES, facility_max_count,
 from mood_soc.output import base_result_to_dict, mood_result_to_dict
 from mood_soc.ledger import Bucket
 from mood_soc.rules import (compute_consumption, compute_net_rate, compute_recovery,
-                            mood_ledger)
+                            mood_ledger, remaining_work_hours)
 from mood_soc.variables import collect_variables, mood_drop
 
 FULL_CC = ["路人1", "路人2", "路人3", "路人4", "路人5"]
@@ -1070,6 +1070,65 @@ class Test进驻事件M15a(unittest.TestCase):
         self.assertEqual(evaluate(world, "菲亚梅塔", Decimal("0")).initial_mood, Decimal("24"))
         apply_entry_events(world)
         self.assertEqual(evaluate(world, "菲亚梅塔", Decimal("0")).initial_mood, Decimal("6"))
+
+
+class Test训练室(unittest.TestCase):
+    """训练室：设施级基础消耗 1.0/h + 9 条「心情每小时消耗+1」的自身消耗技能。
+
+    口径来源（两处独立佐证）：
+      - 需求文档 `心情消耗回复和工休时间.docx` 第 4 段：「干员工作时，在无额外心情加减的情况下，
+        每小时的**基础消耗速率为 1 点心情**」——不区分设施，训练室同样适用；
+      - 上游 `building_data.json` → `buffs`：9 条训练室 buff 原文均为「…时，心情每小时消耗 +1」
+        （`train_cost&profession[140/320/340/350/360/380]`、`train_spd_bd[000]`、
+        `train_spd_doubleProf3[100]`、`train_spd_power_down[000]`）。
+    → 持有这些技能的干员在训练室里净消耗 **2.0/h**，没持有的仍是 **1.0/h**。
+    """
+
+    @staticmethod
+    def _train(members):
+        return build_base_layout(scenario(
+            {"type": "训练室", "level": 3,
+             "operators": [{"name": m} if isinstance(m, str) else m for m in members]}))
+
+    def test_base_consumption_only(self):
+        """没持有该类技能 → 只有 1.0/h 的设施基础消耗。"""
+        world = self._train(["路人"])
+        self.assertEqual(mood_ledger(world, "路人").total(Bucket.CONSUME), Decimal("1"))
+
+    def test_self_consume_plus_one(self):
+        """W「索然无味」= 设施 1.0 + 自身 +1.0 = 2.0/h；同设施路人不受影响。"""
+        world = self._train(["W", "路人"])
+        self.assertEqual(mood_ledger(world, "W").total(Bucket.CONSUME), Decimal("2"))
+        self.assertEqual(mood_ledger(world, "路人").total(Bucket.CONSUME), Decimal("1"))
+
+    def test_net_rate_and_work_hours(self):
+        """净速率 2.0/h → 一管 24 点心情只能连续协助 12h。"""
+        world = self._train(["W"])
+        self.assertEqual(compute_net_rate(world, "W"), Decimal("2"))
+        self.assertEqual(remaining_work_hours(world, "W"), Decimal("12"))
+
+    def test_elite_gate(self):
+        """「索然无味」是精英 2 解锁：未精英化时只有基础 1.0/h。"""
+        world = self._train([{"name": "W", "elite": 1}])
+        self.assertEqual(mood_ledger(world, "W").total(Bucket.CONSUME), Decimal("1"))
+
+    def test_beta_replaces_alpha(self):
+        """雷狼龙S空爆：「兴之所至·α」无心情副作用，精英 2 的 β 才 +1。"""
+        alpha = self._train([{"name": "雷狼龙S空爆", "elite": 0}])
+        beta = self._train([{"name": "雷狼龙S空爆", "elite": 2}])
+        self.assertEqual(mood_ledger(alpha, "雷狼龙S空爆").total(Bucket.CONSUME), Decimal("1"))
+        self.assertEqual(mood_ledger(beta, "雷狼龙S空爆").total(Bucket.CONSUME), Decimal("2"))
+
+    def test_variable_skill_still_costs(self):
+        """余「与人乐」：心情 +1 是无条件的（人间烟火只影响训练速度，不影响心情）。"""
+        world = self._train(["余"])
+        self.assertEqual(mood_ledger(world, "余").total(Bucket.CONSUME), Decimal("2"))
+
+    def test_workshop_has_no_hourly_base(self):
+        """对照：加工站是**按配方**消耗心情，没有每小时基础消耗（`base_consumption = 0`）。"""
+        world = build_base_layout(scenario(
+            {"type": "加工站", "level": 3, "operators": ["路人"]}))
+        self.assertEqual(mood_ledger(world, "路人").total(Bucket.CONSUME), Decimal("0"))
 
 
 if __name__ == "__main__":

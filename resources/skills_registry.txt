@@ -541,12 +541,12 @@ trade_ord_wt&cost[004],千金的眼光,TRADING,A1,M07a,yes,clause 级已建模�
 trade_ord_wt&cost[010],裁缝·β,TRADING,A1,M07a,yes,clause 级已建模；持有 2 人
 trade_ord_wt&cost[011],手工艺品·β,TRADING,A1,M07a,yes,clause 级已建模；持有 1 人
 trade_ord_wt&cost[012],鉴定师的手段,TRADING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_cost&profession[140],工作狂,TRAINING,A1,M07a,no,TRAINING 未纳入每小时模型（设施未建模）
-train_cost&profession[320],过量训练,TRAINING,A1,M07a,no,TRAINING 未纳入每小时模型（设施未建模）
-train_cost&profession[340],索然无味,TRAINING,A1,M07a,no,TRAINING 未纳入每小时模型（设施未建模）
-train_cost&profession[350],何须解脱,TRAINING,A1,M07a,no,TRAINING 未纳入每小时模型（设施未建模）
-train_cost&profession[360],变异,TRAINING,A1,M07a,no,TRAINING 未纳入每小时模型（设施未建模）
-train_cost&profession[380],斗争渴望,TRAINING,A1,M07a,no,TRAINING 未纳入每小时模型（设施未建模）
+train_cost&profession[140],工作狂,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
+train_cost&profession[320],过量训练,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
+train_cost&profession[340],索然无味,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
+train_cost&profession[350],何须解脱,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
+train_cost&profession[360],变异,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
+train_cost&profession[380],斗争渴望,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
 train_spd&level[000],苦心孤诣,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd&profession2[010],先锋专精·α,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd&profession2[020],近卫专精·α,TRAINING,A4,X06,no,非心情，登记不建模
@@ -624,11 +624,11 @@ train_spd[000],教官,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd[001],学无不精·α,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd[002],学无不精·α,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd_bd&reduceTime[000],思而后行,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_bd[000],与人乐,TRAINING,A1,M07a,no,TRAINING 未纳入每小时模型（设施未建模）
+train_spd_bd[000],与人乐,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
 train_spd_doubleProf2[000],破斩桎梏,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd_doubleProf2[001],沉默为剑,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd_doubleProf3[000],兴之所至·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf3[100],兴之所至·β,TRAINING,A1,M07a,no,TRAINING 未纳入每小时模型（设施未建模）
+train_spd_doubleProf3[100],兴之所至·β,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
 train_spd_doubleProf3[999],合理兼职,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd_doubleProf[000],剑与手炮,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd_doubleProf[100],红龙之血,TRAINING,A4,X06,no,非心情，登记不建模
@@ -639,7 +639,7 @@ train_spd_doubleProf[300],恣意英杰,TRAINING,A4,X06,no,非心情，登记不�
 train_spd_doubleProf[301],“我不懂啊”,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd_doubleProf[310],“触类旁通”,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd_power[000],雪祀候补,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_power_down[000],“手段应当有效”,TRAINING,A1,M07a,no,TRAINING 未纳入每小时模型（设施未建模）
+train_spd_power_down[000],“手段应当有效”,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
 train_spd_reduceTime[000],精神锻炼,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd_reduceTime[001],言语之义,TRAINING,A4,X06,no,非心情，登记不建模
 train_spd_tag[000],骑士训练,TRAINING,A4,X06,no,非心情，登记不建模

@@ -70,7 +70,8 @@ strip_tags = lambda s: STRIP_TAGS.sub("", s or "")
 norm_id = lambda b: b.replace("[", "_").replace("]", "")
 
 # 已建模的设施（本轮纳入每小时心情模型的房间）
-MODELED_ROOMS = {"CONTROL", "DORMITORY", "POWER", "MANUFACTURE", "TRADING", "HIRE", "MEETING"}
+MODELED_ROOMS = {"CONTROL", "DORMITORY", "POWER", "MANUFACTURE", "TRADING", "HIRE",
+                 "MEETING", "TRAINING"}
 
 # ---------------------------------------------------------------------------
 # 口径修正：用户已拍板的判定，作用在**源数据**上（可复现、可审计）

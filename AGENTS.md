@@ -176,7 +176,7 @@ sustain_hours（还能维持/恢复多久，evaluate 输出）：
 ```
 消耗 = base_consumption(设施类型)   ← 见 config.BASE_CONSUMPTION_BY_FACILITY
        工作设施 1.0；**加工站 0**（心情是按次消耗，不搓材料就是 0）；
-       训练室 = TRAINING_BASE_CONSUMPTION（待确认口径）；宿舍/活动室 0
+       训练室 = TRAINING_BASE_CONSUMPTION = 1.0（docx 第 4 段「工作时基础消耗 1 点/时」）；宿舍/活动室 0
      - X          设施基础减免（仅 制造站/贸易站：按进驻人数 (n-1)×0.05，上限 0.1）
      - 中枢减免    控制中枢全局减免：按进驻人数线性折算 (cc人数/5)×0.25（满员=0.25）
      ± 自身技能    self_consume（泡泡 -0.25、火神 α-0.15/β-0.25、阿罗玛 +0.25、斥罪 +0.5、夕"不以己悲"+0.5 等）
@@ -315,9 +315,20 @@ net == 0     → "心情不变"
 13. **room2 三条取最高**：官方术语 `cc.c.sui2_1`。`max_group=room2_recover` 的技能
     **同干员内求和、跨干员取最高**（由 `MoodLedger.total()` 完成）。
 14. **各设施基础消耗不同**（P1 修正）：旧实现只排除宿舍、其余一律 1.0，把**加工站算成 0.75/h**。
-    现在按 `config.base_consumption(ftype)`：加工站 0（按次消耗）、活动室 0、宿舍 0、训练室见下条。
-15. **训练室基础消耗待确认**：那 9 条训练室技能写「心情每小时消耗+1」，上游无公式实现、docx 未写。
-    按本项目一贯的"增量"语义取 `TRAINING_BASE_CONSUMPTION = 1`（技能生效后合计 2.0/h）——**待人工确认**。
+    现在按 `config.base_consumption(ftype)`：工作设施 1.0、**加工站 0**（按配方/按次消耗，不搓材料就是 0）、
+    活动室 0、宿舍 0、训练室 1.0（见下条）；加工站的证据见 §4.31。
+15. **训练室已建模，基础消耗 1.0/h 有两条独立佐证**（P5c 完成）：
+    - 需求文档 `docx` **第 4 段**：「干员工作时，在无额外心情加减的情况下，每小时的**基础消耗速率为 1 点心情**」
+      ——不区分设施，训练室同样适用（这就是 `TRAINING_BASE_CONSUMPTION = 1` 的依据，
+      **不再是"按增量语义猜的"**）；
+    - 上游 `building_data.json → buffs`：**9 条**训练室 buff 原文均为「…时，心情每小时消耗 **+1**」：
+      `train_cost&profession[140]` 工作狂 / `[320]` 过量训练 / `[340]` 索然无味 / `[350]` 何须解脱 /
+      `[360]` 变异 / `[380]` 斗争渴望、`train_spd_bd[000]` 与人乐、`train_spd_doubleProf3[100]` 兴之所至·β、
+      `train_spd_power_down[000]` “手段应当有效”。
+    → 这 9 条已作为 `SELF_CONSUME +1`（`M07a`，family=`self`）进 `moods_skills.txt`，
+      `FACILITY_BY_PREFIX["train"] = "TRAINING"`；持有人净消耗 **2.0/h**，同设施其他人仍 1.0/h。
+    ⚠️ 上游 `trainingData` 只有训练**速度**常量（`basicSpeedBuff=0.05`），没有心情常量——
+      所以训练室的 1.0/h 来自 docx 而非上游，别去 upstream 找。
 16. **变量（中间货币）已纳入模型**（P3）：官方术语表 `cc.bd*` 共 26 种，其中
     **人间烟火 / 热情值 / 无声共鸣** 会影响心情，另有派生变量 **心情落差**（= 24 − 当前心情）。
     `mood_soc/variables.py` 的 `VariableLedger` + `resources/variable_producers.txt` 负责产出，
@@ -413,6 +424,14 @@ net == 0     → "心情不变"
     一条获胜技能若由多个分句组成（「基础 + 每有 N 额外」、或被 M17 强化），
     旧实现拿每条分句的 `value` 去和"技能小计"比，会把**获胜技能的每条分句都标注成
     "被更高者覆盖"**（实测：摩根强化后 0.2 与 0.3 都被标）。现改为实例小计 vs 组内最高小计。
+31. **加工站不建每小时模型，且这次是查出来的**（P5c）：上游 `building_data.json` 里
+    **加工站相关且提到「心情」的 buff 共 35 条**，原文**全部**是「**配方**心情消耗」
+    （`workshop_formula_cost*` / `cost2` / `cost3` / `cost4` / `cost5` / `lolxh` / `rub` / `proc_cost`），
+    例如「心情消耗为 4 的配方全部 -1 心情消耗」「相应配方的心情消耗**恒定**为 2」「全部除以 4」。
+    → 印证 `base_consumption(WORKSHOP) = 0`：加工站**没有**每小时消耗，心情是按**次**扣的。
+    ⚠️ 但**配方本身的心情消耗在上游数据 dump 里没有字段**（`workshopFormulas` 68 条只有
+      `apCost/goldCost/costs/…`，全库递归搜 `mood` 无命中），故"每次加工扣多少心情"**无法从上游落库**，
+      35 条 X08 buff 与棘刺「爆炸艺术」一并保持登记不建模。别用 `apCost/180000` 之类的巧合反推。
 
 ---
 
@@ -633,7 +652,7 @@ MAA 排班转换：`python scripts/maa_to_scenario.py [源] [输出目录]`（�
 8. **数据管道幂等**（P4b 修）：`classify_skills.py --agd` 会重写 `moods_skills.txt` 的
    `template_id` / `params`。它现在**保留手写参数**（`basis=` / `var=` / `var_per=` / `var_min=`）
    与**已存在的人工判定**（`partial` / `partial_mode`），只给新行填初值。
-   实测：重跑一次 `--agd`，250 行参数变化 **0** 行。
+   实测：重跑一次 `--agd`，259 行参数变化 **0** 行。
    ⚠️ 若没有这道保护，重跑分类器会把 P3/P4 手工回填的折算规则**全部抹掉**（已踩过）。
 9. **阵营表已改为上游自动生成**（2026-09 重构）：`OPERATOR_FACTIONS` / `FACTION_MEMBERS` 由
    `scripts/generate_factions.py` 读上游 `cc.g.*` / `cc.tag.*` 生成（28 组 231 条），
@@ -744,6 +763,10 @@ traj = simulate(world, "泡泡", Decimal("12"), step=Decimal("0.1"))   # 深拷�
       ③在 `rules.apply_entry_events` 里按模板调度、记 `Bucket.EVENT`；
       ④**不要**把它塞进 `consume_ledger`/`recovery_ledger`（那不是速率），
       也不要在 `evaluate` 里偷偷改世界——它是显式开关（`--entry-events`）。
+- [ ] 新技能属于**尚未建模的设施**？→ ①在 `generate_skills_data.FACILITY_BY_PREFIX` 加
+      `"<skill_id 前缀>": "<FacilityType>"`；②在 `classify_skills.MODELED_ROOMS` 里加上该 roomType
+      （否则台账会继续标"设施未建模"）；③确认 `config.base_consumption` 有该设施的口径，
+      **并且有出处**（docx 段落 / 上游字段），不要按"增量语义"猜。
 - [ ] 是否手工往 `moods_skills.txt` **补过分句**（上游一个 buff 描述里有多个效果、本地 CSV 没拆）？
       → `classify_skills.py` 是**原地重写**、不重建行，故补的行会保留；但仍要跑一次 `--agd`
       确认参数变化 0 行，并在 `CLAUSE_COND` / 模板注释里写清上游原文出处。
