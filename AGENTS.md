@@ -35,7 +35,7 @@ documents/
 ├── 01-架构.md              分层 / 目录结构 / 数据流 / 解析解vs数值解 / 公共 API
 ├── 02-数值规则.md          心情⇔电池 / I 的完整构成 / 设施表 / 宿舍回复 / 工休比
 ├── 03-技能系统.md          Skill / SkillEquip / SkillKind / 精英化 / 阵营联动 / 模板入口
-├── 04-特殊机制.md          ★ 31 条特殊情况 + 9 条建模假设（改代码前必读）
+├── 04-特殊机制.md          ★ 32 条特殊情况 + 9 条建模假设（改代码前必读）
 ├── 05-技能分类大纲.md       六轴 + 模板字典 M01~M17 / X01~X11 + 决策记录
 ├── 06-数据来源.md          ★ 数据查找策略（强制）+ 上游缺失清单
 ├── 07-设计史.md            架构诊断 + P1~P5 重构决策记录
@@ -85,7 +85,7 @@ documents/
    `skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `resources/*.txt` → 重跑生成脚本。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 79 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 80 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 
 ---

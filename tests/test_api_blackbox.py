@@ -797,6 +797,42 @@ class Test可数条件与替换链(unittest.TestCase):
         self.assertEqual(rows[0].value, Decimal("-0.15"))
         self.assertEqual(rows[0].detail, "")      # 无变量、无基准 → 无条件
 
+    def test_investment_mood_is_unconditional(self):
+        """投资·α/β（龙舌兰）：「如果下笔赤金订单交付数大于 3」只修饰**龙门币收益**，
+        **心情每小时消耗 -0.25 是常驻的**（用户拍板 + 上游原文佐证）。
+
+        上游原文（`building_data.json` → `buffs["trade_ord_long[000]"]`）：
+            「进驻贸易站后，如果下笔赤金订单交付数大于3（违约订单不视作赤金订单），
+             则其**龙门币收益+250**，**心情每小时消耗-0.25**」
+        `[010]`（β）只有收益不同（+500），心情同样 -0.25。
+        即那个截断条件（本地 CSV 只剩「如果」）约束的是**收益**（X03 贸易订单，不建模），
+        心情那一半无条件成立 —— 与上一个用例「挑大梁」同一类。
+
+        ⚠️ 这条 buff 曾按 `partial_mode=hold` 整条不生效，导致龙舌兰的常驻减耗**丢失**；
+        现改为 `partial_mode=apply`（`resources/moods_skills.txt`）。
+
+        贸易站 3 人 + 中枢满员基准：1 − 0.1(设施) − 0.25(中枢) = 0.65，再 −0.25 → **0.40**。
+        """
+        def ledger(elite, ftype="贸易站"):
+            world = build_base_layout(scenario(
+                {"type": "控制中枢", "level": 5, "operators": FULL_CC},
+                {"type": ftype, "level": 3,
+                 "operators": [{"name": "龙舌兰", "elite": elite}, "路人甲", "路人乙"]},
+            ))
+            return mood_ledger(world, "龙舌兰")
+
+        # 常驻减耗：α（初始解锁）与 β（精英2 提升）都是 -0.25
+        for elite, expect_name in ((0, "投资·α"), (2, "投资·β")):
+            lg = ledger(elite)
+            self.assertEqual(lg.total(Bucket.CONSUME), Decimal("0.40"), elite)
+            own = [c for c in lg.of(Bucket.CONSUME) if c.owner == "龙舌兰"]
+            self.assertEqual([c.skill_name for c in own], [expect_name], elite)
+            self.assertEqual(own[0].value, Decimal("-0.25"))
+        # β 是**替换** α，不是叠加（两条都算会变成 0.15）
+        self.assertEqual(ledger(2).total(Bucket.CONSUME), Decimal("0.40"))
+        # 技能限定贸易站：放到制造站不生效
+        self.assertEqual(ledger(2, ftype="制造站").total(Bucket.CONSUME), Decimal("0.65"))
+
     def test_recruit_slot_on_self_consume(self):
         """救援队·保证体力：每个招募位使自身心情消耗 -0.1（办公室 Lv3 → -0.3）。"""
         world = build_base_layout(scenario(

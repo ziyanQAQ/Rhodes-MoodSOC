@@ -234,8 +234,8 @@ trade_ord_limit&cost_P_000,1,醉翁之意·α,drain,self,self,当与,-100,comple
 trade_ord_limit&cost_P_001,1,醉翁之意·β,drain,self,self,当与,-100,complex,,M07a,stacking=sum;partial_mode=hold;partial=true
 trade_ord_limit&cost_P_010,1,默契,drain,self,self,当与,-300,complex,,M07a,stacking=sum;partial_mode=hold;partial=true
 trade_ord_limit&cost_P_020,1,未偿还的债务,drain,self,self,当与,-100,complex,,M07a,stacking=sum;partial_mode=hold;partial=true
-trade_ord_long_000,1,投资·α,drain,self,self,如果,-250,complex,,M07a,stacking=sum;partial_mode=hold;partial=true
-trade_ord_long_010,1,投资·β,drain,self,self,如果,-250,complex,,M07a,stacking=sum;partial_mode=hold;partial=true
+trade_ord_long_000,1,投资·α,drain,self,self,如果,-250,complex,,M07a,stacking=sum;partial_mode=apply;partial=true
+trade_ord_long_010,1,投资·β,drain,self,self,如果,-250,complex,,M07a,stacking=sum;partial_mode=apply;partial=true
 trade_ord_spd&cost_000,1,交际,drain,self,self,,-250,auto,,M07a,stacking=sum;partial=false
 trade_ord_spd&cost_P_000,1,恩怨,drain,self,self,当与,300,complex,,M07a,stacking=sum;partial_mode=hold;partial=true
 trade_ord_vodfox_000,1,低语,drain,room,self,,250,auto,,M05,include_self=true;stacking=sum;partial=false
