@@ -369,10 +369,6 @@ Rhodes-MoodSOC/
 │   ├── report.py          展示层：中文结果格式化（文本）
 │   ├── output.py          输出层：结果 -> JSON dict / 写入文件（inf -> null）
 │   └── scenario.py        输入解析层：字典/JSON -> BaseLayout
-├── tests/                 黑盒测试（只断言"输入 → 输出"，不测内部结构）
-│   ├── __init__.py
-│   ├── test_api_blackbox.py   公开 API 黑盒：场景 JSON + 目标/时段 → 结果 JSON
-│   └── test_cli_blackbox.py   命令行黑盒：subprocess 调 main.py → stdout JSON / 退出码 / 结果文件
 ├── scripts/
 │   ├── maa_to_scenario.py      把 MAA 排班 JSON 转成本工具的场景 JSON
 │   ├── classify_skills.py      给每个 clause 挂六轴模板 + 生成 755 行覆盖台账 + 零遗漏校验
