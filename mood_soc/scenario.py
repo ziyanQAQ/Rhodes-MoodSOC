@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from .battery import to_decimal
 from .config import parse_facility_type, MOOD_MAX
-from .models import BaseLayout, Facility, Operator
+from .models import BaseLayout, Facility, Operator, build_entry_event_config
 from .skills import DEFAULT_OPERATORS, TRAITS
 
 
@@ -56,6 +56,11 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
       - `enabled`   是否已建成（false 则不计入「每有 N 间」）
       - `atmosphere` 仅宿舍：实际氛围
 
+    顶层可选字段（在 `facilities` 之外）：
+      - `entry_events`：进驻事件（M15a 患难之交）配置 —— **换不换 / 换谁**：
+        `{"enabled": true, "swap_with": "路人"}`（也可写 `true`/`false`，或只写目标人名）。
+        见 `models.EntryEventConfig` 与 `rules.apply_entry_events`。
+
     validate=True 时做容量/房间数自检，有问题抛 ValueError
     （默认 False：历史场景可能刻意超容量，不破坏既有用法）。
     """
@@ -78,7 +83,12 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
             slots=int(slots) if slots is not None else None,
             enabled=bool(f.get("enabled", True)),
         ))
-    world = BaseLayout(facilities=facilities)
+    world = BaseLayout(
+        facilities=facilities,
+        # 顶层可选的进驻事件配置（M15a 换不换 / 换谁），见 models.EntryEventConfig：
+        #   {"entry_events": {"enabled": true, "swap_with": "路人"}, "facilities": [...]}
+        entry_events=build_entry_event_config(data.get("entry_events")),
+    )
     if validate:
         issues = world.validate()
         if issues:

@@ -1116,6 +1116,80 @@ class Test进驻事件M15a(unittest.TestCase):
         apply_entry_events(world)
         self.assertEqual(evaluate(world, "菲亚梅塔", Decimal("0")).initial_mood, Decimal("6"))
 
+    # ---------------------------------------------------------------- 可配置（换不换 / 换谁）
+    def _json_world(self, entry_events, members=(("甲", "6"), ("乙", "9"), ("菲亚梅塔", "24"))):
+        data = {"facilities": [{"type": "宿舍", "level": 5,
+                                "operators": [{"name": n, "mood": m} for n, m in members]}]}
+        if entry_events is not None:
+            data["entry_events"] = entry_events
+        return build_base_layout(data)
+
+    def _mood_map(self, world):
+        return {o.name: o.mood for o in world.facilities[0].operators}
+
+    def test_json_can_turn_swap_off(self):
+        """JSON 写 `"entry_events": false` ⇒ 这个布局不换心情（直接调 API 也不换）。"""
+        world = self._json_world({"enabled": False})
+        self.assertEqual(apply_entry_events(world), [])
+        self.assertEqual(self._mood_map(world)["菲亚梅塔"], Decimal("24"))
+
+    def test_json_can_turn_swap_on(self):
+        """JSON 写 `"entry_events": {"enabled": true}` ⇒ 默认就结算（CLI/界面不必再开开关）。"""
+        world = self._json_world({"enabled": True})
+        self.assertTrue(world.entry_events.enabled)
+        events = apply_entry_events(world)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(self._mood_map(world)["菲亚梅塔"], Decimal("9"))    # 与"前一位进驻"的乙互换
+        self.assertEqual(self._mood_map(world)["乙"], Decimal("24"))
+
+    def test_json_can_pick_partner(self):
+        """JSON 指定 `swap_with` ⇒ 与**指定的人**互换（不一定是"前一位进驻"）。"""
+        world = self._json_world({"enabled": True, "swap_with": "甲"})
+        events = apply_entry_events(world)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].target, "甲")
+        self.assertEqual(self._mood_map(world)["菲亚梅塔"], Decimal("6"))    # 拿甲的 6
+        self.assertEqual(self._mood_map(world)["甲"], Decimal("24"))
+        self.assertEqual(self._mood_map(world)["乙"], Decimal("9"))          # 乙不受影响
+
+    def test_json_shorthand_forms(self):
+        """宽松写法：只写人名 = 开启并与该人互换；写 true 也等于开启。"""
+        world = self._json_world("乙")
+        self.assertEqual(world.entry_events.swap_with, "乙")
+        self.assertEqual(len(apply_entry_events(world)), 1)
+        world2 = self._json_world(True)
+        self.assertEqual(len(apply_entry_events(world2)), 1)
+
+    def test_explicit_params_override_json(self):
+        """显式开关/显式对象优先于 JSON：JSON 说关，显式说开 → 开。"""
+        world = self._json_world({"enabled": False, "swap_with": "甲"})
+        events = apply_entry_events(world, swap_with="乙", enabled=True)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].target, "乙")           # 显式 swap_with 覆盖 JSON 的"甲"
+        self.assertEqual(self._mood_map(world)["菲亚梅塔"], Decimal("9"))
+
+    def test_partner_not_in_dorm_is_reported(self):
+        """指定的对象不在同一宿舍 ⇒ 不换，但记一条说明（便于界面/CLI 显示原因）。"""
+        world = build_base_layout({"facilities": [
+            {"type": "宿舍", "level": 5, "operators": [
+                {"name": "甲", "mood": "6"}, {"name": "菲亚梅塔", "mood": "24"}]},
+            {"type": "制造站", "level": 3, "operators": [{"name": "乙", "mood": "10"}]},
+        ]})
+        events = apply_entry_events(world, swap_with="乙")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].group, "entry_swap_skipped")
+        self.assertIn("不在", events[0].detail)
+        self.assertEqual(self._mood_map(world)["菲亚梅塔"], Decimal("24"))   # 心情没动
+
+    def test_entry_config_is_part_of_layout(self):
+        """配置随布局走：`build_base_layout` 解析顶层 `entry_events`，缺省是"未配置"。"""
+        self.assertIsNone(build_base_layout({"facilities": []}).entry_events.enabled)
+        cfg = self._json_world({"enabled": True, "swap_with": "乙"}).entry_events
+        self.assertTrue(cfg.enabled)
+        self.assertEqual(cfg.swap_with, "乙")
+        with self.assertRaises(ValueError):
+            build_base_layout({"entry_events": 123, "facilities": []})
+
 
 class Test挂件位(unittest.TestCase):
     """加工站 / 训练室是「**挂件位**」——**不计算心情消耗**（用户拍板口径）。

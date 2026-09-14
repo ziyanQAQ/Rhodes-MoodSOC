@@ -284,6 +284,43 @@ class Test进驻事件与口径(unittest.TestCase):
         """事件阈值必须覆盖现有条件函数读的心情值（0/12/18/20/24）。"""
         self.assertEqual(set(EVENT_THRESHOLDS), {D("0"), D("12"), D("18"), D("20"), D("24")})
 
+    def test_进驻事件可指定交换对象(self):
+        """多班周期里的换心情也能指定对象：`entry_swap_with` > JSON 的 `swap_with` > 前一位进驻。"""
+        import json as _json
+        import tempfile as _tempfile
+        from pathlib import Path as _Path
+
+        def build(entry_events=None):
+            data = {"facilities": [{"type": "宿舍", "level": 5, "operators": [
+                {"name": "甲", "mood": "6"}, {"name": "乙", "mood": "9"},
+                {"name": "菲亚梅塔", "mood": "24"}]}]}
+            if entry_events is not None:
+                data["entry_events"] = entry_events
+            with _tempfile.TemporaryDirectory() as tmp:
+                p = _Path(tmp) / "d.json"
+                p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                return load_schedule([p], hours=[D("24")])
+
+        # ① 指定与"甲"互换（参数优先）
+        traj = simulate_schedule(build(), cycles=1, entry_events=True, entry_swap_with="甲")
+        self.assertEqual(traj.mood_at("菲亚梅塔", 0), D("6"))
+        self.assertEqual(traj.mood_at("甲", 0), D("24"))
+        # ② 不指定 → 默认"前一位进驻"（乙）
+        traj = simulate_schedule(build(), cycles=1, entry_events=True)
+        self.assertEqual(traj.mood_at("菲亚梅塔", 0), D("9"))
+        # ③ JSON 里指定 → 参数为 None 时按 JSON 走
+        traj = simulate_schedule(build({"enabled": True, "swap_with": "甲"}),
+                                 cycles=1, entry_events=True)
+        self.assertEqual(traj.mood_at("菲亚梅塔", 0), D("6"))
+        # ④ 配置能从排班里读出来（界面据此设初始开关与下拉值）
+        sch = build({"enabled": True, "swap_with": "乙"})
+        self.assertTrue(sch.entry_config().enabled)
+        self.assertEqual(sch.entry_config().swap_with, "乙")
+        # ⑤ 编辑接口不丢配置
+        self.assertEqual(sch.replaced_shift(0, sch.shifts[0].facilities)
+                         .entry_config().swap_with, "乙")
+        self.assertEqual(sch.with_hours([D("24")]).entry_config().enabled, True)
+
     def test_干员名册来自全量文件(self):
         names = all_operator_names()
         self.assertGreater(len(names), 400)      # operators.txt 全量（含只有生产/训练技能的干员）

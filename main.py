@@ -82,8 +82,10 @@ def main() -> int:
     parser.add_argument("--explain", action="store_true",
                         help="仅 single 模式：打印心情流水账（逐条来源 + 轴 F 叠加规则，文本）")
     parser.add_argument("--entry-events", action="store_true", default=False,
-                        help="应用**进驻瞬间的一次性结算**（M15a 患难之交心情互换）后再测算；"
-                             "不指定则按布局给出的心情原样测算")
+                        help="结算**进驻瞬间的一次性事件**（M15a 患难之交：菲亚梅塔进驻宿舍时"
+                             "与同宿舍某人互换心情）后再测算；不指定则按布局给出的心情原样测算。"
+                             "场景 JSON 顶层也可写 \"entry_events\": {\"enabled\": true, "
+                             "\"swap_with\": \"某人\"} 来开启并指定与谁互换")
     args = parser.parse_args()
 
     # 1) 场景来源
@@ -98,9 +100,11 @@ def main() -> int:
     world = build_base_layout(data)
 
     # 1.5) 进驻事件（可选）：M15a 患难之交等"进驻瞬间的一次性结算"，会**就地**改心情。
-    #      做成显式开关而不是默认行为：它是布局初始化语义，而非每小时速率。
-    if args.entry_events:
-        for ev in apply_entry_events(world):
+    #      开关来源：命令行 `--entry-events`，或场景 JSON 顶层的 "entry_events": {"enabled": true}
+    #      （命令行显式开关优先）；"换谁"由 JSON 的 swap_with 决定，缺省是"前一位进驻"。
+    #      做成开关而不是默认行为：它是布局初始化语义，而非每小时速率。
+    if args.entry_events or world.entry_events.enabled:
+        for ev in apply_entry_events(world, enabled=True):
             print(f"[进驻事件] {ev.source()}　{ev.detail}", file=sys.stderr)
 
     # 2) 按模式测算并组装 JSON

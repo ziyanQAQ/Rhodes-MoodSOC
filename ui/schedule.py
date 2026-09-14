@@ -46,7 +46,7 @@ from mood_soc import apply_entry_events, build_base_layout, compute_net_rate
 from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import MOOD_MAX, MOOD_MIN
 from mood_soc.maa import read_maa
-from mood_soc.models import BaseLayout
+from mood_soc.models import BaseLayout, build_entry_event_config
 from mood_soc.skills import DEFAULT_OPERATORS
 
 # 周期默认 24h；班次时长之和必须等于周期时长
@@ -78,6 +78,8 @@ class Shift:
     hours: Decimal
     facilities: List[dict]
     source: str = ""
+    # 进驻事件配置（models.EntryEventConfig）：来自场景 JSON 顶层，随班次一起搬运
+    entry_events: Optional[object] = None
     world: BaseLayout = field(init=False, repr=False)
 
     def __post_init__(self):
@@ -87,6 +89,8 @@ class Shift:
         # 注：hours == 0 表示"时长未知"（MAA 班次名里没带 h 时），
         # 由 `_hours_from_hints` 补齐、并由 `Schedule` 校验必须为正。
         self.world = build_base_layout({"facilities": self.facilities})
+        if self.entry_events is not None:      # 顶层配置透传给 world
+            self.world.entry_events = self.entry_events
         self._names = [o.name for o in self.world.all_operators()]
 
     @property
@@ -99,9 +103,11 @@ class Shift:
         return [(f.display_name, [o.name for o in f.operators]) for f in self.world.facilities]
 
 
-def shift_from_facilities(label: str, hours, facilities: List[dict], source: str = "") -> Shift:
-    """由场景格式的 facilities 构建一个班次。"""
-    return Shift(label=label, hours=to_decimal(hours), facilities=list(facilities), source=source)
+def shift_from_facilities(label: str, hours, facilities: List[dict], source: str = "",
+                          entry_events=None) -> Shift:
+    """由场景格式的 facilities 构建一个班次（`entry_events` 为可选进驻事件配置）。"""
+    return Shift(label=label, hours=to_decimal(hours), facilities=list(facilities),
+                 source=source, entry_events=entry_events)
 
 
 def _hours_from_hints(shifts: List[Shift], cycle_hours: Optional[Decimal]) -> Decimal:
@@ -148,7 +154,8 @@ def shifts_from_scenario_file(path: Union[str, Path], hours: Optional[Sequence] 
         raise ValueError(f"{p.name} 既不是 MAA 排班（无 plans）也不是场景文件（无 facilities）")
     label = str(data.get("_source_plan") or p.stem)
     h = to_decimal(hours[0]) if hours else ZERO
-    return [Shift(label=label, hours=h, facilities=data["facilities"], source=p.name)]
+    return [Shift(label=label, hours=h, facilities=data["facilities"], source=p.name,
+                  entry_events=build_entry_event_config(data.get("entry_events")))]
 
 
 def shift_file_kind(path: Union[str, Path]) -> str:
@@ -231,7 +238,8 @@ class Schedule:
         if len(hours) != len(self.shifts):
             raise ValueError(f"需要 {len(self.shifts)} 个时长，收到 {len(hours)} 个")
         new = [Shift(label=s.label, hours=to_decimal(h),
-                     facilities=copy.deepcopy(s.facilities), source=s.source)
+                     facilities=copy.deepcopy(s.facilities), source=s.source,
+                     entry_events=s.entry_events)
                for s, h in zip(self.shifts, hours)]
         return Schedule(new, sum((s.hours for s in new), ZERO))
 
@@ -239,9 +247,18 @@ class Schedule:
         """替换某个班次的布局（返回新的 Schedule）。"""
         new = [Shift(label=s.label, hours=s.hours,
                      facilities=(list(facilities) if i == index else copy.deepcopy(s.facilities)),
-                     source=s.source)
+                     source=s.source, entry_events=s.entry_events)
                for i, s in enumerate(self.shifts)]
         return Schedule(new, self.cycle_hours)
+
+    def entry_config(self):
+        """本排班的进驻事件配置（取第一个班次的；MAA 排班没有则为默认值）。"""
+        for s in self.shifts:
+            cfg = getattr(s.world, "entry_events", None)
+            if cfg is not None:
+                return cfg
+        from mood_soc.models import EntryEventConfig
+        return EntryEventConfig()
 
 
 # ============================================================================
@@ -433,6 +450,7 @@ def default_initial_moods(schedule: Schedule) -> Dict[str, Decimal]:
 def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       initial_moods: Optional[Dict[str, Decimal]] = None,
                       entry_events: bool = False,
+                      entry_swap_with: Optional[str] = None,
                       max_segment: Decimal = MAX_SEGMENT_HOURS) -> Trajectory:
     """把排班跑成"整周期心情轨迹"（事件驱动精确积分）。
 
@@ -440,6 +458,8 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         cycles        跑几个周期（心情跨周期连续，用来看是否收敛）
         initial_moods 周期起点的心情；缺省取**第一班布局里写的值**（没有则 24）
         entry_events  是否在每班开始时结算进驻事件（M15a 患难之交；默认否）
+        entry_swap_with  进驻事件里**与谁**互换心情（None = 用场景 JSON 的 `swap_with`，
+                      再没有就是引擎默认的「前一位进驻」）
         max_segment   单段最长时长（兜底安全上限）
 
     数值说明：单段内心情是精确的线性函数；误差只来自 Decimal 除法在 28 位有效数字处的
@@ -480,7 +500,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             w = copy.deepcopy(shift.world)
             for o in w.all_operators():
                 o.mood = moods.get(o.name, MOOD_MAX)
-            events = apply_entry_events(w)
+            events = apply_entry_events(w, swap_with=entry_swap_with, enabled=True)
             if events:
                 for ev in events:
                     marks.append(Mark(t0, "entry", ev.detail))

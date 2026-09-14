@@ -112,5 +112,38 @@ class TestCLI(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("错误", r.stderr)
 
+    def test_entry_events_from_scenario_json(self):
+        """场景 JSON 顶层写 `entry_events` 即可开启结算，**不必**加 `--entry-events`；
+        `swap_with` 指定与谁互换。"""
+        scenario = {
+            "entry_events": {"enabled": True, "swap_with": "乙"},
+            "facilities": [
+                {"type": "宿舍", "level": 5, "operators": [
+                    {"name": "甲", "mood": "6"},
+                    {"name": "乙", "mood": "9"},
+                    {"name": "菲亚梅塔", "mood": "24"},
+                ]},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            sc = Path(tmp) / "dorm.json"
+            sc.write_text(json.dumps(scenario, ensure_ascii=False), encoding="utf-8")
+            r = self._run("--scenario-file", str(sc), "--target", "菲亚梅塔")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("进驻事件", r.stderr)              # 事件流水账走 stderr
+            self.assertIn("乙", r.stderr)
+            data = json.loads(r.stdout)
+            self.assertEqual(data["mood"], 9)               # 与乙互换：24 → 9
+
+            # 同一份 JSON 改成不开 → 心情保持 24
+            scenario["entry_events"] = {"enabled": False, "swap_with": "乙"}
+            sc.write_text(json.dumps(scenario, ensure_ascii=False), encoding="utf-8")
+            r2 = self._run("--scenario-file", str(sc), "--target", "菲亚梅塔")
+            self.assertEqual(json.loads(r2.stdout)["mood"], 24)
+
+            # 显式 --entry-events 优先于 JSON 的 false
+            r3 = self._run("--scenario-file", str(sc), "--target", "菲亚梅塔", "--entry-events")
+            self.assertEqual(json.loads(r3.stdout)["mood"], 9)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

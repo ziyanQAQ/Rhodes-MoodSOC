@@ -641,7 +641,7 @@ def _single_recovery(world, op: Operator, facility: Facility, variables=None):
     return value, rep.owner, by_inst.get((rep.owner, base_skill_id(rep.skill_id)))
 
 
-def apply_entry_events(world: BaseLayout):
+def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None):
     """**进驻瞬间的一次性结算**（M15a 心情互换），就地修改 `world` 的干员心情。
 
     为什么单独一个入口：这类技能的效果不是「每小时 ±N 点」，而是**进驻那一刻的状态跳变**，
@@ -653,32 +653,82 @@ def apply_entry_events(world: BaseLayout):
 
     已实现：**患难之交**（菲亚梅塔，`dorm_exchangeAp[000]`）
       上游原文：「进驻宿舍时，如果**自身为满心情**，则与当前宿舍**前一位进驻**的干员互换心情」。
-      「前一位进驻」= `Facility.operators` 里排在触发者之前的那一位——
-      布局的 `operators` **本来就是有序列表**（进驻顺序），所以不需要额外的队列结构。
+
+    参数（决定"换不换 / 换谁"，两者都可配）：
+
+    | 参数 | 取值 | 优先级 |
+    |---|---|---|
+    | `enabled` | `True`/`False` = 强制结算/不结算；`None` = 看 `world.entry_events.enabled` | 显式 > JSON > **默认结算**（"调用这个函数"本身就是"要结算"） |
+    | `swap_with` | 干员名 = 与**同宿舍**的该干员互换；`None` = 用 JSON 里的 `swap_with`；都没有 = 「前一位进驻」 | 显式 > JSON > 默认前一任 |
+
+    「前一位进驻」= `Facility.operators` 里排在触发者之前的那一位——
+    布局的 `operators` **本来就是有序列表**（进驻顺序），所以不需要额外的队列结构。
+    若指定的人不在同一宿舍，**不换**，但会记一条 `Bucket.EVENT` 说明原因（界面/`--explain` 能看到）。
     """
+    cfg = getattr(world, "entry_events", None)
+    if enabled is None:
+        configured = getattr(cfg, "enabled", None)
+        enabled = True if configured is None else bool(configured)
+    if not enabled:
+        return []
+    if swap_with is None:
+        swap_with = getattr(cfg, "swap_with", None) or None
+
     events = []
     for facility in world.facilities:
         if facility.ftype != FacilityType.DORMITORY:
             continue
         for idx, op in enumerate(facility.operators):
-            if idx == 0 or not _active(op):
+            if not _active(op):
                 continue
             for skill in _template_skills(op, "M15a"):
                 ctx = SkillContext(world, op, op, facility)
                 if skill.condition is not None and not skill.condition(ctx):
                     continue
-                other = facility.operators[idx - 1]
+                if swap_with:                      # ① 指定了交换对象
+                    other = next((o for o in facility.operators
+                                  if o is not op and o.name == swap_with), None)
+                    if other is None:
+                        events.append(Contribution(
+                            Bucket.EVENT, "进驻事件未执行", ZERO, group="entry_swap_skipped",
+                            owner=op.name, target=swap_with, skill_id=skill.id,
+                            skill_name=skill.name, template=skill.template_id,
+                            detail=f"（指定的交换对象「{swap_with}」不在 {facility.display_name} 里）"))
+                        continue
+                else:                              # ② 默认「前一位进驻」
+                    if idx == 0:
+                        continue
+                    other = facility.operators[idx - 1]
                 if other.mood == op.mood:
                     continue
                 before = (op.mood, other.mood)
                 op.mood, other.mood = before[1], before[0]
+                how = f"指定的 {other.name}" if swap_with else f"「前一位进驻」的 {other.name}"
                 events.append(Contribution(
                     Bucket.EVENT, "心情互换", ZERO, group="entry_swap",
                     owner=op.name, target=other.name, skill_id=skill.id,
                     skill_name=skill.name, template=skill.template_id,
-                    detail=f"（与「前一位进驻」的 {other.name} 互换：{op.name} "
+                    detail=f"（与{how}互换：{op.name} "
                            f"{before[0]} → {before[1]}，{other.name} {before[1]} → {before[0]}）"))
     return events
+
+
+def entry_event_holders(world: BaseLayout):
+    """列出**可能**触发进驻事件（M15a）的干员 → `[(干员名, 所在房间名), ...]`。
+
+    只做"模板 + 未红脸"的粗筛（真正的触发还要满足条件，如"自身为满心情"），
+    供界面提示"这个布局里谁会触发换心情"、以及收集"能和谁换"的候选。
+    """
+    out = []
+    for facility in world.facilities:
+        if facility.ftype != FacilityType.DORMITORY:
+            continue
+        for op in facility.operators:
+            if not _active(op):
+                continue
+            if _template_skills(op, "M15a"):
+                out.append((op.name, facility.display_name))
+    return out
 
 
 def compute_consumption(world: BaseLayout, op: Operator, facility: Facility,

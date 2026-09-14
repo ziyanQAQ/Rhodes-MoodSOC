@@ -39,6 +39,32 @@ from .config import (
 )
 
 
+def build_entry_event_config(raw) -> "EntryEventConfig":
+    """把场景 JSON 里的 `entry_events` 解析成 `EntryEventConfig`（宽松解析）。
+
+    接受的写法：
+      - `{"enabled": true, "swap_with": "路人"}`（推荐）
+      - `true` / `false`（只要开关）
+      - `"某人"`（只给交换对象，隐含开启）
+      - `None` / 缺省 → `enabled=None`（未配置：直接调 API 视为要结算）
+      - `"swap_with"` 为空串 → 视为"不指定"（等同默认的「前一位进驻」）
+    """
+    if raw is None:
+        return EntryEventConfig()
+    if isinstance(raw, bool):
+        return EntryEventConfig(enabled=raw)
+    if isinstance(raw, str):
+        return EntryEventConfig(enabled=True, swap_with=raw or None)
+    if isinstance(raw, dict):
+        target = raw.get("swap_with", raw.get("swapWith"))
+        enabled = raw.get("enabled")
+        return EntryEventConfig(
+            enabled=(None if enabled is None else bool(enabled)),
+            swap_with=(str(target) if target else None),
+        )
+    raise ValueError(f"entry_events 配置格式无法识别：{raw!r}")
+
+
 @dataclass
 class Operator:
     """一名干员及其当前状态。
@@ -105,9 +131,33 @@ class Facility:
 
 
 @dataclass
+class EntryEventConfig:
+    """**进驻事件**（M15a 患难之交）的结算配置 —— 来自场景 JSON 的顶层 `entry_events`。
+
+    ```json
+    {
+      "entry_events": {"enabled": true, "swap_with": "路人"},
+      "facilities": [ ... ]
+    }
+    ```
+
+    - `enabled`：这个布局**默认**要不要结算进驻事件。三态：
+      `None` = 没配置（直接调用 `apply_entry_events` 时视为"要结算"）；
+      `True` = 默认结算（命令行/界面不用再开开关）；`False` = 这个布局不换心情。
+      调用方显式开关（CLI `--entry-events` / 界面勾选）**优先于**它。
+    - `swap_with`：与**谁**互换心情。`None` = 默认的「前一位进驻」（`Facility.operators` 里排在
+      触发者之前的那一位，即进驻顺序的上一人）；给了名字就必须是**同一宿舍**里的另一位。
+    """
+    enabled: Optional[bool] = None
+    swap_with: Optional[str] = None
+
+
+@dataclass
 class BaseLayout:
     """基建布局：整个基建的当前快照（即"世界状态"）。"""
     facilities: List[Facility] = field(default_factory=list)
+    # 进驻事件（M15a）的默认配置；见 EntryEventConfig
+    entry_events: EntryEventConfig = field(default_factory=EntryEventConfig)
 
     # ================================================================ 单数查询
     def get_facility(self, ftype) -> Optional[Facility]:
