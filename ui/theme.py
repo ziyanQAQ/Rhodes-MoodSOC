@@ -124,3 +124,12 @@ def fmt_clock(hours, cycle: Decimal = Decimal("24")) -> str:
 def fmt_hours(hours) -> str:
     """小时数的紧凑显示（12 / 12.5 / 0.25）。"""
     return fmt_mood(hours, 3) + "h"
+
+
+def fmt_mins(hours) -> str:
+    """把"小时"换算成人话的时长（0.25 → `15 分钟`；1.5 → `1 小时 30 分`）。"""
+    minutes = int((Decimal(str(hours)) * 60).to_integral_value(rounding=ROUND_HALF_UP))
+    if minutes < 60:
+        return f"{minutes} 分钟"
+    h, m = divmod(minutes, 60)
+    return f"{h} 小时" if m == 0 else f"{h} 小时 {m} 分"

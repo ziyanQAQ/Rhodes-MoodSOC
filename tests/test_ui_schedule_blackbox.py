@@ -340,5 +340,43 @@ class Test引擎不依赖GUI(unittest.TestCase):
         self.assertEqual(r.stdout.strip(), "False", "ui.schedule 不该拉起 tkinter")
 
 
+class Test显示格式化(unittest.TestCase):
+    """`ui/theme.py` 的显示层工具（不依赖 GUI，可单独测）。
+
+    这些是**显示边界**：引擎内部是 Decimal 精确运算，跨事件分割会留下
+    `16.19999999999999999999999999` 这类 28 位尾巴——只在显示时舍入。
+    """
+
+    def test_心情与小时的格式化(self):
+        from ui import theme
+        self.assertEqual(theme.fmt_mood(D("16.2")), "16.2")
+        self.assertEqual(theme.fmt_mood(D("16.19999999999999999999999999")), "16.2")
+        self.assertEqual(theme.fmt_mood(D("24")), "24")
+        self.assertEqual(theme.fmt_mood(D("0.00")), "0")
+        self.assertEqual(theme.fmt_hours(D("12")), "12h")
+        self.assertEqual(theme.fmt_hours(D("12.5")), "12.5h")
+
+    def test_时长换算成人话(self):
+        from ui import theme
+        self.assertEqual(theme.fmt_mins(D("0.25")), "15 分钟")
+        self.assertEqual(theme.fmt_mins(D("1")), "1 小时")
+        self.assertEqual(theme.fmt_mins(D("1.5")), "1 小时 30 分")
+        self.assertEqual(theme.fmt_mins(D("6")), "6 小时")
+
+    def test_时钟与跨天(self):
+        from ui import theme
+        self.assertEqual(theme.fmt_clock(D("0")), "00:00")
+        self.assertEqual(theme.fmt_clock(D("12.5")), "12:30")
+        self.assertEqual(theme.fmt_clock(D("25")), "01:00（第2天）")
+
+    def test_心情配色单调(self):
+        """心情越高越"绿"：红脸的 R 分量应显著高于满心情。"""
+        from ui import theme
+        red_at_0 = int(theme.mood_color(D("0"))[1:3], 16)
+        red_at_24 = int(theme.mood_color(D("24"))[1:3], 16)
+        self.assertGreater(red_at_0, red_at_24)
+        self.assertNotEqual(theme.mood_tint(D("12")), theme.mood_tint(D("24")))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

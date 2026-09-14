@@ -482,6 +482,19 @@ class Test新增交互(unittest.TestCase):
         names_after = {v.operator for v in app.board.slots if v.operator}
         self.assertNotEqual(names_after, names_before)
 
+    def test_时间滑块两侧按钮与步长提示(self):
+        """滑块两侧改成纯箭头（原来写 "◀ 15min" 容易被误读成"15 分钟前/时长"），
+        步长与快捷键改用右侧一句人话提示。"""
+        app = self.app
+        app.set_time(Decimal("6"))
+        app.back_btn.invoke()
+        self.assertEqual(app.current_t, Decimal("5.75"))     # 一档 = 15 分钟
+        app.fwd_btn.invoke()
+        self.assertEqual(app.current_t, Decimal("6"))
+        hint = app.slider_hint.cget("text")
+        self.assertIn("分钟", hint)
+        self.assertNotIn("min", hint)
+
     def test_拖动跨班时推迟全员一览刷新(self):
         """拖动中跨班：看板立刻换、全员一览标记延后到停手（避免拖动噎顿）。"""
         app = self.app

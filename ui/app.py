@@ -206,16 +206,25 @@ class MoodSocApp(tk.Tk):
 
         slide = tk.Frame(bottom, bg=theme.BG)
         slide.pack(fill="x", pady=(4, 0))
-        ttk.Button(slide, text="◀ 15min", width=8,
-                   command=lambda: self.nudge(-STEP_FINE)).pack(side="left")
+        # 左右按钮只画箭头（原来写 "◀ 15min" 容易被当成"15 分钟前/时长"，看不懂）；
+        # 步长与快捷键写在右边的一句提示里。
+        self.back_btn = ttk.Button(slide, text="◀", width=3,
+                                   command=lambda: self.nudge(-STEP_FINE))
+        self.back_btn.pack(side="left")
         self.scale = ttk.Scale(slide, from_=0.0, to=24.0, orient="horizontal",
                                command=self._on_scale)
         self.scale.pack(side="left", fill="x", expand=True, padx=theme.GAP)
-        ttk.Button(slide, text="15min ▶", width=8,
-                   command=lambda: self.nudge(STEP_FINE)).pack(side="left")
+        self.fwd_btn = ttk.Button(slide, text="▶", width=3,
+                                  command=lambda: self.nudge(STEP_FINE))
+        self.fwd_btn.pack(side="left")
         self.time_label = tk.Label(slide, text="00:00", bg=theme.BG, fg=theme.TEXT, width=16,
                                    font=(theme.FONT_MONO, theme.FS_BIG, "bold"))
         self.time_label.pack(side="left", padx=(theme.GAP, 0))
+        self.slider_hint = tk.Label(
+            slide,
+            text=f"拖动＝查看该时刻心情　◀▶/←→＝{theme.fmt_mins(STEP_FINE)}一档　空格＝播放/暂停",
+            bg=theme.BG, fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.slider_hint.pack(side="left", padx=(theme.GAP, 0))
 
         self.status = tk.Label(self, text="就绪", bg=theme.BG, fg=theme.MUTED, anchor="w",
                                font=(theme.FONT_FAMILY, theme.FS_SMALL))
