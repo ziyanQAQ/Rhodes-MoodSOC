@@ -11,6 +11,9 @@
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tkinter as tk
 import unittest
 from decimal import Decimal
@@ -31,6 +34,60 @@ def _tk_available() -> bool:
 
 
 TK_OK = _tk_available()
+
+
+class Test入口跑法(unittest.TestCase):
+    """入口必须"当包跑"和"当脚本跑"都成立（不需要图形环境，故不跳过）。
+
+    ⚠️ 回归用例：用文件路径直接运行 `ui/__main__.py` 时 Python **不把 `ui/` 当包**，
+    原先的 `from .app import main` 会报
+    `ImportError: attempted relative import with no known parent package`。
+    现在入口先做 `sys.path` 引导、再绝对导入，两种跑法都要能走到 `main()`。
+
+    手法：把 `ui.app` 预塞进 `sys.modules` 并用一个返回哨兵退出码的 `main` 顶掉，
+    这样既验证"脚本路径真的执行到了 main"，又不会真开窗口。
+    """
+
+    STUB = ("import sys, types\n"
+            "m = types.ModuleType('ui.app')\n"
+            "m.main = lambda: 7\n"          # 7 = 哨兵退出码
+            "sys.modules['ui.app'] = m\n")
+
+    def _run(self, code: str):
+        return subprocess.run(
+            [sys.executable, "-c", code], cwd=str(ROOT), capture_output=True,
+            text=True, encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    def test_直接运行入口文件(self):
+        """`python ui/__main__.py`（IDE 里 Run 的常见形态）不再报相对导入。"""
+        code = (self.STUB +
+                "import runpy, sys\n"
+                "sys.argv = ['ui']\n"
+                "runpy.run_path(r'ui/__main__.py', run_name='__main__')\n")
+        r = self._run(code)
+        self.assertEqual(r.returncode, 7, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+
+    def test_直接运行app模块文件(self):
+        """`python ui/app.py` / IDE 直接 Run 该模块：**模块级导入**必须成立。
+
+        这里用 `run_name` 避开 `__main__` 分支（不真开窗口）——要回归的正是模块顶层那些
+        `from ui.xxx import ...` 在"当脚本跑"时是否还能解析。
+        """
+        code = ("import runpy\n"
+                "runpy.run_path(r'ui/app.py', run_name='ui_app_probe')\n"
+                "print('imported-ok')\n")
+        r = self._run(code)
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+        self.assertIn("imported-ok", r.stdout)
+        self.assertNotIn("ImportError", r.stderr)
+
+    def test_模块方式运行(self):
+        """`python -m ui`（把 ui 当包）走的是同一条入口。"""
+        code = (self.STUB + "import runpy\n"
+                "runpy.run_module('ui', run_name='__main__')\n")
+        r = self._run(code)
+        self.assertEqual(r.returncode, 7, f"stdout={r.stdout!r} stderr={r.stderr!r}")
 
 
 @unittest.skipUnless(TK_OK, "无图形环境（Tk 不可用），跳过界面冒烟测试")

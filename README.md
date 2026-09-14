@@ -535,8 +535,11 @@ python main.py --mode base --demo --period 12                           # 先推
 **实时心情**，拖时间滑块看一天里心情怎么走，指定干员看整周期曲线：
 
 ```bash
-.venv/Scripts/python.exe -m ui
+.venv/Scripts/python.exe -m ui          # 推荐（在仓库根目录执行）
 ```
+
+也支持**直接运行文件**（IDE 里右键 Run 常用这种）：`python ui/__main__.py`、`python ui/app.py`
+——两者都会先把仓库根放进 `sys.path`，因此不依赖当前工作目录。
 
 | 能做什么 | 怎么操作 |
 |---|---|
@@ -691,7 +694,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 ## 六、测试（黑盒）
 
 测试为**黑盒测试**：只通过「命令行」「公开 API」与「图形界面的计算核心」断言
-**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **110 个用例全绿**。
+**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **113 个用例全绿**。
 
 ```bash
 # 运行全部测试

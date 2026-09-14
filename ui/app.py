@@ -15,20 +15,26 @@
 """
 from __future__ import annotations
 
+import sys
 import time
 import tkinter as tk
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import theme
-from .board import BaseBoard
-from .chart import MoodChart
-from .dialogs import ask_mood, ask_operator, ask_shift_hours
-from .schedule import (Schedule, Trajectory, all_operator_names, default_initial_moods,
-                       load_schedule, simulate_schedule)
-
+# 允许**直接运行本文件**（`python ui/app.py` / IDE 的 Run）：直接跑时 `ui` 不是包，
+# 相对导入会失败；把仓库根目录放进 sys.path 后用绝对导入，与 `python -m ui` 等价。
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from ui import theme  # noqa: E402
+from ui.board import BaseBoard  # noqa: E402
+from ui.chart import MoodChart  # noqa: E402
+from ui.dialogs import ask_mood, ask_operator, ask_shift_hours  # noqa: E402
+from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
+                         default_initial_moods, load_schedule, simulate_schedule)
+
 SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
 
