@@ -29,9 +29,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ui import theme  # noqa: E402
-from ui.board import BaseBoard  # noqa: E402
+from ui.board import BaseBoard, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
 from ui.dialogs import ask_mood, ask_operator, ask_shift_hours  # noqa: E402
+from ui.roster import RosterStrip  # noqa: E402
 from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
                          default_initial_moods, load_schedule, simulate_schedule)
 
@@ -43,8 +44,8 @@ class MoodSocApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Rhodes-MoodSOC · 基建心情排班")
-        self.geometry("1480x900")
-        self.minsize(1120, 700)
+        self.geometry("1560x950")
+        self.minsize(1180, 780)
         self.configure(bg=theme.BG)
 
         self.schedule: Schedule | None = None
@@ -60,6 +61,7 @@ class MoodSocApp(tk.Tk):
         self._setting_scale = False
         self._pending_t = None
         self._refresh_job = None
+        self._settle_job = None
         self._last_refresh = 0.0
 
         self._init_style()
@@ -68,8 +70,7 @@ class MoodSocApp(tk.Tk):
         self._build_bottom()
         self._bind_keys()
 
-        self.after(60, self._autoload_sample)
-
+        self._autoload_job = self.after(60, self._autoload_sample)
     # ================================================================== 样式
     def _init_style(self):
         st = ttk.Style(self)
@@ -123,7 +124,6 @@ class MoodSocApp(tk.Tk):
                              bg=theme.BG, fg=theme.MUTED,
                              font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.hint.pack(side="right")
-
     # ================================================================== 主体
     def _build_body(self):
         body = tk.Frame(self, bg=theme.BG)
@@ -134,7 +134,7 @@ class MoodSocApp(tk.Tk):
         self.board.pack(side="left", fill="both", expand=True)
 
         right = tk.Frame(body, bg=theme.PANEL, highlightbackground=theme.BORDER,
-                         highlightthickness=1, width=560)
+                         highlightthickness=1, width=600)
         right.pack(side="left", fill="both", padx=(theme.GAP, 0))
         right.pack_propagate(False)
 
@@ -163,6 +163,11 @@ class MoodSocApp(tk.Tk):
         self.stats = tk.Label(right, text="", bg=theme.PANEL, fg=theme.TEXT, justify="left",
                               anchor="w", font=(theme.FONT_MONO, theme.FS_SMALL))
         self.stats.pack(fill="x", padx=theme.PAD, pady=(0, theme.PAD))
+
+        # 全员一览（横条，铺在下方）：把整个周期出现过的干员一次全部摆出来
+        self.roster = RosterStrip(self, on_pick=self.on_roster_pick,
+                                 on_set_mood=self.on_roster_set_mood)
+        self.roster.pack(fill="x", pady=(theme.GAP, 0))
 
     # ================================================================== 底部
     def _build_bottom(self):
@@ -199,6 +204,8 @@ class MoodSocApp(tk.Tk):
 
     # ================================================================== 数据流
     def _autoload_sample(self):
+        if not self.winfo_exists():
+            return
         if SAMPLE.exists():
             try:
                 self.load_paths([SAMPLE])
@@ -244,6 +251,7 @@ class MoodSocApp(tk.Tk):
         if fit_slider or self.current_t > total:
             self.current_t = Decimal("0")
         self.scale.configure(to=float(total))
+        self.roster.set_operators(self.traj.names)
         self._refresh_layout()
         self._sync_operator_box()
         self.refresh_view()
@@ -262,12 +270,32 @@ class MoodSocApp(tk.Tk):
         if sig != self._layout_sig:
             self.board.set_layout(shift, sub_title=self._shift_span_text(idx))
             self._layout_sig = sig
+        self.roster.set_context(self._room_tags(shift))
 
-    def refresh_view(self):
-        """只更新随时间变化的部分（滑块拖动走这里，O(位置数)）。"""
+    def _room_tags(self, shift) -> dict:
+        """干员 → 当前班次所在房间的标记（`制1`/`宿3`/`中`…）；不在本班次的不在表里。"""
+        tags = {}
+        counts = {}
+        for f in shift.world.facilities:
+            counts[f.ftype] = counts.get(f.ftype, 0) + 1
+        seen = {}
+        for f in shift.world.facilities:
+            seen[f.ftype] = seen.get(f.ftype, 0) + 1
+            tag = facility_tag(f, seen[f.ftype] if counts[f.ftype] > 1 else 0)
+            for op in f.operators:
+                tags[op.name] = tag
+        return tags
+
+    def refresh_view(self, quick: bool = False):
+        """只更新随时间变化的部分（滑块拖动走这里，O(位置数)）。
+
+        `quick=True`：拖动中的快路径（数值 + 色条跟手，底色等停手后再补）。
+        """
         if self.traj is None:
             return
-        self.board.update_moods(self.traj.moods_at(self.current_t))
+        moods = self.traj.moods_at(self.current_t)
+        self.board.update_moods(moods, quick=quick)
+        self.roster.update_moods(moods, quick=quick)
         self.chart.set_cursor(self.current_t)
         self.time_label.configure(text=theme.fmt_clock(self.current_t, self.schedule.cycle_hours))
         self._highlight_shift_button()
@@ -293,10 +321,21 @@ class MoodSocApp(tk.Tk):
         self._refresh_job = None
         self._last_refresh = time.perf_counter()
         t, self._pending_t = self._pending_t, None
-        if t is not None:
-            self.set_time(t)
+        if t is None:
+            return
+        # 拖动中走"跟手"快路径（只改数值与色条），停手 200ms 后补一次完整上色
+        self.set_time(t, quick=True)
+        if self._settle_job is not None:
+            self.after_cancel(self._settle_job)
+        self._settle_job = self.after(200, self._settle_refresh)
 
-    def set_time(self, t: Decimal):
+    def _settle_refresh(self):
+        """拖动结束后补一次完整刷新（底色/红脸描边/最危险提示都到位）。"""
+        self._settle_job = None
+        if self.winfo_exists():
+            self.refresh_view(quick=False)
+
+    def set_time(self, t: Decimal, quick: bool = False):
         if self.traj is None:
             return
         total = self._total_hours()
@@ -308,7 +347,7 @@ class MoodSocApp(tk.Tk):
         self._setting_scale = False
         if changed_shift:
             self._refresh_layout()
-        self.refresh_view()
+        self.refresh_view(quick=quick)
 
     def nudge(self, delta: Decimal):
         self.set_time(self.current_t + delta)
@@ -363,6 +402,21 @@ class MoodSocApp(tk.Tk):
         if not self.curve_operator:
             return
         self._ask_and_set_mood(self.curve_operator)
+
+    # ------------------------------------------------------------ 全员一览联动
+    def on_roster_pick(self, who: str):
+        """全员一览左键：对点看该干员的曲线，并在本班次看板上高亮他的位置。"""
+        if who not in self.op_box.cget("values"):
+            return
+        self.curve_operator = who
+        self.op_var.set(who)
+        self._update_chart()
+        if not self.board.highlight(who):
+            self.status.configure(text=f"{who} 不在当前班次（点上方班次按钮可切换）")
+
+    def on_roster_set_mood(self, who: str):
+        """全员一览右键：设该干员心情（周期起点）。"""
+        self._ask_and_set_mood(who)
 
     def _ask_and_set_mood(self, who: str):
         current = self.initial_moods.get(who, self._current_start_mood(who))
@@ -442,6 +496,7 @@ class MoodSocApp(tk.Tk):
             return
         self.chart.set_data(self.traj, self.curve_operator)
         self.stats.configure(text=self._stats_text(self.curve_operator))
+        self.roster.set_selected(self.curve_operator)
 
     def _stats_text(self, name: str) -> str:
         traj = self.traj
@@ -500,7 +555,7 @@ class MoodSocApp(tk.Tk):
             self._play_job = None
 
     def _play_tick(self):
-        if not self._playing or self.traj is None:
+        if not self._playing or self.traj is None or not self.winfo_exists():
             return
         total = self._total_hours()
         nxt = self.current_t + Decimal("0.1")
@@ -508,6 +563,23 @@ class MoodSocApp(tk.Tk):
             nxt = Decimal("0")
         self.set_time(nxt)
         self._play_job = self.after(60, self._play_tick)
+
+    # ================================================================== 收尾
+    def destroy(self):
+        """退出前取消所有挂起的 `after` 回调。
+
+        否则窗口销毁后回调仍会触发，Tk 会打印
+        `invalid command name "..._autoload_sample"`（测试里尤其吵）。
+        """
+        for attr in ("_refresh_job", "_settle_job", "_play_job", "_autoload_job"):
+            job = getattr(self, attr, None)
+            if job:
+                try:
+                    self.after_cancel(job)
+                except tk.TclError:
+                    pass
+                setattr(self, attr, None)
+        super().destroy()
 
 
 def main() -> int:

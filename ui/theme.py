@@ -48,6 +48,36 @@ GAP = 8
 CARD_PAD = 8
 RADIUS = 8
 
+# 紧凑芯片（位置/干员的统一呈现单元）：一屏能放下"所有房间 + 所有干员"的关键
+CHIP_H = 21             # 芯片高度
+CHIP_MIN_W = 92         # 芯片最小宽度（看板里的位置）
+ROSTER_CHIP_W = 116     # 「全员一览」条里的芯片宽度
+CHIP_BAR_W = 4          # 芯片左侧的心情色条宽度
+
+
+def _rgb(color: str):
+    return tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _hex(rgb) -> str:
+    return "#" + "".join(f"{max(0, min(255, int(round(c)))):02x}" for c in rgb)
+
+
+def blend(color_a: str, color_b: str, ratio: float) -> str:
+    """两色线性混合（ratio=0 取 a，ratio=1 取 b）。"""
+    a, b = _rgb(color_a), _rgb(color_b)
+    return _hex(tuple(a[i] + (b[i] - a[i]) * ratio for i in range(3)))
+
+
+def mood_tint(value) -> str:
+    """心情 → **芯片底色**（心情色向白大量混，保证黑字可读）。"""
+    return blend(mood_color(value), "#ffffff", 0.84)
+
+
+def mood_ink(value) -> str:
+    """心情 → **芯片上的文字/描边色**（心情色加深，红脸更醒目）。"""
+    return blend(mood_color(value), "#111827", 0.35)
+
 
 def mood_color(value) -> str:
     """心情值 → 颜色（红色→橙色→琥珀→绿，线性插值）。"""
@@ -60,9 +90,9 @@ def mood_color(value) -> str:
             if x1 == x0:
                 return c1
             r = (v - x0) / (x1 - x0)
-            a = tuple(int(c0[j:j + 2], 16) for j in (1, 3, 5))
-            b = tuple(int(c1[j:j + 2], 16) for j in (1, 3, 5))
-            return "#" + "".join(f"{int(round(a[k] + (b[k] - a[k]) * float(r))):02x}" for k in range(3))
+            a = _rgb(c0)
+            b = _rgb(c1)
+            return _hex(tuple(a[k] + (b[k] - a[k]) * float(r) for k in range(3)))
     return _MOOD_STOPS[-1][1]
 
 

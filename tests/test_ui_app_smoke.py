@@ -205,6 +205,54 @@ class Test界面冒烟(unittest.TestCase):
         finally:
             app_mod.ask_shift_hours = orig
 
+    def test_全员一览覆盖所有干员(self):
+        """需求：**直观看到所有干员**——整个周期出现过的干员都要在「全员一览」里，
+        包括只在**别的班次**里上班的那些（看板按当前班次画，本来会看不到他们）。"""
+        app = self.app
+        names = set(app.traj.names)
+        self.assertEqual({c.operator for c in app.roster.chips}, names)
+        self.assertEqual(len(app.roster.chips), len(names))
+        only_other = [n for n in names if n not in app.schedule.shifts[0].operators]
+        self.assertTrue(only_other, "示例排班里应当有只出现在其它班次的干员")
+        for n in only_other:
+            self.assertIn(n, app.roster.by_name)
+            self.assertEqual(app.roster.by_name[n].tag_text, "休")   # 标记为"本班次未排班"
+
+    def test_全员一览点击联动对点与设心情(self):
+        """"全员一览"左键 = 对点看曲线，右键 = 设心情。"""
+        from ui import app as app_mod
+        app = self.app
+        names = list(app.op_box.cget("values"))
+        target = "歌蕾蒂娅" if "歌蕾蒂娅" in names else names[3]
+        app.on_roster_pick(target)
+        self.assertEqual(app.chart.name, target)
+        self.assertEqual(app.op_var.get(), target)
+        self.assertTrue(app.roster.by_name[target].selected)
+        orig = app_mod.ask_mood
+        try:
+            app_mod.ask_mood = lambda *a, **k: Decimal("7")
+            app.on_roster_set_mood(target)
+        finally:
+            app_mod.ask_mood = orig
+        self.assertEqual(app.initial_moods.get(target), Decimal("7"))
+
+    def test_看板位置标记与班次一致(self):
+        """位置标记（制1/贸3/宿2/中…）应当与当前班次的布局一致。"""
+        app = self.app
+        app.set_time(Decimal("0"))
+        shift = app.schedule.shifts[0]
+        tags = app._room_tags(shift)
+        # 示例排班（333）：3 间制造站 / 3 间贸易站 / 1 间办公室
+        self.assertEqual(tags.get("森蚺"), "制1")
+        self.assertEqual(tags.get("结城理"), "制2")
+        self.assertEqual(tags.get("巫恋"), "贸3")
+        self.assertEqual(tags.get("锡人"), "办")          # 单间设施不带序号
+        self.assertEqual(tags.get("八幡海铃"), "中")       # 控制中枢
+        self.assertTrue(any(t.startswith("宿") for t in tags.values()))
+        for v in app.board.slots:
+            if v.operator:
+                self.assertIn(v.operator, tags, f"{v.operator} 应在当前班次里")
+
     def test_播放与关键盘微调(self):
         app = self.app
         app.set_time(Decimal("0"))
@@ -225,6 +273,44 @@ class Test界面冒烟(unittest.TestCase):
         app.cycles_var.set("1")
         app._on_cycles()
         self.assertEqual(app._total_hours(), Decimal("24"))
+
+
+class Test看板布局(unittest.TestCase):
+    """布局契约：**所有房间要一屏放下**（旧版单列 695px 装不进 577px，必须滚动，
+    于是"看到所有干员"成了空话）。这条测试盯着它不要退回去。"""
+
+    def setUp(self):
+        if not TK_OK:
+            self.skipTest("无图形环境（Tk 不可用）")
+
+    def test_一屏放下全部房间(self):
+        from ui.app import MoodSocApp
+        app = MoodSocApp()
+        app.deiconify()
+        try:
+            app.load_paths([SAMPLE])
+            for _ in range(3):
+                app.update()
+            board = app.board
+            content = board.inner.winfo_reqheight()
+            visible = board.canvas.winfo_height()
+            if visible < 200:
+                self.skipTest("窗口未真实布局（无显示器），跳过高度断言")
+            self.assertLessEqual(
+                content, visible,
+                f"看板内容 {content}px 超过可视 {visible}px —— 又需要滚动了（布局退回单列？）")
+            # 房间没有被截断：每个位置都画了出来
+            shift = app.schedule.shifts[0]
+            expected = {o.name for f in shift.world.facilities for o in f.operators}
+            on_board = {s.operator for s in board.slots if s.operator}
+            self.assertEqual(on_board, expected)
+            self.assertEqual(len(board.slots),
+                             sum(max(f.capacity, len(f.operators), 1)
+                                 for f in shift.world.facilities))
+            # 「全员一览」把整个周期的干员都摆出来了
+            self.assertEqual(len(app.roster.chips), len(app.traj.names))
+        finally:
+            app.destroy()
 
 
 if __name__ == "__main__":
