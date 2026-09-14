@@ -36,7 +36,7 @@ from ui.dialogs import ask_entry_event, ask_mood, ask_operator, ask_shift_hours 
 from ui.roster import RosterStrip  # noqa: E402
 from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
                          default_initial_moods, load_schedule, simulate_schedule)
-from mood_soc import entry_event_holders  # noqa: E402
+from mood_soc import entry_event_holders, entry_target_kind  # noqa: E402
 from mood_soc.config import FacilityType  # noqa: E402
 
 SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
@@ -66,6 +66,7 @@ class MoodSocApp(tk.Tk):
         self.entry_scope = "dorm"                      # "dorm" 仅同宿舍 / "anywhere" 基建任意位置
         self.entry_restore_back = True                 # True = 换回去（只换心情、位置不变）
         self.entry_force = False                       # True = 到点没满就等她回满再换
+        self.entry_per_shift: list = []                # 按班次覆盖（EntryShiftOverride 列表）
         self.play_speed = Decimal("1")
         self.current_t = Decimal("0")
         self.curve_operator = ""
@@ -264,6 +265,7 @@ class MoodSocApp(tk.Tk):
         self.entry_scope = getattr(cfg, "scope", "dorm")
         self.entry_restore_back = bool(getattr(cfg, "restore_back", True))
         self.entry_force = bool(getattr(cfg, "force", False))
+        self.entry_per_shift = list(getattr(cfg, "per_shift", []) or [])
         self._sync_entry_label()
         self._build_shift_buttons()
         self._sync_operator_box()
@@ -296,7 +298,8 @@ class MoodSocApp(tk.Tk):
                                       entry_swap_with=self.entry_swap_with,
                                       entry_scope=self.entry_scope,
                                       entry_restore_back=self.entry_restore_back,
-                                      entry_force=self.entry_force)
+                                      entry_force=self.entry_force,
+                                      entry_per_shift=self.entry_per_shift or None)
         total = self._total_hours()
         if fit_slider or self.current_t > total:
             self.current_t = Decimal("0")
@@ -537,12 +540,18 @@ class MoodSocApp(tk.Tk):
     def _sync_entry_label(self):
         """把当前设置写在开关旁边（极简；完整说明在「这是什么／换谁…」对话框里）。
 
-        工具栏宽度紧张，所以用紧凑写法：`（最累的·任意位置·等她满）`。
+        工具栏宽度紧张，所以用紧凑写法：`（最累的·任意位置·等她满）`；
+        配了按班次覆盖时改成 `（按班次：1巫恋·2最累·3不用）`。
         """
         if not self.entry_events.get():
             self.entry_detail.configure(text="（不结算）")
             return
-        if self.entry_swap_with == "any":
+        if self.entry_per_shift:
+            # 明细放状态栏（工具栏宽度有限，这里只留一个短标记）
+            self.entry_detail.configure(text="（按班次）")
+            return
+        if self.entry_swap_with == "any" or entry_target_kind(self.entry_swap_with,
+                                                              self.entry_scope) == "auto":
             target = "最累的"
         elif self.entry_swap_with:
             target = f"「{self.entry_swap_with}」"
@@ -558,39 +567,66 @@ class MoodSocApp(tk.Tk):
         suffix = "·" + "·".join(bits) if bits else ""
         self.entry_detail.configure(text=f"（{target}{suffix}）")
 
+    def _per_shift_brief(self) -> str:
+        """按班次的紧凑摘要：`（按班次：1巫恋·强等·3不用）`。"""
+        labels = self.schedule.shift_labels() if self.schedule else []
+        parts = []
+        for i, label in enumerate(labels):
+            ov = next((o for o in self.entry_per_shift if o.matches(i, label)), None)
+            if ov is None:
+                continue
+            if ov.enabled is False:
+                parts.append(f"{i + 1}不用")
+                continue
+            # 覆盖没写对象时用全局的写法判断（口径判定只有一处：entry_target_kind）
+            raw = ov.swap_with if ov.swap_with is not None else self.entry_swap_with
+            scope = ov.scope or self.entry_scope
+            kind = entry_target_kind(raw, scope)
+            who = {"auto": "最累", "named": raw, "default": "默认"}[kind]
+            parts.append(f"{i + 1}{who}" + ("·强等" if ov.force else ""))
+        return "（按班次：" + "·".join(parts) + "）" if parts else "（前一位）"
+
     def _entry_summary(self) -> str:
         """一句话说清当前配置（状态栏用）。"""
         if not self.entry_events.get():
             return "进驻事件：不结算（按你写的初始心情开始）"
-        if self.entry_swap_with == "any":
+        kind = entry_target_kind(self.entry_swap_with, self.entry_scope)
+        if kind == "auto":
             who = "全基建最累的那位"
-        elif self.entry_swap_with:
+        elif kind == "named":
             who = f"「{self.entry_swap_with}」"
         else:
             who = "同宿舍的前一位进驻者"
         where = "基建任意位置" if self.entry_scope == "anywhere" else "仅同一宿舍"
         after = "换完后两人都留在原位" if self.entry_restore_back else "换完后位置也对调"
         when = "；到点没满就等她回满再换" if self.entry_force else ""
-        return f"进驻事件：每班开始时结算——与{who}互换心情（{where}，{after}）{when}"
+        text = f"进驻事件：每班开始时结算——与{who}互换心情（{where}，{after}）{when}"
+        if self.entry_per_shift:
+            text += f"　｜　按班次覆盖：{self._per_shift_brief()[1:-1]}"
+        return text
 
     def edit_entry_events(self):
-        """「这是什么／换谁…」：解释这个开关 + 设置换哪、换谁、换完怎么放、要不要强等。"""
+        """「这是什么／换谁…」：解释这个开关 + 设置换哪、换谁、换完怎么放、要不要强等、按班次。"""
         holders, mates = self._entry_candidates()
         picked = ask_entry_event(self, self.entry_events.get(), self.entry_swap_with,
                                  mates, holders, scope=self.entry_scope,
-                                 restore_back=self.entry_restore_back, force=self.entry_force)
+                                 restore_back=self.entry_restore_back, force=self.entry_force,
+                                 shift_labels=(self.schedule.shift_labels() if self.schedule else ()),
+                                 per_shift=self.entry_per_shift)
         if picked is None:
             return
-        # 对话框返回 5 元组（换不换/换谁/范围/换回去/强等）；只给前两项时其余沿用当前值
+        # 对话框返回 6 元组；只给前几项时其余沿用当前值
         enabled, swap_with = picked[0], picked[1]
         scope = picked[2] if len(picked) > 2 else self.entry_scope
         restore_back = picked[3] if len(picked) > 3 else self.entry_restore_back
         force = picked[4] if len(picked) > 4 else self.entry_force
+        per_shift = picked[5] if len(picked) > 5 else self.entry_per_shift
         self.entry_events.set(enabled)
         self.entry_swap_with = swap_with
         self.entry_scope = scope
         self.entry_restore_back = restore_back
         self.entry_force = force
+        self.entry_per_shift = list(per_shift or [])
         self._sync_entry_label()
         self.recompute()                      # 先重算（recompute 会写状态栏）
         if not holders:

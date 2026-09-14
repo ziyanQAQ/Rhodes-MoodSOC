@@ -531,6 +531,52 @@ class Test新增交互(unittest.TestCase):
         names_after = {v.operator for v in app.board.slots if v.operator}
         self.assertNotEqual(names_after, names_before)
 
+    def test_按班次面板与逐班联动(self):
+        """「按班次」面板：每班一行（使用 / 换给谁 / 强制），预填已有配置，应用后逐班生效。"""
+        from mood_soc.models import EntryShiftOverride
+        from ui.dialogs import EntryEventDialog
+
+        app = self.app
+        holders, cands = app._entry_candidates()
+        labels = app.schedule.shift_labels()
+        self.assertEqual(len(labels), 3)
+        dlg = EntryEventDialog(app, True, None, cands, holders, scope="anywhere",
+                              shift_labels=labels,
+                              per_shift=[EntryShiftOverride(key=1, swap_with="巫恋", force=True),
+                                         EntryShiftOverride(key=3, enabled=False)])
+        try:
+            app.update()
+            self.assertEqual(len(dlg.shift_rows), 3)
+            self.assertEqual(dlg.shift_rows[0][1].get(), "巫恋")     # 预填对象
+            self.assertTrue(dlg.shift_rows[0][2].get())              # 预填强制
+            self.assertFalse(dlg.shift_rows[2][0].get())             # 第 3 班预填"不用"
+            dlg._ok()
+            self.assertEqual([(o.key, o.enabled, o.swap_with, o.force) for o in dlg.result[5]],
+                             [(1, True, "巫恋", True), (3, False, None, False)])
+        finally:
+            dlg.destroy()
+
+        app.entry_events.set(True)
+        app.entry_scope = "anywhere"
+        app.entry_swap_with = None
+        app.entry_restore_back = True
+        app.entry_force = False
+        app.entry_per_shift = list(dlg.result[5])
+        app._sync_entry_label()
+        app.recompute()
+        self.assertEqual(app.entry_detail.cget("text"), "（按班次）")   # 工具栏只留短标记
+        summary = app._entry_summary()
+        self.assertIn("按班次覆盖", summary)
+        self.assertIn("3不用", summary)            # 明细在状态栏：第 3 班不用
+        self.assertIn("1巫恋", summary)
+        self.assertIn("最累的", summary)          # 全局口径：任意位置 + 不点名 = 自动挑
+        # 收尾：恢复默认，别把状态留给其它用例
+        app.entry_events.set(False)
+        app.entry_per_shift = []
+        app.entry_scope = "dorm"
+        app.initial_moods.clear()
+        app.recompute()
+
     def test_时间滑块两侧按钮与步长提示(self):
         """滑块两侧改成纯箭头（原来写 "◀ 15min" 容易被误读成"15 分钟前/时长"），
         步长与快捷键改用右侧一句人话提示。"""

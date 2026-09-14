@@ -283,15 +283,20 @@ class EntryEventDialog(tk.Toplevel):
     TITLE = "结算进驻事件（M15a 患难之交）"
     # 「交换对象」里的自动选项（对应引擎的 swap_with="any"）
     AUTO = "全基建最累的那位（自动）"
+    INHERIT = "（跟随上面的默认）"          # 按班次：不覆盖
+    DEFAULT_TARGET = "前一位进驻（默认口径）"  # 按班次：明确用默认口径
 
     def __init__(self, parent, enabled: bool, swap_with, candidates: Sequence[str],
                  current_holders: Sequence[str] = (), scope: str = "dorm",
-                 restore_back: bool = True, force: bool = False):
+                 restore_back: bool = True, force: bool = False,
+                 shift_labels: Sequence[str] = (), per_shift: Sequence = ()):
         super().__init__(parent, bg=theme.BG)
         self.title("进驻事件设置（换心情）")
         self.resizable(False, False)
-        self.result = None                     # (enabled, swap_with, scope, restore_back, force)
+        self.result = None      # (enabled, swap_with, scope, restore_back, force, per_shift)
         self._candidates = list(candidates)
+        self._shift_labels = list(shift_labels)
+        self._per_shift_in = list(per_shift)
 
         pad = dict(padx=theme.PAD)
         tk.Label(self, text="进驻事件 = 干员【进驻那一刻】的一次性心情跳变，不是每小时速率。",
@@ -385,6 +390,50 @@ class EntryEventDialog(tk.Toplevel):
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
                                                                 pady=(0, 6))
 
+        # ⑤ 按班次（覆盖上面的默认）
+        box5 = tk.LabelFrame(self, text="⑤ 按班次（不填就跟随上面的默认；3 班排班可逐班不同）",
+                             bg=theme.BG, fg=theme.TEXT,
+                             font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1, relief="groove",
+                             labelanchor="nw")
+        box5.pack(fill="x", **pad, pady=(0, 4))
+        self.shift_rows = []            # [(使用 BooleanVar, 换谁 StringVar, 强制 BooleanVar)]
+        if self._shift_labels:
+            hdr = tk.Frame(box5, bg=theme.BG)
+            hdr.pack(fill="x", padx=theme.GAP, pady=(4, 0))
+            for text, width in (("班次", 22), ("使用", 5), ("换给谁", 20), ("强制", 5)):
+                tk.Label(hdr, text=text, bg=theme.BG, fg=theme.MUTED, width=width, anchor="w",
+                         font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+            values = [self.INHERIT, self.DEFAULT_TARGET, self.AUTO] + self._candidates
+            for i, label in enumerate(self._shift_labels):
+                row = tk.Frame(box5, bg=theme.BG)
+                row.pack(fill="x", padx=theme.GAP, pady=(2, 0))
+                tk.Label(row, text=f"{i + 1}. {label}", bg=theme.BG, fg=theme.TEXT, width=22,
+                         anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+                use = tk.BooleanVar(value=True)
+                tk.Checkbutton(row, text="", variable=use, bg=theme.BG,
+                               activebackground=theme.BG, highlightthickness=0).pack(
+                    side="left", padx=(6, 0))
+                who = tk.StringVar(value=self.INHERIT)
+                ttk.Combobox(row, textvariable=who, state="readonly", values=values,
+                             width=18).pack(side="left", padx=(6, 6))
+                strong = tk.BooleanVar(value=False)
+                tk.Checkbutton(row, text="", variable=strong, bg=theme.BG,
+                               activebackground=theme.BG, highlightthickness=0).pack(side="left")
+                self.shift_rows.append((use, who, strong))
+            tk.Label(box5,
+                     text="使用＝这个班要不要换；换给谁＝这一班的交换对象；"
+                          "强制＝这一班到点没满就等她回满再换。\n"
+                          "「跟随上面的默认」= 用 ①~④ 的设置；"
+                          "「前一位进驻」= 这一班明确按同宿舍口径（不受①「任意位置」影响）。",
+                     bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=460,
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
+                                                                    pady=(4, 6))
+            self._load_per_shift()
+        else:
+            tk.Label(box5, text="（还没有导入排班，导入后可以逐班设置）", bg=theme.BG,
+                     fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
+                     ).pack(anchor="w", padx=theme.GAP, pady=6)
+
         btns = tk.Frame(self, bg=theme.BG)
         btns.pack(fill="x", **pad, pady=(theme.GAP, theme.PAD))
         ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
@@ -393,6 +442,51 @@ class EntryEventDialog(tk.Toplevel):
         self.bind("<Escape>", lambda _e: self.destroy())
         self._sync()
         _modal(self, parent)
+
+    # ------------------------------------------------------------------ 按班次
+    def _load_per_shift(self) -> None:
+        """把已有的按班次配置填进表格（`EntryShiftOverride` → 三个控件）。"""
+        for i, (use, who, strong) in enumerate(self.shift_rows):
+            ov = next((o for o in self._per_shift_in if o.matches(i, self._shift_labels[i])), None)
+            if ov is None:
+                continue
+            if ov.enabled is not None:
+                use.set(bool(ov.enabled))
+            if ov.swap_with is not None:
+                if ov.swap_with == "":
+                    who.set(self.DEFAULT_TARGET)
+                elif ov.swap_with in ("any", "auto", "anyone", "任意", "最累", "谁都可以"):
+                    who.set(self.AUTO)
+                else:
+                    who.set(ov.swap_with)
+            if ov.force is not None:
+                strong.set(bool(ov.force))
+
+    def _collect_per_shift(self) -> list:
+        """把表格收成 `EntryShiftOverride` 列表（只写"改过的"项，其余留给默认）。"""
+        from mood_soc.models import EntryShiftOverride
+
+        out = []
+        for i, (use, who, strong) in enumerate(self.shift_rows):
+            target = who.get()
+            swap_with = None
+            scope = None
+            if target == self.DEFAULT_TARGET:
+                # 「前一位进驻」这一班就明确用同宿舍口径（否则 scope=anywhere 下会被读成"自动挑"）
+                swap_with = ""
+                scope = "dorm"
+            elif target == self.AUTO:
+                swap_with = "any"
+            elif target != self.INHERIT:
+                swap_with = target
+            use_on = bool(use.get())
+            force_on = bool(strong.get())
+            # 全都跟随默认（使用=是、对象=跟随、强制=否）→ 不生成覆盖项
+            if use_on and swap_with is None and not force_on:
+                continue
+            out.append(EntryShiftOverride(key=i + 1, enabled=use_on, swap_with=swap_with,
+                                          scope=scope, force=force_on))
+        return out
 
     def _sync(self) -> None:
         """按"范围"联动可选对象：仅同宿舍时才有「前一位进驻」；关掉总开关则全部置灰。"""
@@ -425,7 +519,7 @@ class EntryEventDialog(tk.Toplevel):
             elif mode == "auto":
                 swap_with = "any"
             # mode == "default" → None（引擎默认「前一位进驻」）
-        self.result = (enabled, swap_with, scope, restore_back, force)
+        self.result = (enabled, swap_with, scope, restore_back, force, self._collect_per_shift())
         self.destroy()
 
 
@@ -436,9 +530,11 @@ def messagebox_showinfo_safe(parent, text: str) -> None:
 
 def ask_entry_event(parent, enabled: bool, swap_with, candidates: Sequence[str],
                     current_holders: Sequence[str] = (), scope: str = "dorm",
-                    restore_back: bool = True, force: bool = False):
-    """返回 `(enabled, swap_with, scope, restore_back, force)`；取消返回 None。"""
+                    restore_back: bool = True, force: bool = False,
+                    shift_labels: Sequence[str] = (), per_shift: Sequence = ()):
+    """返回 `(enabled, swap_with, scope, restore_back, force, per_shift)`；取消返回 None。"""
     dlg = EntryEventDialog(parent, enabled, swap_with, candidates, current_holders,
-                           scope=scope, restore_back=restore_back, force=force)
+                           scope=scope, restore_back=restore_back, force=force,
+                           shift_labels=shift_labels, per_shift=per_shift)
     parent.wait_window(dlg)
     return dlg.result
