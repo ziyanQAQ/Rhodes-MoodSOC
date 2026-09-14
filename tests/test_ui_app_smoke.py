@@ -340,7 +340,7 @@ class Test新增交互(unittest.TestCase):
 
     # ------------------------------------------------------- 进驻事件（换心情）
     def test_进驻事件开关有说明且状态可见(self):
-        """开关旁的旁注要说清"换不换/换谁"（小白不打开对话框也能知道）。"""
+        """开关旁的旁注要说清"换不换/换谁/在哪换/要不要等"（小白不打开对话框也能知道）。"""
         from ui import app as app_mod
         app = self.app
         app.entry_events.set(False)
@@ -348,12 +348,27 @@ class Test新增交互(unittest.TestCase):
         self.assertIn("不结算", app.entry_detail.cget("text"))
         app.entry_events.set(True)
         app.entry_swap_with = None
+        app.entry_scope = "dorm"
+        app.entry_force = False
+        app.entry_restore_back = True
         app._sync_entry_label()
         self.assertIn("前一位", app.entry_detail.cget("text"))
-        app._sync_entry_label()
         app.entry_swap_with = "塞雷娅"
         app._sync_entry_label()
         self.assertIn("塞雷娅", app.entry_detail.cget("text"))
+        # 任意位置 + 自动挑 + 等她满 + 位置也换 → 旁注用紧凑写法带出这几项
+        app.entry_swap_with = "any"
+        app.entry_scope = "anywhere"
+        app.entry_force = True
+        app.entry_restore_back = False
+        app._sync_entry_label()
+        text = app.entry_detail.cget("text")
+        for token in ("最累的", "任意位置", "等她满", "位置也换"):
+            self.assertIn(token, text)
+        # 状态栏那一句话也要说全
+        summary = app._entry_summary()
+        for token in ("全基建最累的那位", "基建任意位置", "位置也对调", "等她回满"):
+            self.assertIn(token, summary)
 
     def test_进驻事件换心情端到端(self):
         """设定「菲亚梅塔 24 / 塞雷娅 6」后：开启并指定对象 → 真的互换。"""
@@ -374,14 +389,17 @@ class Test新增交互(unittest.TestCase):
         self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("24"))
         self.assertEqual(app.traj.mood_at("塞雷娅", 0), Decimal("6"))
 
-        # ② 开启 + 指定「塞雷娅」→ 互换
+        # ② 开启 + 指定「塞雷娅」（仅同宿舍）→ 互换
         try:
-            app_mod.ask_entry_event = lambda *a, **k: (True, "塞雷娅")
+            app_mod.ask_entry_event = lambda *a, **k: (True, "塞雷娅", "dorm", True, False)
             app.edit_entry_events()
         finally:
             app_mod.ask_entry_event = orig_dlg
         self.assertTrue(app.entry_events.get())
         self.assertEqual(app.entry_swap_with, "塞雷娅")
+        self.assertEqual(app.entry_scope, "dorm")
+        self.assertTrue(app.entry_restore_back)
+        self.assertFalse(app.entry_force)
         self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("6"))
         self.assertEqual(app.traj.mood_at("塞雷娅", 0), Decimal("24"))
         self.assertTrue([m for m in app.traj.marks if m.kind == "entry"])
@@ -391,6 +409,37 @@ class Test新增交互(unittest.TestCase):
         app.initial_moods.clear()
         app.recompute()
         self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("24"))
+
+    def test_进驻事件任意位置与自动挑(self):
+        """UI 也能走"基建任意位置 + 自动挑最累的 + 等她满 + 位置也换"这条组合。"""
+        from ui import app as app_mod
+        app = self.app
+        preset = {"菲亚梅塔": Decimal("24"), "巫恋": Decimal("1")}
+        orig_mood, orig_dlg = app_mod.ask_mood, app_mod.ask_entry_event
+        try:
+            app_mod.ask_mood = lambda parent, who, cur, note="": preset.get(who)
+            for who in preset:
+                app._ask_and_set_mood(who)
+            app_mod.ask_entry_event = lambda *a, **k: (True, "any", "anywhere", False, True)
+            app.edit_entry_events()
+        finally:
+            app_mod.ask_mood, app_mod.ask_entry_event = orig_mood, orig_dlg
+        self.assertEqual(app.entry_swap_with, "any")
+        self.assertEqual(app.entry_scope, "anywhere")
+        self.assertFalse(app.entry_restore_back)
+        self.assertTrue(app.entry_force)
+        events = [m for m in app.traj.marks if m.kind == "entry"]
+        self.assertTrue(events, "应当发生了一次换心情")
+        self.assertTrue(any("自动挑" in m.label for m in events))
+        self.assertTrue(any("位置也对调" in m.label for m in events))
+        # 收尾：恢复默认，别把状态留给其它用例
+        app.entry_events.set(False)
+        app.entry_scope = "dorm"
+        app.entry_restore_back = True
+        app.entry_force = False
+        app.entry_swap_with = None
+        app.initial_moods.clear()
+        app.recompute()
 
     def test_指定对象不在同宿舍时给出提示(self):
         """示例排班里「塞雷娅」只在部分班次与菲亚梅塔同宿舍 → 其余班次记"未执行"事件。"""

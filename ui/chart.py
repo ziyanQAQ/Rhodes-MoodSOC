@@ -149,6 +149,15 @@ class MoodChart(tk.Canvas):
                              text=f"{label} {theme.fmt_mood(value)}", anchor="w",
                              fill=color, font=(theme.FONT_FAMILY, theme.FS_SMALL))
 
+        # —— 进驻事件（换心情）时刻：一条短竖线 + ⇄ 标记 ——
+        for mark in traj.marks:
+            if mark.kind != "entry" or "未执行" in mark.label:
+                continue
+            x = self._tx(mark.t, x0, x1, total)
+            self.create_line(x, y0, x, y0 + 12, fill=theme.ACCENT, width=2)
+            self.create_text(x, y0 - 4, text="⇄", fill=theme.ACCENT,
+                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
+
         self._draw_cursor()
 
     def _time_step(self, total: Decimal) -> Decimal:

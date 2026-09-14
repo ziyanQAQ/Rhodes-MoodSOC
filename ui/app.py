@@ -62,7 +62,10 @@ class MoodSocApp(tk.Tk):
         self.initial_moods: dict = {}          # 手动设过的心情（覆盖布局里的值）
         self.cycles = 1
         self.entry_events = tk.BooleanVar(value=False)
-        self.entry_swap_with: Optional[str] = None     # None = 引擎默认「前一位进驻」
+        self.entry_swap_with: Optional[str] = None     # None = 默认「前一位进驻」；"any" = 自动挑最累的
+        self.entry_scope = "dorm"                      # "dorm" 仅同宿舍 / "anywhere" 基建任意位置
+        self.entry_restore_back = True                 # True = 换回去（只换心情、位置不变）
+        self.entry_force = False                       # True = 到点没满就等她回满再换
         self.play_speed = Decimal("1")
         self.current_t = Decimal("0")
         self.curve_operator = ""
@@ -258,6 +261,9 @@ class MoodSocApp(tk.Tk):
         cfg = sch.entry_config()
         self.entry_events.set(bool(cfg.enabled))
         self.entry_swap_with = cfg.swap_with
+        self.entry_scope = getattr(cfg, "scope", "dorm")
+        self.entry_restore_back = bool(getattr(cfg, "restore_back", True))
+        self.entry_force = bool(getattr(cfg, "force", False))
         self._sync_entry_label()
         self._build_shift_buttons()
         self._sync_operator_box()
@@ -287,7 +293,10 @@ class MoodSocApp(tk.Tk):
         self.traj = simulate_schedule(self.schedule, cycles=self.cycles,
                                       initial_moods=self.initial_moods,
                                       entry_events=self.entry_events.get(),
-                                      entry_swap_with=self.entry_swap_with)
+                                      entry_swap_with=self.entry_swap_with,
+                                      entry_scope=self.entry_scope,
+                                      entry_restore_back=self.entry_restore_back,
+                                      entry_force=self.entry_force)
         total = self._total_hours()
         if fit_slider or self.current_t > total:
             self.current_t = Decimal("0")
@@ -500,7 +509,8 @@ class MoodSocApp(tk.Tk):
         """返回 `(触发者名单, 可交换对象名单)`。
 
         触发者 = 排班里可能触发 M15a 的干员（如菲亚梅塔）；
-        可交换对象 = 与触发者**同宿舍**的其他干员（跨班次取并集，保序去重）。
+        可交换对象 = **同宿舍的其他干员排前面**，后面跟上排班里的其他干员
+        （因为"基建任意位置"模式下任何位置的干员都能换）。
         """
         holders: list = []
         mates: list = []
@@ -519,39 +529,75 @@ class MoodSocApp(tk.Tk):
                 for n in names:
                     if n not in holders and n not in mates:
                         mates.append(n)
-        return holders, mates
+        # 再补上"其它位置的干员"（任意位置模式用得上）
+        others = [n for n in self.schedule.operator_names()
+                  if n not in holders and n not in mates]
+        return holders, mates + others
 
     def _sync_entry_label(self):
-        """把当前设置写在开关旁边（不打开对话框也能知道"换不换/换谁"）。
+        """把当前设置写在开关旁边（极简；完整说明在「这是什么／换谁…」对话框里）。
 
-        工具栏宽度紧张，所以这里只写极简状态；完整说明在「这是什么／换谁…」对话框里。
+        工具栏宽度紧张，所以用紧凑写法：`（最累的·任意位置·等她满）`。
         """
         if not self.entry_events.get():
             self.entry_detail.configure(text="（不结算）")
+            return
+        if self.entry_swap_with == "any":
+            target = "最累的"
         elif self.entry_swap_with:
-            self.entry_detail.configure(text=f"（与「{self.entry_swap_with}」互换）")
+            target = f"「{self.entry_swap_with}」"
         else:
-            self.entry_detail.configure(text="（与前一位互换）")
+            target = "前一位"
+        bits = []
+        if self.entry_scope == "anywhere":
+            bits.append("任意位置")
+        if not self.entry_restore_back:
+            bits.append("位置也换")
+        if self.entry_force:
+            bits.append("等她满")
+        suffix = "·" + "·".join(bits) if bits else ""
+        self.entry_detail.configure(text=f"（{target}{suffix}）")
+
+    def _entry_summary(self) -> str:
+        """一句话说清当前配置（状态栏用）。"""
+        if not self.entry_events.get():
+            return "进驻事件：不结算（按你写的初始心情开始）"
+        if self.entry_swap_with == "any":
+            who = "全基建最累的那位"
+        elif self.entry_swap_with:
+            who = f"「{self.entry_swap_with}」"
+        else:
+            who = "同宿舍的前一位进驻者"
+        where = "基建任意位置" if self.entry_scope == "anywhere" else "仅同一宿舍"
+        after = "换完后两人都留在原位" if self.entry_restore_back else "换完后位置也对调"
+        when = "；到点没满就等她回满再换" if self.entry_force else ""
+        return f"进驻事件：每班开始时结算——与{who}互换心情（{where}，{after}）{when}"
 
     def edit_entry_events(self):
-        """「这是什么／换谁…」：解释这个开关 + 设置换不换、换谁。"""
+        """「这是什么／换谁…」：解释这个开关 + 设置换哪、换谁、换完怎么放、要不要强等。"""
         holders, mates = self._entry_candidates()
         picked = ask_entry_event(self, self.entry_events.get(), self.entry_swap_with,
-                                 mates, holders)
+                                 mates, holders, scope=self.entry_scope,
+                                 restore_back=self.entry_restore_back, force=self.entry_force)
         if picked is None:
             return
-        self.entry_events.set(picked[0])
-        self.entry_swap_with = picked[1]
+        # 对话框返回 5 元组（换不换/换谁/范围/换回去/强等）；只给前两项时其余沿用当前值
+        enabled, swap_with = picked[0], picked[1]
+        scope = picked[2] if len(picked) > 2 else self.entry_scope
+        restore_back = picked[3] if len(picked) > 3 else self.entry_restore_back
+        force = picked[4] if len(picked) > 4 else self.entry_force
+        self.entry_events.set(enabled)
+        self.entry_swap_with = swap_with
+        self.entry_scope = scope
+        self.entry_restore_back = restore_back
+        self.entry_force = force
         self._sync_entry_label()
+        self.recompute()                      # 先重算（recompute 会写状态栏）
         if not holders:
             self.status.configure(text="本排班里没有能触发进驻事件的干员（如菲亚梅塔），"
                                         "这个开关暂时不会有任何效果")
-        elif picked[0]:
-            who = f"与「{picked[1]}」" if picked[1] else "与前一位进驻者"
-            self.status.configure(text=f"进驻事件：每班开始时结算一次——{who}互换心情")
         else:
-            self.status.configure(text="进驻事件：不结算")
-        self.recompute()
+            self.status.configure(text=self._entry_summary())   # 再用配置摘要盖上去
 
     def _facilities_of(self, idx: int):
         return [dict(f, operators=list(f.get("operators", [])))
