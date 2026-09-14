@@ -42,7 +42,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
-from mood_soc import apply_entry_events, build_base_layout, compute_net_rate
+from mood_soc import (apply_entry_events, build_base_layout, compute_net_rate,
+                      entry_event_holders)
 from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import MOOD_MAX, MOOD_MIN
 from mood_soc.maa import read_maa
@@ -384,14 +385,47 @@ class Trajectory:
         return out
 
 
+def rates_in_world(world, names: Sequence[str]) -> Dict[str, Decimal]:
+    """某个布局快照下、各干员的净速率（未进驻者 = 0）。
+
+    与 `compute_rates` 的区别：直接吃一个 `BaseLayout`，用于"模拟期间布局会被改动"
+    的场景（如进驻事件把两人的位置也对调了）。
+    """
+    return {n: (compute_net_rate(world, n) if world.get_operator(n) is not None else ZERO)
+            for n in names}
+
+
 def compute_rates(schedule: Schedule, index: int, moods: Dict[str, Decimal],
                   names: Sequence[str]) -> Dict[str, Decimal]:
     """某班次下、给定心情快照时的净速率（未排班者 = 0）。"""
-    shift = schedule.shifts[index]
-    rates: Dict[str, Decimal] = {}
-    for n in names:
-        rates[n] = compute_net_rate(shift.world, n) if shift.world.get_operator(n) is not None else ZERO
-    return rates
+    return rates_in_world(schedule.shifts[index].world, names)
+
+
+def _sync_moods(world, moods: Dict[str, Decimal]) -> None:
+    """把模拟中的心情写进布局副本（进驻事件要按"当前心情"判断条件）。"""
+    for o in world.all_operators():
+        if o.name in moods:
+            o.mood = moods[o.name]
+
+
+def _read_back_moods(world, moods: Dict[str, Decimal]) -> None:
+    for o in world.all_operators():
+        if o.name in moods:
+            moods[o.name] = o.mood
+
+
+def _record_jump(times, series, names, moods, t) -> None:
+    """记一个**同刻跳变**（进驻事件）：直接改写该时刻的取值，而不是追加同刻节点。
+
+    否则 `mood_at(t)` 会取到跳变前的旧值。
+    """
+    if times[-1] == t:
+        for n in names:
+            series[n][-1] = moods[n]
+    else:
+        times.append(t)
+        for n in names:
+            series[n].append(moods[n])
 
 
 def _next_event(schedule: Schedule, moods: Dict[str, Decimal], rates: Dict[str, Decimal],
@@ -451,19 +485,31 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       initial_moods: Optional[Dict[str, Decimal]] = None,
                       entry_events: bool = False,
                       entry_swap_with: Optional[str] = None,
+                      entry_scope: Optional[str] = None,
+                      entry_restore_back: Optional[bool] = None,
+                      entry_force: Optional[bool] = None,
                       max_segment: Decimal = MAX_SEGMENT_HOURS) -> Trajectory:
     """把排班跑成"整周期心情轨迹"（事件驱动精确积分）。
 
     参数：
         cycles        跑几个周期（心情跨周期连续，用来看是否收敛）
         initial_moods 周期起点的心情；缺省取**第一班布局里写的值**（没有则 24）
-        entry_events  是否在每班开始时结算进驻事件（M15a 患难之交；默认否）
-        entry_swap_with  进驻事件里**与谁**互换心情（None = 用场景 JSON 的 `swap_with`，
-                      再没有就是引擎默认的「前一位进驻」）
+        entry_events  是否结算进驻事件（M15a 患难之交；默认否）
+        entry_swap_with  与**谁**换：人名 / `"any"`（自动挑全基建最累的）/
+                       `None`（用场景 JSON，再没有＝「前一位进驻」）
+        entry_scope      `"dorm"`（限同宿舍）/ `"anywhere"`（**基建任意位置**）；
+                       `None` = 用场景 JSON
+        entry_restore_back  `True` = 只换心情、两人留在原位置（默认）；
+                       `False` = **位置也一起互换**；`None` = 用场景 JSON
+        entry_force      `True` = 到点（每班开始）触发者没满心情时**等她回满那一刻再换**；
+                       `False` = 这次不换；`None` = 用场景 JSON
         max_segment   单段最长时长（兜底安全上限）
 
     数值说明：单段内心情是精确的线性函数；误差只来自 Decimal 除法在 28 位有效数字处的
     舍入（量级 1e-26），界面上按"显示边界"舍入到 2 位小数即可。
+
+    实现说明：每个班次都会**深拷贝一份布局副本**（`worlds`）供模拟使用——
+    这样 `entry_restore_back=False`（位置也互换）只在这次模拟里生效，不会污染排班本身。
     """
     if cycles < 1:
         raise ValueError("cycles 至少为 1")
@@ -473,6 +519,14 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     if initial_moods:
         start_moods.update({k: to_decimal(v) for k, v in initial_moods.items()})
     moods: Dict[str, Decimal] = {n: start_moods.get(n, MOOD_MAX) for n in names}
+
+    cfg = schedule.entry_config()
+    scope = entry_scope if entry_scope is not None else getattr(cfg, "scope", "dorm")
+    restore_back = (entry_restore_back if entry_restore_back is not None
+                    else bool(getattr(cfg, "restore_back", True)))
+    force = entry_force if entry_force is not None else bool(getattr(cfg, "force", False))
+    swap_with = entry_swap_with if entry_swap_with is not None else getattr(cfg, "swap_with", None)
+    worlds = [copy.deepcopy(s.world) for s in schedule.shifts]
 
     times: List[Decimal] = [ZERO]
     series: Dict[str, List[Decimal]] = {n: [moods[n]] for n in names}
@@ -492,38 +546,37 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             t = end
 
     for seg_i, (t0, seg_end, idx) in enumerate(segments):
-        shift = schedule.shifts[idx]
-        # —— 进驻事件（可选）：进入班次那一刻结算一次（会就地改心情） ——
-        # 这是 t0 处的**跳变**：t0 之前是换心情前的值，t0 起是换之后的（把节点就地改写，
-        # 而不是再追加一个同刻节点——否则 mood_at(t0) 会取到跳变前的旧值）。
+        world = worlds[idx]                 # 本班次的**可变副本**（位置互换只发生在副本里）
+        pending: List[str] = []             # "等她回满心情再换"的触发者（entry_force）
+        # —— 进驻事件（可选）：进入班次那一刻先试一次 ——
+        # 这是 t0 处的**跳变**：t0 之前是换心情前的值，t0 起是换之后的（就地改写节点，
+        # 而不是追加同刻节点——否则 mood_at(t0) 会取到跳变前的旧值）。
         if entry_events:
-            w = copy.deepcopy(shift.world)
-            for o in w.all_operators():
-                o.mood = moods.get(o.name, MOOD_MAX)
-            events = apply_entry_events(w, swap_with=entry_swap_with, enabled=True)
-            if events:
-                for ev in events:
-                    marks.append(Mark(t0, "entry", ev.detail))
-                for o in w.all_operators():
-                    if o.name in moods:
-                        moods[o.name] = o.mood
-                if times[-1] == t0:
-                    for n in names:
-                        series[n][-1] = moods[n]
-                else:
-                    times.append(t0)
-                    for n in names:
-                        series[n].append(moods[n])
-        groups = [[o.name for o in f.operators] for f in shift.world.facilities]
+            _sync_moods(world, moods)
+            events = apply_entry_events(world, swap_with=swap_with, enabled=True,
+                                        scope=scope, restore_back=restore_back)
+            # ⚠️ 事件里可能只有"未执行"的说明（如配了 force 但她此刻没满心情）——
+            # 那种情况既不算换成功、也不能拦住"等她回满"的等待逻辑。
+            swapped = [ev for ev in events if ev.group == "entry_swap"]
+            for ev in events:
+                marks.append(Mark(t0, "entry", ev.detail))
+            if swapped:
+                _read_back_moods(world, moods)
+                _record_jump(times, series, names, moods, t0)
+            elif force:
+                # 强制换心情：此刻她不满心情 → 登记，等她回满**那一刻**再换
+                pending = [h for h, _room in entry_event_holders(world)
+                           if moods.get(h, MOOD_MAX) < MOOD_MAX]
+        groups = [[o.name for o in f.operators] for f in world.facilities]
 
         t = t0
         rates = None
         while t < seg_end:
-            # 速率只在"可能变了"时重算：进新班次、发生了事件（跨阈值/两人交叉）、
+            # 速率只在"可能变了"时重算：进新班次、发生了事件（跨阈值/两人交叉/位置互换）、
             # 或走了兜底分支。纯"安全上限推进"时速率必然不变，直接复用（这是主要的提速点：
             # 重算一次全布局约 2.5ms，复用它能把 3 周期的重算从 ~1.9s 压到 ~0.2s）。
             if rates is None:
-                rates = compute_rates(schedule, idx, moods, names)
+                rates = rates_in_world(world, names)
             nxt, snaps = _next_event(schedule, moods, rates, t, seg_end, groups)
             event_fired = bool(snaps) or nxt < seg_end
             if nxt - t > max_segment:          # 兜底上限截断 → 本段没有真事件
@@ -542,7 +595,21 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             times.append(t)
             for n in names:
                 series[n].append(moods[n])
-            if event_fired:
+            # —— entry_force：有人刚回到满心情 → 立刻换 ——
+            # 只尝试一次（pending 清空）：否则"两人都满、换不动"时会每个 tick 反复触发。
+            if pending and any(moods.get(h, ZERO) >= MOOD_MAX for h in pending):
+                pending = []
+                _sync_moods(world, moods)
+                events = apply_entry_events(world, swap_with=swap_with, enabled=True,
+                                            scope=scope, restore_back=restore_back)
+                if events:
+                    for ev in events:
+                        marks.append(Mark(t, "entry", ev.detail))
+                    _read_back_moods(world, moods)
+                    _record_jump(times, series, names, moods, t)
+                rates = None
+                groups = [[o.name for o in f.operators] for f in world.facilities]
+            elif event_fired:
                 rates = None
 
     # 红脸区间记成标记（画图时画阴影）
@@ -586,5 +653,5 @@ __all__ = [
     "Shift", "Schedule", "Trajectory", "Mark",
     "shift_from_facilities", "shifts_from_maa_file", "shifts_from_scenario_file",
     "shift_file_kind", "load_schedule", "simulate_schedule", "compute_rates",
-    "default_initial_moods", "all_operator_names",
+    "rates_in_world", "default_initial_moods", "all_operator_names",
 ]

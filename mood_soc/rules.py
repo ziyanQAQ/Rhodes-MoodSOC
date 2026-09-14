@@ -641,29 +641,91 @@ def _single_recovery(world, op: Operator, facility: Facility, variables=None):
     return value, rep.owner, by_inst.get((rep.owner, base_skill_id(rep.skill_id)))
 
 
-def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None):
+# 自动挑交换对象时认这些写法（＝"全基建最累的那位"）
+ENTRY_AUTO_TARGETS = ("any", "auto", "anyone", "任意", "最累", "谁都可以")
+
+
+def _position_of(world: BaseLayout, op: Operator):
+    """干员在布局里的 (设施, 下标)；不在布局里返回 (None, -1)。"""
+    for f in world.facilities:
+        for i, o in enumerate(f.operators):
+            if o is op:
+                return f, i
+    return None, -1
+
+
+def _swap_positions(world: BaseLayout, a: Operator, b: Operator) -> str:
+    """把两名干员的**位置**互换（就地）。返回人类可读说明（换不了时为空串）。"""
+    fa, ia = _position_of(world, a)
+    fb, ib = _position_of(world, b)
+    if fa is None or fb is None:
+        return ""
+    fa.operators[ia], fb.operators[ib] = fb.operators[ib], fa.operators[ia]
+    return (f"（位置也对调：{a.name} 去 {fb.display_name}，"
+            f"{b.name} 去 {fa.display_name}）")
+
+
+def find_entry_target(world: BaseLayout, holder: Operator, facility: Facility,
+                      swap_with=None, scope: str = "dorm"):
+    """找进驻事件的交换对象 → `(Operator | None, 说明文本)`。
+
+    规则（`scope="anywhere"` 就是"**基建任意位置**都能换"）：
+
+    | 配置 | 结果 |
+    |---|---|
+    | `swap_with` = 人名 | 在 `scope` 允许范围内找那个人（`dorm` 限同宿舍 / `anywhere` 全基建） |
+    | `swap_with` = `any` / `任意` / `最累` | **自动挑全基建心情最低的那位**（并列取先出现的） |
+    | 没给 `swap_with` 且 `scope="anywhere"` | 同上（自动挑最累的） |
+    | 没给 `swap_with` 且 `scope="dorm"` | 默认「**前一位进驻**」（同宿舍里排在触发者之前的那位） |
+    """
+    name = (swap_with or "").strip()
+    auto = name.lower() in ENTRY_AUTO_TARGETS or name in ENTRY_AUTO_TARGETS
+    if not name and scope != "anywhere":
+        idx = facility.operators.index(holder)
+        if idx == 0:
+            return None, "（同一宿舍里没有「前一位进驻」的干员）"
+        return facility.operators[idx - 1], ""
+    if auto or not name:          # 自动挑：显式 any / 或"任意位置但没点名"
+        pool = [o for o in world.all_operators() if o is not holder]
+        if not pool:
+            return None, "（基建里没有别的干员可以换）"
+        best = min(pool, key=lambda o: o.mood)
+        return best, f"（自动挑：全基建心情最低的是 {best.name} {best.mood}）"
+    pool = ([o for o in world.all_operators() if o is not holder]
+            if scope == "anywhere" else [o for o in facility.operators if o is not holder])
+    for o in pool:
+        if o.name == name:
+            return o, ""
+    where = "基建内" if scope == "anywhere" else facility.display_name
+    return None, f"（指定的交换对象「{name}」不在{where}）"
+
+
+def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
+                       scope=None, restore_back=None):
     """**进驻瞬间的一次性结算**（M15a 心情互换），就地修改 `world` 的干员心情。
 
     为什么单独一个入口：这类技能的效果不是「每小时 ±N 点」，而是**进驻那一刻的状态跳变**，
     所以它既不该进 `consume_ledger`/`recovery_ledger`（那不是速率），也不该进时间积分。
     它是**布局初始化**语义，因此做成显式 API，由调用方决定是否应用（`main.py --entry-events`）。
 
-    ⚠️ **会就地修改** `world.operators[].mood`；返回本次结算的事件流水账（`Bucket.EVENT`），
-    供 `--explain` 展示。重复调用是幂等的：互换后触发者不再是满心情，条件不再成立。
+    ⚠️ **会就地修改** `world`（干员心情；`restore_back=False` 时还包括位置）；
+    返回本次结算的事件流水账（`Bucket.EVENT`），供 `--explain` 展示。
+    重复调用是幂等的：互换后触发者不再是满心情，条件不再成立。
 
     已实现：**患难之交**（菲亚梅塔，`dorm_exchangeAp[000]`）
       上游原文：「进驻宿舍时，如果**自身为满心情**，则与当前宿舍**前一位进驻**的干员互换心情」。
-
-    参数（决定"换不换 / 换谁"，两者都可配）：
+      本项目在此之上做了可配置扩展（用户需求）：
 
     | 参数 | 取值 | 优先级 |
     |---|---|---|
-    | `enabled` | `True`/`False` = 强制结算/不结算；`None` = 看 `world.entry_events.enabled` | 显式 > JSON > **默认结算**（"调用这个函数"本身就是"要结算"） |
-    | `swap_with` | 干员名 = 与**同宿舍**的该干员互换；`None` = 用 JSON 里的 `swap_with`；都没有 = 「前一位进驻」 | 显式 > JSON > 默认前一任 |
+    | `enabled` | `True`/`False` 强制结算/不结算；`None` 看 `world.entry_events.enabled` | 显式 > JSON > 默认结算 |
+    | `swap_with` | 人名 / `any`（自动挑最累的）/ `None`（用 JSON，再没有＝「前一位进驻」） | 显式 > JSON > 默认前一任 |
+    | `scope` | `"dorm"`（限同宿舍，游戏原口径）/ `"anywhere"`（**基建任意位置**） | 显式 > JSON > 默认 dorm |
+    | `restore_back` | `True`（默认）= 只换心情、两人都留在原位置；`False` = **位置也一起互换** | 显式 > JSON > 默认 True |
 
-    「前一位进驻」= `Facility.operators` 里排在触发者之前的那一位——
-    布局的 `operators` **本来就是有序列表**（进驻顺序），所以不需要额外的队列结构。
-    若指定的人不在同一宿舍，**不换**，但会记一条 `Bucket.EVENT` 说明原因（界面/`--explain` 能看到）。
+    若指定的对象找不到，**不换**，但会记一条 `Bucket.EVENT`（group=`entry_swap_skipped`）说明原因。
+    `force`（到点不满心情就等她回满再换）是**带时间**的语义，只在 `ui.schedule.simulate_schedule`
+    里生效；本函数是一次性结算，不会等待。
     """
     cfg = getattr(world, "entry_events", None)
     if enabled is None:
@@ -673,43 +735,63 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None):
         return []
     if swap_with is None:
         swap_with = getattr(cfg, "swap_with", None) or None
+    if scope is None:
+        scope = getattr(cfg, "scope", "dorm") or "dorm"
+    if restore_back is None:
+        restore_back = bool(getattr(cfg, "restore_back", True))
 
     events = []
+    force_configured = bool(getattr(cfg, "force", False))
     for facility in world.facilities:
         if facility.ftype != FacilityType.DORMITORY:
-            continue
-        for idx, op in enumerate(facility.operators):
+            continue                       # 触发者必须"进驻宿舍"（技能原文），目标才不限位置
+        for op in facility.operators:
             if not _active(op):
                 continue
             for skill in _template_skills(op, "M15a"):
                 ctx = SkillContext(world, op, op, facility)
                 if skill.condition is not None and not skill.condition(ctx):
-                    continue
-                if swap_with:                      # ① 指定了交换对象
-                    other = next((o for o in facility.operators
-                                  if o is not op and o.name == swap_with), None)
-                    if other is None:
+                    # 配了"强制换心情"却没满心情：一次性结算等不了，给一条解释（别让人以为坏了）
+                    if force_configured and op.mood < MOOD_MAX:
                         events.append(Contribution(
                             Bucket.EVENT, "进驻事件未执行", ZERO, group="entry_swap_skipped",
-                            owner=op.name, target=swap_with, skill_id=skill.id,
-                            skill_name=skill.name, template=skill.template_id,
-                            detail=f"（指定的交换对象「{swap_with}」不在 {facility.display_name} 里）"))
-                        continue
-                else:                              # ② 默认「前一位进驻」
-                    if idx == 0:
-                        continue
-                    other = facility.operators[idx - 1]
+                            owner=op.name, target="", skill_id=skill.id, skill_name=skill.name,
+                            template=skill.template_id,
+                            detail=f"（强制换心情：{op.name} 当前心情 {op.mood}，未满；"
+                                   f"「等到回满再换」要在带时间的排班模拟里才会等待"
+                                   f"（ui.schedule.simulate_schedule），一次性结算不等）"))
+                    continue
+                other, note = find_entry_target(world, op, facility, swap_with, scope)
+                if other is None:
+                    # 只有"点名要换某人 / 自动挑"却没换成时才记一条说明；
+                    # 默认口径（「前一位进驻」而她排第一）属于游戏本来的"没得换"，静默跳过。
+                    if swap_with:
+                        events.append(Contribution(
+                            Bucket.EVENT, "进驻事件未执行", ZERO, group="entry_swap_skipped",
+                            owner=op.name, target=(swap_with or ""), skill_id=skill.id,
+                            skill_name=skill.name, template=skill.template_id, detail=note))
+                    continue
                 if other.mood == op.mood:
                     continue
                 before = (op.mood, other.mood)
                 op.mood, other.mood = before[1], before[0]
-                how = f"指定的 {other.name}" if swap_with else f"「前一位进驻」的 {other.name}"
+                if (swap_with or "").strip().lower() in ENTRY_AUTO_TARGETS \
+                        or (swap_with or "").strip() in ENTRY_AUTO_TARGETS:
+                    how = f"自动挑的 {other.name}"
+                elif swap_with:
+                    how = f"指定的 {other.name}"
+                else:
+                    how = f"「前一位进驻」的 {other.name}"
+                detail = (f"（与{how}互换：{op.name} "
+                          f"{before[0]} → {before[1]}，{other.name} {before[1]} → {before[0]}）")
+                if not restore_back:
+                    detail += _swap_positions(world, op, other) or "（位置对调失败：有人不在布局里）"
+                else:
+                    detail += "（位置不变：被换满的干员留在自己的岗位上）"
                 events.append(Contribution(
                     Bucket.EVENT, "心情互换", ZERO, group="entry_swap",
                     owner=op.name, target=other.name, skill_id=skill.id,
-                    skill_name=skill.name, template=skill.template_id,
-                    detail=f"（与{how}互换：{op.name} "
-                           f"{before[0]} → {before[1]}，{other.name} {before[1]} → {before[0]}）"))
+                    skill_name=skill.name, template=skill.template_id, detail=detail))
     return events
 
 

@@ -12,7 +12,7 @@ import unittest
 from decimal import Decimal
 
 from mood_soc import (INF, apply_entry_events, build_base_layout, evaluate, evaluate_base,
-                       simulate, time_to_mood)
+                       find_entry_target, simulate, time_to_mood)
 from mood_soc.config import (FacilityType, WORK_FACILITIES, facility_max_count,
                              facility_slots)
 from mood_soc.output import base_result_to_dict, mood_result_to_dict
@@ -1125,7 +1125,8 @@ class Test进驻事件M15a(unittest.TestCase):
         return build_base_layout(data)
 
     def _mood_map(self, world):
-        return {o.name: o.mood for o in world.facilities[0].operators}
+        """全基建的 {干员: 心情}（跨设施，别只看第一个房间）。"""
+        return {o.name: o.mood for f in world.facilities for o in f.operators}
 
     def test_json_can_turn_swap_off(self):
         """JSON 写 `"entry_events": false` ⇒ 这个布局不换心情（直接调 API 也不换）。"""
@@ -1189,6 +1190,87 @@ class Test进驻事件M15a(unittest.TestCase):
         self.assertEqual(cfg.swap_with, "乙")
         with self.assertRaises(ValueError):
             build_base_layout({"entry_events": 123, "facilities": []})
+
+    # ---------------------------------------------------------------- 任意位置 / 换回去 / 自动挑
+    def _cross_world(self, entry_events=None):
+        """宿舍里是"甲 10 + 菲亚梅塔 24"（她排在第二位＝有"前一位进驻"），
+        制造站里是"乙 2 + 丙 20"（跨设施）。"""
+        data = {"facilities": [
+            {"type": "宿舍", "level": 5, "operators": [
+                {"name": "甲", "mood": "10"}, {"name": "菲亚梅塔", "mood": "24"}]},
+            {"type": "制造站", "level": 3, "name": "制造站#1", "operators": [
+                {"name": "乙", "mood": "2"}, {"name": "丙", "mood": "20"}]},
+        ]}
+        if entry_events is not None:
+            data["entry_events"] = entry_events
+        return build_base_layout(data)
+
+    def test_scope_anywhere_can_swap_across_facilities(self):
+        """**任意位置**：目标可以是任何设施上的干员；限同宿舍时点名外面的人换不了并给出说明。"""
+        w = self._cross_world({"enabled": True, "scope": "dorm", "swap_with": "乙"})
+        events = apply_entry_events(w)
+        self.assertEqual([e.group for e in events], ["entry_swap_skipped"])
+        self.assertIn("不在", events[0].detail)
+        self.assertEqual(self._mood_map(w)["菲亚梅塔"], Decimal("24"))    # 没换
+
+        w = self._cross_world({"enabled": True, "scope": "anywhere", "swap_with": "乙"})
+        events = apply_entry_events(w)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].target, "乙")
+        self.assertEqual(self._mood_map(w)["菲亚梅塔"], Decimal("2"))     # 接下乙的 2 点
+        self.assertEqual(self._mood_map(w)["乙"], Decimal("24"))          # 乙被换满
+        self.assertIn("位置不变", events[0].detail)                        # 默认"换回去"=不留位置变化
+
+    def test_auto_target_picks_the_most_tired(self):
+        """`swap_with="any"` 自动挑全基建心情最低的那位；`scope=anywhere` 且不点名时同样自动挑。"""
+        w = self._cross_world({"enabled": True, "scope": "anywhere", "swap_with": "any"})
+        events = apply_entry_events(w)
+        self.assertEqual(events[0].target, "乙")                          # 2 点，全基建最低
+        self.assertIn("自动挑", events[0].detail)
+        w2 = self._cross_world({"enabled": True, "scope": "anywhere"})
+        self.assertEqual(apply_entry_events(w2)[0].target, "乙")
+
+    def test_restore_back_false_swaps_positions_too(self):
+        """`restore_back=False` ⇒ 位置也一起互换（她接管对方岗位、对方进她的宿舍位）。"""
+        w = self._cross_world({"enabled": True, "scope": "anywhere", "swap_with": "乙",
+                               "restore_back": False})
+        events = apply_entry_events(w)
+        self.assertIn("位置也对调", events[0].detail)
+        self.assertEqual(w.facility_of("菲亚梅塔").ftype, FacilityType.MANUFACTURING)
+        self.assertEqual(w.facility_of("乙").ftype, FacilityType.DORMITORY)
+        self.assertEqual(self._mood_map(w)["菲亚梅塔"], Decimal("2"))     # 心情同样换了
+        self.assertEqual(self._mood_map(w)["乙"], Decimal("24"))
+        # 默认（不写 restore_back）= 换回去 → 两人都留在自己的位置上
+        w2 = self._cross_world({"enabled": True, "scope": "anywhere", "swap_with": "乙"})
+        apply_entry_events(w2)
+        self.assertEqual(w2.facility_of("菲亚梅塔").ftype, FacilityType.DORMITORY)
+        self.assertEqual(w2.facility_of("乙").ftype, FacilityType.MANUFACTURING)
+
+    def test_entry_config_parses_new_fields(self):
+        """新字段解析：scope / restore_back / force，以及 `anywhere:true` 简写。"""
+        cfg = self._cross_world({"enabled": True, "scope": "anywhere", "restore_back": False,
+                                 "force": True, "swap_with": "any"}).entry_events
+        self.assertEqual(cfg.scope, "anywhere")
+        self.assertFalse(cfg.restore_back)
+        self.assertTrue(cfg.force)
+        self.assertEqual(cfg.swap_with, "any")
+        self.assertTrue(self._cross_world({"anywhere": True}).entry_events.restore_back)  # 默认换回去
+        self.assertEqual(self._cross_world({"anywhere": True}).entry_events.scope, "anywhere")
+        with self.assertRaises(ValueError):
+            self._cross_world({"scope": "月球"})
+
+    def test_find_entry_target_helper(self):
+        """`find_entry_target` 可单独用来"预览会换谁"（界面用它）。"""
+        w = self._cross_world()
+        holder = w.get_operator("菲亚梅塔")
+        dorm = w.facility_of("菲亚梅塔")
+        target, _note = find_entry_target(w, holder, dorm, None, "dorm")
+        self.assertEqual(target.name, "甲")                    # 默认「前一位进驻」
+        target, _note = find_entry_target(w, holder, dorm, "any", "anywhere")
+        self.assertEqual(target.name, "乙")                    # 自动挑最累的
+        target, note = find_entry_target(w, holder, dorm, "不存在的人", "anywhere")
+        self.assertIsNone(target)
+        self.assertIn("不在基建内", note)
 
 
 class Test挂件位(unittest.TestCase):

@@ -262,7 +262,7 @@ class Test编辑接口(MoodAssertMixin, unittest.TestCase):
         self.assertMood(traj.mood_at("菲亚梅塔", 24), "24")         # 独占 2/h：10 → 24（7h 到顶）
 
 
-class Test进驻事件与口径(unittest.TestCase):
+class Test进驻事件与口径(MoodAssertMixin, unittest.TestCase):
     def test_进驻事件开关(self):
         """M15a 患难之交：默认不结算；打开后在班次开始时互换心情。"""
         with tempfile.TemporaryDirectory() as tmp:
@@ -280,6 +280,69 @@ class Test进驻事件与口径(unittest.TestCase):
         self.assertEqual(on.mood_at("路人", 0), D("24"))
         self.assertTrue([m for m in on.marks if m.kind == "entry"])
 
+    def test_任意位置与强制等待(self):
+        """跨设施换心情 + **到点没满就等她回满那一刻再换**（entry_force）。
+
+        场景：菲亚梅塔在宿舍（独占回复 +2/h，从 10 起 → **7h 回满**），
+        制造站里的乙此时正一路掉到 0（红脸）。
+        """
+        def build(force):
+            data = {"entry_events": {"enabled": True, "scope": "anywhere",
+                                     "swap_with": "乙", "force": force},
+                    "facilities": [
+                        {"type": "宿舍", "level": 5, "operators": [
+                            {"name": "甲", "mood": "10"}, {"name": "菲亚梅塔", "mood": "10"}]},
+                        {"type": "制造站", "level": 3, "name": "制造站#1", "operators": [
+                            {"name": "乙", "mood": "2"}, {"name": "丙", "mood": "20"}]},
+                    ]}
+            with tempfile.TemporaryDirectory() as tmp:
+                p = Path(tmp) / "f.json"
+                p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                return load_schedule([p], hours=[D("24")])
+
+        # ① 不强制：她不满心情 → 这一班不换（乙继续红脸）
+        traj = simulate_schedule(build(False), cycles=1, entry_events=True)
+        self.assertEqual([m for m in traj.marks if m.kind == "entry"], [])
+        self.assertMood(traj.mood_at("菲亚梅塔", 24), "24")          # 她照常回满
+        self.assertMood(traj.mood_at("乙", 24), "0")                 # 乙一直是 0
+
+        # ② 强制：她回满的那一刻（t=7）才换
+        traj = simulate_schedule(build(True), cycles=1, entry_events=True)
+        swaps = [m for m in traj.marks if m.kind == "entry" and "互换" in m.label]
+        self.assertEqual(len(swaps), 1)
+        self.assertLessEqual(abs(swaps[0].t - D("7")), D("0.01"))
+        self.assertMood(traj.mood_at("菲亚梅塔", D("7")), "0")        # 接下乙的 0
+        self.assertMood(traj.mood_at("乙", D("7")), "24")            # 乙被换满
+        self.assertLess(traj.mood_at("菲亚梅塔", D("6.9")), D("24"))  # 换之前她还没满
+        # 班次开始时会先留一条"她没满、等她回满再换"的说明（不是静默）
+        self.assertTrue([m for m in traj.marks
+                         if m.kind == "entry" and "强制换心情" in m.label])
+
+    def test_位置也互换时轨迹不同(self):
+        """`restore_back=False`：换完位置也对调 → 她被丢进制造站（开始掉），他回宿舍（保持满）。"""
+        def build(restore_back):
+            data = {"entry_events": {"enabled": True, "scope": "anywhere", "swap_with": "乙",
+                                     "restore_back": restore_back},
+                    "facilities": [
+                        {"type": "宿舍", "level": 5, "operators": [
+                            {"name": "菲亚梅塔", "mood": "24"}, {"name": "甲", "mood": "10"}]},
+                        {"type": "制造站", "level": 3, "name": "制造站#1", "operators": [
+                            {"name": "乙", "mood": "2"}, {"name": "丙", "mood": "20"}]},
+                    ]}
+            with tempfile.TemporaryDirectory() as tmp:
+                p = Path(tmp) / "f.json"
+                p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                return load_schedule([p], hours=[D("24")])
+
+        keep = simulate_schedule(build(True), cycles=1, entry_events=True)
+        swap = simulate_schedule(build(False), cycles=1, entry_events=True)
+        self.assertIn("位置不变", [m.label for m in keep.marks if m.kind == "entry"][0])
+        self.assertIn("位置也对调", [m.label for m in swap.marks if m.kind == "entry"][0])
+        # 换完之后：留在宿舍的她（独占 +2/h）回升；被换到制造站的她一路掉到红脸
+        self.assertGreater(keep.mood_at("菲亚梅塔", D("6")), D("10"))
+        self.assertEqual(swap.mood_at("菲亚梅塔", D("6")), D("0"))
+        self.assertEqual(swap.mood_at("乙", D("6")), D("24"))        # 他在宿舍 → 保持满
+
     def test_阈值集合覆盖已知心情条件(self):
         """事件阈值必须覆盖现有条件函数读的心情值（0/12/18/20/24）。"""
         self.assertEqual(set(EVENT_THRESHOLDS), {D("0"), D("12"), D("18"), D("20"), D("24")})
@@ -296,9 +359,9 @@ class Test进驻事件与口径(unittest.TestCase):
                 {"name": "菲亚梅塔", "mood": "24"}]}]}
             if entry_events is not None:
                 data["entry_events"] = entry_events
-            with _tempfile.TemporaryDirectory() as tmp:
-                p = _Path(tmp) / "d.json"
-                p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            with tempfile.TemporaryDirectory() as tmp:
+                p = Path(tmp) / "d.json"
+                p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
                 return load_schedule([p], hours=[D("24")])
 
         # ① 指定与"甲"互换（参数优先）

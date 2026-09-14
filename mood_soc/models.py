@@ -43,11 +43,12 @@ def build_entry_event_config(raw) -> "EntryEventConfig":
     """把场景 JSON 里的 `entry_events` 解析成 `EntryEventConfig`（宽松解析）。
 
     接受的写法：
-      - `{"enabled": true, "swap_with": "路人"}`（推荐）
+      - `{"enabled": true, "swap_with": "路人", "scope": "anywhere", "restore_back": true, "force": true}`
       - `true` / `false`（只要开关）
-      - `"某人"`（只给交换对象，隐含开启）
+      - `"某人"` / `"any"`（只给交换对象，隐含开启；`any` = 自动挑最累的）
       - `None` / 缺省 → `enabled=None`（未配置：直接调 API 视为要结算）
       - `"swap_with"` 为空串 → 视为"不指定"（等同默认的「前一位进驻」）
+      - `scope` 也可写成 `"anywhere": true/false`（true → `"anywhere"`）
     """
     if raw is None:
         return EntryEventConfig()
@@ -58,9 +59,20 @@ def build_entry_event_config(raw) -> "EntryEventConfig":
     if isinstance(raw, dict):
         target = raw.get("swap_with", raw.get("swapWith"))
         enabled = raw.get("enabled")
+        scope = raw.get("scope")
+        if scope is None and "anywhere" in raw:
+            scope = "anywhere" if raw["anywhere"] else "dorm"
+        scope = str(scope or "dorm").strip().lower()
+        if scope in ("any", "all", "global", "任意", "全部"):
+            scope = "anywhere"
+        if scope not in ("dorm", "anywhere"):
+            raise ValueError(f'entry_events.scope 只能是 "dorm" 或 "anywhere"，收到 {scope!r}')
         return EntryEventConfig(
             enabled=(None if enabled is None else bool(enabled)),
             swap_with=(str(target) if target else None),
+            scope=scope,
+            restore_back=bool(raw.get("restore_back", raw.get("restoreBack", True))),
+            force=bool(raw.get("force", False)),
         )
     raise ValueError(f"entry_events 配置格式无法识别：{raw!r}")
 
@@ -145,11 +157,23 @@ class EntryEventConfig:
       `None` = 没配置（直接调用 `apply_entry_events` 时视为"要结算"）；
       `True` = 默认结算（命令行/界面不用再开开关）；`False` = 这个布局不换心情。
       调用方显式开关（CLI `--entry-events` / 界面勾选）**优先于**它。
-    - `swap_with`：与**谁**互换心情。`None` = 默认的「前一位进驻」（`Facility.operators` 里排在
-      触发者之前的那一位，即进驻顺序的上一人）；给了名字就必须是**同一宿舍**里的另一位。
+    - `swap_with`：与**谁**互换心情。
+      `None` = 默认的「前一位进驻」（`Facility.operators` 里排在触发者之前的那一位，即进驻顺序的上一人）；
+      干员名 = 指定对象；`"any"`/`"任意"`/`"最累"` = **自动挑全基建心情最低的那位**。
+    - `scope`：目标范围。`"dorm"`（默认）= 必须在**同一宿舍**；`"anywhere"` = **基建任意位置**
+      （任何设施上的干员都能换）。
+    - `restore_back`：换完心情之后要不要把"**被换满心情的那名干员换回原位**"。
+      `True`（默认）= 两人各自留在自己的位置上，**只交换心情**；
+      `False` = **位置也一起互换**（触发者接管对方岗位，对方进触发者的位置）。
+    - `force`：到该换的时候（每班开始）触发者**不满心情**时怎么办。
+      `False`（默认）= 这次不换；`True` = **等她回满心情的那一刻再换**（强制换）。
+      只有带时间的排班模拟（`ui.schedule.simulate_schedule`）能"等"；一次性 API 不会等待。
     """
     enabled: Optional[bool] = None
     swap_with: Optional[str] = None
+    scope: str = "dorm"
+    restore_back: bool = True
+    force: bool = False
 
 
 @dataclass
