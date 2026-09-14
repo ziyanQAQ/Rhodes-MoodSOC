@@ -1,0 +1,35 @@
+# 变量产出者表 —— 技能之间"中间货币"的产出端
+#
+# 依据（AGENTS.md §11 数据查找策略）：逐条取自上游
+#   Kengxxiao/ArknightsGameData → zh_CN/gamedata/excel/building_data.json → buffs[].description
+# 快照 commit：0ef7f952dfd018392200157a5c79a6511ba69122（客户端 2.7.71）
+#
+# 列：
+#   skill_id      产出技能（本项目用下划线形式，对应上游 buffId 的中括号形式）
+#   clause        分句号
+#   variable      变量名（上游术语表 cc.bd* 的 termName）
+#   value_milli   千分值（20000 = 20 点）
+#   basis         计数基准：flat / dorm_operator / recruit_slot / sui_non_dorm（见 variables.BASIS_DOC）
+#   condition     产出条件：空 / mood_below_12 / mood_above_12（读当前快照心情）
+#   note          出处（干员 + 技能名 + 上游原文摘录）
+#
+# ⚠️ 只列**有心情效果**的三个变量（人间烟火 / 热情值 / 无声共鸣）。
+#    其余 23 种变量（感知信息、思维链环、巫术结晶…）当前只影响产出类技能，
+#    已登记在 resources/skills_registry.txt（template=X09、modeled=no），不在本表。
+#
+skill_id,clause,variable,value_milli,basis,condition,note
+# ---------------- 热情值（mujica 联动） ----------------
+control_mp_bd&trade_000,1,热情值,20000,flat,,若叶睦「演技的怪物」：进驻控制中枢时，热情值+20
+control_meeting_spd&bd_000,1,热情值,10000,flat,,祐天寺若麦「勤学苦练」：热情值+10
+control_hire_spd&bd_000,1,热情值,10000,flat,,八幡海铃「可靠伙伴」：热情值+10
+control_dorm_bd_000,1,热情值,1000,dorm_operator,,三角初华「偶像光环」：宿舍内每有1名干员，热情值+1
+# ---------------- 人间烟火（岁阵营联动） ----------------
+control_mp_cost&bd1_000,1,人间烟火,15000,flat,mood_below_12,夕「不以物喜」：当自身心情处于12以下时，人间烟火+15
+control_costToBD_000,1,人间烟火,15000,flat,mood_above_12,令「山河远阔」：当自身心情大于12时，人间烟火+15
+control_mp_cost&bd_up_000,1,人间烟火,5000,sui_non_dorm,,重岳「知我为我」：每个岁干员进驻在宿舍和活动室以外的设施则人间烟火+5（最多5名）
+hire_spd_bd_n1_n1_200,1,人间烟火,10000,recruit_slot,,桑葚「救援队·灾后普查」：每个招募位（不包含初始招募位）+10点人间烟火
+trade_ord_spd_bd_n2_000,1,人间烟火,1000,dorm_operator,,乌有「愿者上钩」：宿舍内每有1名干员则人间烟火+1
+# ---------------- 无声共鸣（黑键/塑心/深律联动） ----------------
+dorm_bd_num_000,1,无声共鸣,1000,dorm_operator,,塑心「无声共鸣」：该宿舍内每有1名干员，无声共鸣+1
+hire_spd_bd_n1_n1_300,1,无声共鸣,15000,recruit_slot,,深律「心声图绘」：每个招募位（不包含初始招募位）+15点无声共鸣
+trade_ord_spd_bd_n1_000,1,无声共鸣,1000,dorm_operator,,黑键「乐感」：宿舍内每有1名干员则感知信息+1，每1点感知信息转化为1点无声共鸣（净效：每名+1）

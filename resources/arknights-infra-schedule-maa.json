@@ -1,0 +1,628 @@
+{
+  "plans": [
+    {
+      "name": "Shift 1 · 12h",
+      "rooms": {
+        "hire": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "锡人"
+            ]
+          }
+        ],
+        "power": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "承曦格雷伊"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "埃癸斯"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "烛煌"
+            ]
+          }
+        ],
+        "control": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "八幡海铃",
+              "斩业星熊",
+              "明椒",
+              "凯尔希",
+              "阿斯卡纶"
+            ]
+          }
+        ],
+        "meeting": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "虎狼丸",
+              "跃跃"
+            ]
+          }
+        ],
+        "trading": [
+          {
+            "skip": false,
+            "sort": true,
+            "product": "LMD",
+            "autofill": false,
+            "operators": [
+              "伺夜",
+              "但书",
+              "空弦"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Orundum",
+            "autofill": false,
+            "operators": [
+              "贝洛内",
+              "蕾缪安",
+              "能天使"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "LMD",
+            "autofill": false,
+            "operators": [
+              "巫恋",
+              "龙舌兰",
+              "卡夫卡"
+            ]
+          }
+        ],
+        "dormitory": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "菲亚梅塔",
+              "缪尔赛思",
+              "赫默",
+              "伊芙利特",
+              "塞雷娅"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "诗怀雅",
+              "阿米娅",
+              "Mon3tr",
+              "齐尔查克",
+              "德克萨斯"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "拉普兰德",
+              "苍苔",
+              "夜烟",
+              "砾",
+              "格雷伊"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "澄闪",
+              "伊内丝"
+            ]
+          }
+        ],
+        "processing": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "白面鸮"
+            ]
+          }
+        ],
+        "manufacture": [
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Pure Gold",
+            "autofill": false,
+            "operators": [
+              "森蚺",
+              "温蒂",
+              "清流"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Pure Gold",
+            "autofill": false,
+            "operators": [
+              "结城理",
+              "阿罗玛",
+              "娜斯提"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Originium Shard",
+            "autofill": false,
+            "operators": [
+              "水月",
+              "褐果",
+              "炎熔"
+            ]
+          }
+        ]
+      },
+      "drones": {
+        "room": "manufacture",
+        "index": 1,
+        "order": "pre",
+        "enable": true
+      },
+      "Fiammetta": {
+        "order": "pre",
+        "enable": true,
+        "target": "巫恋"
+      },
+      "description": "本班 12 小时；由 ArknightsInfraCalc-v3 生成，可导入 MAA 自定义基建换班。"
+    },
+    {
+      "name": "Shift 2 · 6h",
+      "rooms": {
+        "hire": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "地灵"
+            ]
+          }
+        ],
+        "power": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "承曦格雷伊"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "埃癸斯"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "缪尔赛思"
+            ]
+          }
+        ],
+        "control": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "歌蕾蒂娅",
+              "斩业星熊",
+              "诗怀雅",
+              "寒芒克洛丝",
+              "濯尘芙蓉"
+            ]
+          }
+        ],
+        "meeting": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "跃跃",
+              "梅"
+            ]
+          }
+        ],
+        "trading": [
+          {
+            "skip": false,
+            "sort": true,
+            "product": "LMD",
+            "autofill": false,
+            "operators": [
+              "可露希尔",
+              "德克萨斯",
+              "拉普兰德"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Orundum",
+            "autofill": false,
+            "operators": [
+              "贝洛内",
+              "蕾缪安",
+              "能天使"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "LMD",
+            "autofill": false,
+            "operators": [
+              "巫恋",
+              "龙舌兰",
+              "柏喙"
+            ]
+          }
+        ],
+        "dormitory": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "菲亚梅塔",
+              "八幡海铃",
+              "明椒",
+              "凯尔希",
+              "阿斯卡纶"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "赫默",
+              "伺夜",
+              "但书",
+              "空弦",
+              "卡夫卡"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "伊芙利特",
+              "结城理",
+              "阿罗玛",
+              "娜斯提",
+              "水月"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "塞雷娅",
+              "褐果",
+              "炎熔",
+              "烛煌",
+              "锡人"
+            ]
+          }
+        ],
+        "processing": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "白面鸮"
+            ]
+          }
+        ],
+        "manufacture": [
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Pure Gold",
+            "autofill": false,
+            "operators": [
+              "森蚺",
+              "温蒂",
+              "清流"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Pure Gold",
+            "autofill": false,
+            "operators": [
+              "苍苔",
+              "夜烟",
+              "砾"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Originium Shard",
+            "autofill": false,
+            "operators": [
+              "乌尔比安",
+              "安哲拉",
+              "幽灵鲨"
+            ]
+          }
+        ]
+      },
+      "drones": {
+        "room": "manufacture",
+        "index": 1,
+        "order": "pre",
+        "enable": true
+      },
+      "Fiammetta": {
+        "order": "pre",
+        "enable": true,
+        "target": "龙舌兰"
+      },
+      "description": "本班 6 小时；由 ArknightsInfraCalc-v3 生成，可导入 MAA 自定义基建换班。"
+    },
+    {
+      "name": "Shift 3 · 6h",
+      "rooms": {
+        "hire": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "锡人"
+            ]
+          }
+        ],
+        "power": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "格雷伊"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "澄闪"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "烛煌"
+            ]
+          }
+        ],
+        "control": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "八幡海铃",
+              "明椒",
+              "诗怀雅",
+              "阿米娅",
+              "Mon3tr"
+            ]
+          }
+        ],
+        "meeting": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "虎狼丸",
+              "伊内丝"
+            ]
+          }
+        ],
+        "trading": [
+          {
+            "skip": false,
+            "sort": true,
+            "product": "LMD",
+            "autofill": false,
+            "operators": [
+              "伺夜",
+              "但书",
+              "空弦"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Orundum",
+            "autofill": false,
+            "operators": [
+              "齐尔查克",
+              "德克萨斯",
+              "拉普兰德"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "LMD",
+            "autofill": false,
+            "operators": [
+              "巫恋",
+              "龙舌兰",
+              "卡夫卡"
+            ]
+          }
+        ],
+        "dormitory": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "菲亚梅塔",
+              "缪尔赛思",
+              "赫默",
+              "伊芙利特",
+              "塞雷娅"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "埃癸斯",
+              "歌蕾蒂娅",
+              "斩业星熊",
+              "寒芒克洛丝",
+              "濯尘芙蓉"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "可露希尔",
+              "贝洛内",
+              "蕾缪安",
+              "能天使",
+              "柏喙"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "森蚺",
+              "温蒂",
+              "清流",
+              "乌尔比安",
+              "安哲拉"
+            ]
+          }
+        ],
+        "processing": [
+          {
+            "skip": false,
+            "sort": true,
+            "autofill": false,
+            "operators": [
+              "白面鸮"
+            ]
+          }
+        ],
+        "manufacture": [
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Pure Gold",
+            "autofill": false,
+            "operators": [
+              "苍苔",
+              "夜烟",
+              "砾"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Pure Gold",
+            "autofill": false,
+            "operators": [
+              "结城理",
+              "阿罗玛",
+              "娜斯提"
+            ]
+          },
+          {
+            "skip": false,
+            "sort": true,
+            "product": "Originium Shard",
+            "autofill": false,
+            "operators": [
+              "水月",
+              "褐果",
+              "炎熔"
+            ]
+          }
+        ]
+      },
+      "drones": {
+        "room": "trading",
+        "index": 1,
+        "order": "pre",
+        "enable": true
+      },
+      "Fiammetta": {
+        "order": "pre",
+        "enable": false,
+        "target": ""
+      },
+      "description": "本班 6 小时；由 ArknightsInfraCalc-v3 生成，可导入 MAA 自定义基建换班。"
+    }
+  ],
+  "title": "可露希尔基建终端 · 333",
+  "planTimes": "3班",
+  "description": "由 ArknightsInfraCalc-v3 生成；可导入 MAA 自定义基建换班。"
+}
