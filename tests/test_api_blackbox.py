@@ -11,7 +11,7 @@ from __future__ import annotations
 import unittest
 from decimal import Decimal
 
-from mood_soc import (apply_entry_events, build_base_layout, evaluate, evaluate_base,
+from mood_soc import (INF, apply_entry_events, build_base_layout, evaluate, evaluate_base,
                        simulate, time_to_mood)
 from mood_soc.config import (FacilityType, WORK_FACILITIES, facility_max_count,
                              facility_slots)
@@ -441,7 +441,7 @@ class Test布局模型(unittest.TestCase):
         self.assertIn("路人A", [o.name for o in world.base_operators(include_activity_room=True)])
 
     def test_facility_base_consumption(self):
-        """各设施基础消耗：加工站 0（按次消耗）、训练室 1.0（待确认口径）、活动室 0、宿舍 0。"""
+        """各设施基础消耗：生产设施 1.0；**挂件位（加工站/训练室）0**、活动室 0、宿舍 0。"""
         def consumption(facility_type, name="路人X"):
             world = build_base_layout(scenario(
                 {"type": "控制中枢", "level": 5, "operators": FULL_CC},
@@ -451,11 +451,12 @@ class Test布局模型(unittest.TestCase):
             return compute_consumption(world, world.get_operator(name), fac)
 
         self.assertEqual(consumption("制造站"), Decimal("0.75"))
-        self.assertEqual(consumption("加工站"), Decimal("0"))     # 旧实现错误地给 0.75
+        self.assertEqual(consumption("发电站"), Decimal("0.75"))
+        # 挂件位：加工站与训练室都不计算心情消耗（旧实现错误地给 0.75）
+        self.assertEqual(consumption("加工站"), Decimal("0"))
+        self.assertEqual(consumption("训练室"), Decimal("0"))
         self.assertEqual(consumption("宿舍"), Decimal("0"))
         self.assertEqual(consumption("活动室"), Decimal("0"))
-        # 训练室：基础 1.0 - 中枢满员减免 0.25 = 0.75（口径待确认，见 config 注释）
-        self.assertEqual(consumption("训练室"), Decimal("0.75"))
 
 
 class Test心情流水账(unittest.TestCase):
@@ -1072,63 +1073,63 @@ class Test进驻事件M15a(unittest.TestCase):
         self.assertEqual(evaluate(world, "菲亚梅塔", Decimal("0")).initial_mood, Decimal("6"))
 
 
-class Test训练室(unittest.TestCase):
-    """训练室：设施级基础消耗 1.0/h + 9 条「心情每小时消耗+1」的自身消耗技能。
+class Test挂件位(unittest.TestCase):
+    """加工站 / 训练室是「**挂件位**」——**不计算心情消耗**（用户拍板口径）。
 
-    口径来源（两处独立佐证）：
-      - 需求文档 `心情消耗回复和工休时间.docx` 第 4 段：「干员工作时，在无额外心情加减的情况下，
-        每小时的**基础消耗速率为 1 点心情**」——不区分设施，训练室同样适用；
-      - 上游 `building_data.json` → `buffs`：9 条训练室 buff 原文均为「…时，心情每小时消耗 +1」
-        （`train_cost&profession[140/320/340/350/360/380]`、`train_spd_bd[000]`、
-        `train_spd_doubleProf3[100]`、`train_spd_power_down[000]`）。
-    → 持有这些技能的干员在训练室里净消耗 **2.0/h**，没持有的仍是 **1.0/h**。
+    用户口径原文：
+    > 加工站、训练室的教练位的作用只是用来放挂件干员，即本身并没有什么技能，
+    > 但是只要在基建内（不包含副手及活动室使用者）就可以为其他干员提供效果服务的，
+    > 所以不需要计算这两个的心情消耗。
+
+    即：这两个位置放的是**挂件**——挂件本身没有与所在设施相关的心情技能，
+    被放进来的唯一目的是「**人在基建内**」，好让别人的计数类技能数到它。
+    挂件不需要休息，所以给它们算心情消耗没有意义。
+
+    推论：那 9 条写「进驻训练室协助位时，心情每小时消耗 +1」的训练室技能**不生效**
+    （已从 `resources/moods_skills.txt` 撤出，台账保留登记与原因）。
+    与 docx 第 4 段「工作时基础消耗 1 点/时」不冲突——那说的是常规生产设施的上岗消耗。
     """
 
     @staticmethod
-    def _train(members):
+    def _fac(ftype, members):
         return build_base_layout(scenario(
-            {"type": "训练室", "level": 3,
+            {"type": ftype, "level": 3,
              "operators": [{"name": m} if isinstance(m, str) else m for m in members]}))
 
-    def test_base_consumption_only(self):
-        """没持有该类技能 → 只有 1.0/h 的设施基础消耗。"""
-        world = self._train(["路人"])
-        self.assertEqual(mood_ledger(world, "路人").total(Bucket.CONSUME), Decimal("1"))
+    def test_no_mood_consumption(self):
+        """挂件位不消耗心情：训练室 / 加工站都是 0/h（对照：制造站 1.0/h）。"""
+        for ftype in ("训练室", "加工站"):
+            world = self._fac(ftype, ["路人"])
+            self.assertEqual(mood_ledger(world, "路人").total(Bucket.CONSUME), Decimal("0"), ftype)
+        self.assertEqual(
+            mood_ledger(self._fac("制造站", ["路人"]), "路人").total(Bucket.CONSUME), Decimal("1"))
 
-    def test_self_consume_plus_one(self):
-        """W「索然无味」= 设施 1.0 + 自身 +1.0 = 2.0/h；同设施路人不受影响。"""
-        world = self._train(["W", "路人"])
-        self.assertEqual(mood_ledger(world, "W").total(Bucket.CONSUME), Decimal("2"))
-        self.assertEqual(mood_ledger(world, "路人").total(Bucket.CONSUME), Decimal("1"))
+    def test_training_skills_take_no_effect(self):
+        """9 条「心情每小时消耗+1」不再生效：W「索然无味」在训练室也是 0/h。"""
+        world = self._fac("训练室", ["W", "余", "雷狼龙S空爆", "乌尔比安"])
+        for who in ("W", "余", "雷狼龙S空爆", "乌尔比安"):
+            self.assertEqual(mood_ledger(world, who).total(Bucket.CONSUME), Decimal("0"), who)
 
-    def test_net_rate_and_work_hours(self):
-        """净速率 2.0/h → 一管 24 点心情只能连续协助 12h。"""
-        world = self._train(["W"])
-        self.assertEqual(compute_net_rate(world, "W"), Decimal("2"))
-        self.assertEqual(remaining_work_hours(world, "W"), Decimal("12"))
+    def test_pendant_never_red_faces(self):
+        """挂件的心情不下降 → 永不红脸 → 技能持续生效（净速率 0、可工作无限久）。"""
+        world = self._fac("训练室", [{"name": "路人", "mood": 3}])
+        self.assertEqual(compute_net_rate(world, "路人"), Decimal("0"))
+        self.assertEqual(remaining_work_hours(world, "路人"), INF)
 
-    def test_elite_gate(self):
-        """「索然无味」是精英 2 解锁：未精英化时只有基础 1.0/h。"""
-        world = self._train([{"name": "W", "elite": 1}])
-        self.assertEqual(mood_ledger(world, "W").total(Bucket.CONSUME), Decimal("1"))
-
-    def test_beta_replaces_alpha(self):
-        """雷狼龙S空爆：「兴之所至·α」无心情副作用，精英 2 的 β 才 +1。"""
-        alpha = self._train([{"name": "雷狼龙S空爆", "elite": 0}])
-        beta = self._train([{"name": "雷狼龙S空爆", "elite": 2}])
-        self.assertEqual(mood_ledger(alpha, "雷狼龙S空爆").total(Bucket.CONSUME), Decimal("1"))
-        self.assertEqual(mood_ledger(beta, "雷狼龙S空爆").total(Bucket.CONSUME), Decimal("2"))
-
-    def test_variable_skill_still_costs(self):
-        """余「与人乐」：心情 +1 是无条件的（人间烟火只影响训练速度，不影响心情）。"""
-        world = self._train(["余"])
-        self.assertEqual(mood_ledger(world, "余").total(Bucket.CONSUME), Decimal("2"))
-
-    def test_workshop_has_no_hourly_base(self):
-        """对照：加工站是**按配方**消耗心情，没有每小时基础消耗（`base_consumption = 0`）。"""
+    def test_pendant_is_counted_base_wide(self):
+        """挂件的作用是「人在基建内」：训练室/加工站的人**算**进基建计数，
+        而副手与活动室使用者**不算**（上游：基建内，不包含副手及活动室使用者）。"""
         world = build_base_layout(scenario(
-            {"type": "加工站", "level": 3, "operators": ["路人"]}))
-        self.assertEqual(mood_ledger(world, "路人").total(Bucket.CONSUME), Decimal("0"))
+            {"type": "训练室", "level": 3, "operators": ["挂在训练室"]},
+            {"type": "加工站", "level": 3, "operators": ["挂在加工站"]},
+            {"type": "制造站", "level": 3, "operators": ["泡泡"], "deputies": ["火神"]},
+            {"type": "活动室", "level": 1, "operators": ["在活动室"]},
+        ))
+        names = [o.name for o in world.base_operators()]
+        self.assertIn("挂在训练室", names)
+        self.assertIn("挂在加工站", names)
+        self.assertNotIn("火神", names)          # 副手
+        self.assertNotIn("在活动室", names)      # 活动室使用者
 
 
 if __name__ == "__main__":

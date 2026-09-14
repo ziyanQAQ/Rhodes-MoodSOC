@@ -70,8 +70,14 @@ strip_tags = lambda s: STRIP_TAGS.sub("", s or "")
 norm_id = lambda b: b.replace("[", "_").replace("]", "")
 
 # 已建模的设施（本轮纳入每小时心情模型的房间）
-MODELED_ROOMS = {"CONTROL", "DORMITORY", "POWER", "MANUFACTURE", "TRADING", "HIRE",
-                 "MEETING", "TRAINING"}
+MODELED_ROOMS = {"CONTROL", "DORMITORY", "POWER", "MANUFACTURE", "TRADING", "HIRE", "MEETING"}
+
+# 这些房间**不进每小时心情模型**，但台账里要写清**原因**（而不是笼统的"设施未建模"）。
+NO_HOURLY_MOOD_REASON = {
+    "TRAINING": "挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）",
+    "WORKSHOP": "挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段",
+    "PRIVATE": "活动室不纳入基建心情模型（上游：不视作入住在基建内）",
+}
 
 # ---------------------------------------------------------------------------
 # 口径修正：用户已拍板的判定，作用在**源数据**上（可复现、可审计）
@@ -297,6 +303,8 @@ def build_registry(buffs: dict, owners: dict, modeled_ids: dict[str, str]) -> li
             tpl, tier = classify_buff(desc, room)
             if tpl == "M17":
                 note = "元修正技能（改他人的恢复效果），需专门机制，登记不建模"
+            elif room in NO_HOURLY_MOOD_REASON:
+                note = NO_HOURLY_MOOD_REASON[room]
             elif tier == "A1" and room not in MODELED_ROOMS:
                 note = f"{room} 未纳入每小时模型（设施未建模）"
             elif tier == "A1":

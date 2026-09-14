@@ -168,7 +168,7 @@ def consume_ledger(world: BaseLayout, op: Operator, facility: Facility,
     """构建**消耗侧**流水账。
 
     组成（与文档一致）：
-      基础消耗 base_consumption(设施类型)   ← 加工站 0（按次消耗）、训练室见 config
+      基础消耗 base_consumption(设施类型)   ← 加工站/训练室是「挂件位」= 0（见 config）
       - 设施基础减免 X（制造 / 贸易，按进驻人数）
       - 控制中枢全局减免（满员 0.25）
       ± 干员自身技能（self_consume）

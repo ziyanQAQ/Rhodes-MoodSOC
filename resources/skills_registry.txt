@@ -541,216 +541,216 @@ trade_ord_wt&cost[004],千金的眼光,TRADING,A1,M07a,yes,clause 级已建模�
 trade_ord_wt&cost[010],裁缝·β,TRADING,A1,M07a,yes,clause 级已建模；持有 2 人
 trade_ord_wt&cost[011],手工艺品·β,TRADING,A1,M07a,yes,clause 级已建模；持有 1 人
 trade_ord_wt&cost[012],鉴定师的手段,TRADING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_cost&profession[140],工作狂,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_cost&profession[320],过量训练,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_cost&profession[340],索然无味,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_cost&profession[350],何须解脱,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_cost&profession[360],变异,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_cost&profession[380],斗争渴望,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_spd&level[000],苦心孤诣,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[010],先锋专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[020],近卫专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[030],重装专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[040],狙击专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[050],术师专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[052],术师专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[060],辅助专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[080],特种专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[110],战术研习,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[111],先锋专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[112],先驱者共识,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[120],信影流,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[130],极地生存,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[150],一知半解,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[180],陷阱对焦,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[220],苦行,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[230],阵地经验,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[240],拂弦,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[250],博览群书,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[270],护理专精,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[320],尽心尽力,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[321],近卫专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[322],勇气传承,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[440],以身作则,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[620],实战指导,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[630],最终调试,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[640],伺机而动,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[650],死焰指引,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[660],同化,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession2[680],阿戈尔战术,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[130],重装专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[131],实战技巧：驭法铁卫,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[140],实战技巧：速射,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[150],近卫专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[151],实战技巧：斗士,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[160],近卫专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[161],实战技巧：领主,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[170],实战技巧：攻城手,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[180],医疗专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[181],实战技巧：行医,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[182],医疗专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[183],实战技巧：链愈师,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[184],医疗专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[190],辅助专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession3[191],实战技巧：游击手,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[010],先锋专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[011],先锋专精·β,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[020],近卫专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[021],近卫专精·β,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[030],重装专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[031],重装专精·β,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[040],狙击专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[041],狙击专精·β,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[050],术师专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[051],术师专精·β,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[060],辅助专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[061],辅助专精·β,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[070],医疗专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[071],医疗专精·β,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[080],特种专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[081],特种专精·β,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[1020],近卫专精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[1081],特种专精·β,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[110],入世,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[120],剑术记忆,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[130],般若,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[140],黑矢,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[150],尽在掌握,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[160],共鸣,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[170],精准手术,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd&profession[180],假面魅影,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd[0000],教官,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd[000],教官,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd[001],学无不精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd[002],学无不精·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_bd&reduceTime[000],思而后行,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_bd[000],与人乐,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_spd_doubleProf2[000],破斩桎梏,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf2[001],沉默为剑,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf3[000],兴之所至·α,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf3[100],兴之所至·β,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_spd_doubleProf3[999],合理兼职,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf[000],剑与手炮,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf[100],红龙之血,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf[110],红龙之血,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf[200],女妖之力,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf[201],“问题应当准确”,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf[300],恣意英杰,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf[301],“我不懂啊”,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_doubleProf[310],“触类旁通”,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_power[000],雪祀候补,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_power_down[000],“手段应当有效”,TRAINING,A1,M07a,yes,clause 级已建模；持有 1 人
-train_spd_reduceTime[000],精神锻炼,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_reduceTime[001],言语之义,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_tag[000],骑士训练,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_tag[010],崇高准则,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_tag[020],战术指导·防守,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_tag[030],战术指导·进攻,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_tag[040],叙拉古狂欢,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_tag[1020],战术指导·防守,TRAINING,A4,X06,no,非心情，登记不建模
-train_spd_tag[1030],战术指导·进攻,TRAINING,A4,X06,no,非心情，登记不建模
-workshop_formula_bonus1[000],因果,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_bonus2[000],业报,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_cost&dorm[000],心相连,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost2[000],热心修补匠,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost2[110],大匠之心·α,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost2[111],大匠之心·β,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[000],放空,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[001],宣传阵线,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[100],一丝不苟,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[101],谨慎加工,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[102],长生的余裕,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[110],灵感,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[111],熔铸,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[112],军事工程学,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[120],极简实用主义,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[200],便携蓄电池,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[220],选矿学,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[221],不倒霉的一天,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[300],淡泊,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[400],勤学不倦,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[500],拍摄日愉快,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost3[600],与历史对话,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost4[000],执著,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost4[010],苦修之律,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost4[011],虔修之律,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost5[000],熟极而流,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost5[100],铁匠天赋,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost[000],龙腾式无人机,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost[001],自动化流水线,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_cost[010],肆无忌惮,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_device[000],DIY·装置,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_device[020],DIY·异铁,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_device[021],余料利用,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_device[030],DIY·聚酸酯,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_device[050],DIY·源岩,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_device[060],DIY·酮凝集·α,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_device[070],DIY·晶体,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_device[111],DIY·炽合金,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_dorm[000],“物尽其用”,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_dorm[001],“人善其事”,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_dorm[002],意相通,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_drop[020],无用的赠予,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_drop[030],缓蚀技术,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_drop[040],岩体锚固,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_free[000],精打细算,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_frost[000],机械工程,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_lolxh[000],化猫,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_probability[000],技巧理论,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[010],兵者诡道,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[011],荒野生存,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[020],登峰造极,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[021],克己严修,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[030],适应力,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[031],獠牙的技艺,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[032],灵感改装,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[100],营养学,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[101],高效回收,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[102],气流传动,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[110],药理学·α,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[1110],过度发挥,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[111],毒理学·α,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[112],爆破材料学·α,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[113],腐蚀科学·α,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[114],草药学·α,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[115],必修课程,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[116],探井人·α,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[117],熟手的尊严,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[118],修旧如旧·α,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[119],工业设计,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[120],药理学·β,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[121],毒理学·β,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[122],爆破材料学·β,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[123],腐蚀科学·β,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[124],草药学·β,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[126],探井人·β,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[128],修旧如旧·β,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[129],学者,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[139],巫妖学识,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[160],稀有金属辨识,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[200],工程学,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[210],斩铁裂钢,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[220],结构力学,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[221],突发好运,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[300],特训记录,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[301],被忽视的天赋,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_probability[310],训练有素,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_formula_recovery[000],“爆炸艺术”,WORKSHOP,A2,M15b,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_formula_rub[000],省省能更多,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_proc_cost[000],御灵之力·金,WORKSHOP,A2,X08,no,非速率的心情影响（按次/触发/事件），登记不建模
-workshop_proc_probability&ext[000],工效模范·α,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability&ext[001],工效模范·β,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[000],专注·α,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[010],能工巧匠,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[011],多功能测绘仪,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[012],“炼金术”,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[013],修修还能用,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[020],专注·β,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[021],老当益壮,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[030],咪波·加工型,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[031],舍弃的赘余,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[032],天师府工艺,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[033],蓝卡坞多面手,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[040],未知技术,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[041],技术阐明,WORKSHOP,A4,X08,no,非心情，登记不建模
-workshop_proc_probability[050],理论革新,WORKSHOP,A4,X08,no,非心情，登记不建模
+train_cost&profession[140],工作狂,TRAINING,A1,M07a,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_cost&profession[320],过量训练,TRAINING,A1,M07a,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_cost&profession[340],索然无味,TRAINING,A1,M07a,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_cost&profession[350],何须解脱,TRAINING,A1,M07a,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_cost&profession[360],变异,TRAINING,A1,M07a,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_cost&profession[380],斗争渴望,TRAINING,A1,M07a,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&level[000],苦心孤诣,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[010],先锋专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[020],近卫专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[030],重装专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[040],狙击专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[050],术师专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[052],术师专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[060],辅助专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[080],特种专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[110],战术研习,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[111],先锋专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[112],先驱者共识,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[120],信影流,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[130],极地生存,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[150],一知半解,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[180],陷阱对焦,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[220],苦行,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[230],阵地经验,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[240],拂弦,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[250],博览群书,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[270],护理专精,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[320],尽心尽力,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[321],近卫专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[322],勇气传承,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[440],以身作则,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[620],实战指导,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[630],最终调试,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[640],伺机而动,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[650],死焰指引,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[660],同化,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession2[680],阿戈尔战术,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[130],重装专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[131],实战技巧：驭法铁卫,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[140],实战技巧：速射,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[150],近卫专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[151],实战技巧：斗士,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[160],近卫专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[161],实战技巧：领主,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[170],实战技巧：攻城手,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[180],医疗专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[181],实战技巧：行医,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[182],医疗专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[183],实战技巧：链愈师,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[184],医疗专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[190],辅助专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession3[191],实战技巧：游击手,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[010],先锋专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[011],先锋专精·β,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[020],近卫专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[021],近卫专精·β,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[030],重装专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[031],重装专精·β,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[040],狙击专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[041],狙击专精·β,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[050],术师专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[051],术师专精·β,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[060],辅助专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[061],辅助专精·β,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[070],医疗专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[071],医疗专精·β,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[080],特种专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[081],特种专精·β,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[1020],近卫专精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[1081],特种专精·β,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[110],入世,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[120],剑术记忆,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[130],般若,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[140],黑矢,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[150],尽在掌握,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[160],共鸣,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[170],精准手术,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd&profession[180],假面魅影,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd[0000],教官,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd[000],教官,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd[001],学无不精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd[002],学无不精·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_bd&reduceTime[000],思而后行,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_bd[000],与人乐,TRAINING,A1,M07a,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf2[000],破斩桎梏,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf2[001],沉默为剑,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf3[000],兴之所至·α,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf3[100],兴之所至·β,TRAINING,A1,M07a,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf3[999],合理兼职,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf[000],剑与手炮,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf[100],红龙之血,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf[110],红龙之血,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf[200],女妖之力,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf[201],“问题应当准确”,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf[300],恣意英杰,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf[301],“我不懂啊”,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_doubleProf[310],“触类旁通”,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_power[000],雪祀候补,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_power_down[000],“手段应当有效”,TRAINING,A1,M07a,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_reduceTime[000],精神锻炼,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_reduceTime[001],言语之义,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_tag[000],骑士训练,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_tag[010],崇高准则,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_tag[020],战术指导·防守,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_tag[030],战术指导·进攻,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_tag[040],叙拉古狂欢,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_tag[1020],战术指导·防守,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+train_spd_tag[1030],战术指导·进攻,TRAINING,A4,X06,no,挂件位：训练室不算心情消耗（那 9 条「心情每小时消耗+1」随之不生效）
+workshop_formula_bonus1[000],因果,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_bonus2[000],业报,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost&dorm[000],心相连,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost2[000],热心修补匠,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost2[110],大匠之心·α,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost2[111],大匠之心·β,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[000],放空,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[001],宣传阵线,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[100],一丝不苟,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[101],谨慎加工,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[102],长生的余裕,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[110],灵感,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[111],熔铸,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[112],军事工程学,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[120],极简实用主义,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[200],便携蓄电池,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[220],选矿学,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[221],不倒霉的一天,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[300],淡泊,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[400],勤学不倦,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[500],拍摄日愉快,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost3[600],与历史对话,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost4[000],执著,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost4[010],苦修之律,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost4[011],虔修之律,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost5[000],熟极而流,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost5[100],铁匠天赋,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost[000],龙腾式无人机,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost[001],自动化流水线,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_cost[010],肆无忌惮,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_device[000],DIY·装置,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_device[020],DIY·异铁,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_device[021],余料利用,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_device[030],DIY·聚酸酯,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_device[050],DIY·源岩,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_device[060],DIY·酮凝集·α,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_device[070],DIY·晶体,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_device[111],DIY·炽合金,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_dorm[000],“物尽其用”,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_dorm[001],“人善其事”,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_dorm[002],意相通,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_drop[020],无用的赠予,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_drop[030],缓蚀技术,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_drop[040],岩体锚固,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_free[000],精打细算,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_frost[000],机械工程,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_lolxh[000],化猫,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[000],技巧理论,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[010],兵者诡道,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[011],荒野生存,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[020],登峰造极,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[021],克己严修,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[030],适应力,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[031],獠牙的技艺,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[032],灵感改装,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[100],营养学,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[101],高效回收,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[102],气流传动,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[110],药理学·α,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[1110],过度发挥,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[111],毒理学·α,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[112],爆破材料学·α,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[113],腐蚀科学·α,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[114],草药学·α,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[115],必修课程,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[116],探井人·α,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[117],熟手的尊严,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[118],修旧如旧·α,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[119],工业设计,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[120],药理学·β,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[121],毒理学·β,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[122],爆破材料学·β,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[123],腐蚀科学·β,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[124],草药学·β,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[126],探井人·β,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[128],修旧如旧·β,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[129],学者,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[139],巫妖学识,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[160],稀有金属辨识,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[200],工程学,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[210],斩铁裂钢,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[220],结构力学,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[221],突发好运,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[300],特训记录,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[301],被忽视的天赋,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_probability[310],训练有素,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_recovery[000],“爆炸艺术”,WORKSHOP,A2,M15b,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_formula_rub[000],省省能更多,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_cost[000],御灵之力·金,WORKSHOP,A2,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability&ext[000],工效模范·α,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability&ext[001],工效模范·β,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[000],专注·α,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[010],能工巧匠,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[011],多功能测绘仪,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[012],“炼金术”,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[013],修修还能用,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[020],专注·β,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[021],老当益壮,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[030],咪波·加工型,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[031],舍弃的赘余,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[032],天师府工艺,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[033],蓝卡坞多面手,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[040],未知技术,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[041],技术阐明,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段
+workshop_proc_probability[050],理论革新,WORKSHOP,A4,X08,no,挂件位：加工站不算心情消耗；且配方心情消耗按次、上游无字段

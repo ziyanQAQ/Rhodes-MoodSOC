@@ -248,13 +248,4 @@ trade_ord_wt&cost_010,1,裁缝·β,drain,self,self,,-250,auto,,M07a,stacking=sum
 trade_ord_wt&cost_011,1,手工艺品·β,drain,self,self,,-250,auto,,M07a,stacking=sum;partial=false
 trade_ord_wt&cost_012,1,鉴定师的手段,drain,self,self,,-250,auto,,M07a,stacking=sum;partial=false
 hire_spd_cost_999,1,独立调查,drain,self,self,,-250,auto,,M07a,stacking=sum;partial=false
-train_cost&profession_140,1,工作狂,drain,self,self,,1000,auto,,M07a,stacking=sum;partial=false
-train_cost&profession_320,1,过量训练,drain,self,self,,1000,auto,,M07a,stacking=sum;partial=false
-train_cost&profession_340,1,索然无味,drain,self,self,,1000,auto,,M07a,stacking=sum;partial=false
-train_cost&profession_350,1,何须解脱,drain,self,self,,1000,auto,,M07a,stacking=sum;partial=false
-train_cost&profession_360,1,变异,drain,self,self,,1000,auto,,M07a,stacking=sum;partial=false
-train_cost&profession_380,1,斗争渴望,drain,self,self,,1000,auto,,M07a,stacking=sum;partial=false
-train_spd_bd_000,1,与人乐,drain,self,self,,1000,auto,,M07a,stacking=sum;partial=false
-train_spd_doubleProf3_100,1,兴之所至·β,drain,self,self,,1000,auto,,M07a,stacking=sum;partial=false
-train_spd_power_down_000,1,“手段应当有效”,drain,self,self,,1000,auto,,M07a,stacking=sum;partial=false
 dorm_rec_all_999,1,毛茸茸的抚慰,recover,dorm_group,all,,100,auto,,M08,exclude_self=false;stacking=same_kind_max;partial=false

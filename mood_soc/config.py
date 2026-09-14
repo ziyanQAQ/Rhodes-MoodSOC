@@ -141,18 +141,25 @@ def facility_slots(ftype, level: int = 1) -> int:
 # ============================================================================
 # 各设施的基础心情消耗速率（点 / 小时）
 #
-# ⚠️ 与 docx 的基本口径一致：工作设施 1.0/h，宿舍 0（宿舍只回复）。
-#    但**加工站是例外**：加工站的心情是"按次消耗"（配方心情消耗，见
-#    resources/skills_registry.txt 的 A2/X08 共 34 条 buff），不搓材料就是 0/h。
-#    旧实现只排除宿舍、其余一律 1.0，导致加工站/训练室被算成 0.75/h（已修）。
-#
-# ⚠️ 训练室的 1.0 是**待确认口径**（见 TRAINING_BASE_CONSUMPTION）。
+# 口径（docx 第 4 段「干员工作时…每小时基础消耗速率 1 点」）：
+#   · **常规生产设施 = 1.0/h**：制造站 / 贸易站 / 发电站 / 办公室 / 会客室 / 控制中枢；
+#   · **挂件位 = 0/h**：加工站、训练室（下条详述）；
+#   · 宿舍 0（只回复）、活动室 0（不视作入住在基建内）。
+#   旧实现只排除宿舍、其余一律 1.0，把加工站/训练室算成 0.75/h（已修）。
 # ============================================================================
-# 训练室协助位的基础消耗。上游没有公式实现（纯数据 dump），docx 也未写明。
-# 那 9 条训练室技能写的是「进驻训练室协助位时，心情每小时消耗+1」——
-# 与本项目其它设施一致的解读是「+1 是增量」（如制造站「-0.25」也是增量），
-# 故此处取 1.0，技能生效后合计 2.0/h。**待人工确认**。
-TRAINING_BASE_CONSUMPTION = Decimal("1")
+# 「挂件位」：加工站的加工位、训练室的教练位 —— 不计算心情消耗（用户口径）。
+#
+# 这两个位置的**实际用法都是放挂件**：挂件干员本身没有与所在设施相关的心情技能，
+# 被放进来的唯一目的是「**人在基建内**」——好让别人的计数类技能（基建内每有 1 名
+# XX 干员，且**不含副手与活动室使用者**，见 `models.BaseLayout.base_operators`）
+# 能数到它。挂件不需要休息，所以给它们算心情消耗没有意义。
+#
+# 推论：那 9 条写「进驻训练室协助位时，心情每小时消耗 +1」的训练室技能**不生效**
+# （已从 `resources/moods_skills.txt` 撤出，`skills_registry.txt` 保留登记与原因）。
+#
+# 与 docx 第 4 段**不冲突**：那说的是常规生产设施"上岗生产"的稳态消耗，
+# 挂件位不属于上岗生产。
+TRAINING_BASE_CONSUMPTION = Decimal("0")
 
 BASE_CONSUMPTION_BY_FACILITY = {
     FacilityType.CONTROL_CENTER: BASE_CONSUMPTION,
@@ -162,9 +169,9 @@ BASE_CONSUMPTION_BY_FACILITY = {
     FacilityType.RECEPTION: BASE_CONSUMPTION,
     FacilityType.OFFICE: BASE_CONSUMPTION,
     FacilityType.TRAINING: TRAINING_BASE_CONSUMPTION,
-    FacilityType.WORKSHOP: Decimal("0"),        # 按次消耗，不是每小时
+    FacilityType.WORKSHOP: Decimal("0"),        # 挂件位；且配方心情消耗是按次
     FacilityType.DORMITORY: Decimal("0"),       # 宿舍只回复
-    FacilityType.PRIVATE: Decimal("0"),         # 活动室不消耗
+    FacilityType.PRIVATE: Decimal("0"),         # 活动室不视作入住在基建内
 }
 
 

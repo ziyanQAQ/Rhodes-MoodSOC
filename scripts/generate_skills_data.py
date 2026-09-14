@@ -95,6 +95,9 @@ FACILITY_BY_PREFIX = {
     "meet":    "RECEPTION",
     "power":   "POWER",
     "trade":   "TRADING",
+    # train_* 属于训练室。⚠️ 训练室是「挂件位」（不算心情消耗，见 config），
+    # 故当前 moods_skills.txt 里没有 train_* 行；保留此映射，日后重开训练室模型时直接可用。
+    "train":   "TRAINING",
 }
 
 # work_area：中枢技能作用的"其他设施"（room2 = 全部工作设施）

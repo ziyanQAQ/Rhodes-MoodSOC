@@ -66,22 +66,26 @@ documents/
 
 ---
 
-## 🚨 最容易踩的十条（全文见 `documents/04-特殊机制.md`）
+## 🚨 最容易踩的坑（全文见 `documents/04-特殊机制.md`）
 
 1. **`I = 消耗 − 回复`**；消耗末尾钳位 `≥0`，"净回复"一律走回复侧表达。
 2. **红脸（心情 ≤ 0）→ 该干员所有心情类技能失效**（但仍可继续工作）。
-3. **「同种效果取最高」的比较单位是「技能」（含它的各分句），不是分句**——
+3. **加工站 / 训练室是「挂件位」，不计算心情消耗**——那两个位置只放挂件
+   （挂件本身没技能，**人在基建内**（不含副手与活动室使用者）就能为别人提供效果），
+   所以挂件永不红脸、效果持续生效；9 条训练室「心情每小时消耗 +1」随之不生效。
+   **活动室**同理不进心情模型（上游：不视作入住在基建内）。
+4. **「同种效果取最高」的比较单位是「技能」（含它的各分句），不是分句**——
    先按 `skill_id` 把分句求和，再跨技能取 max。见 §4.18。
-4. **β 替换 α 的单位是 `skill_id`，不是 `skill_id#clause`**——否则基础分句会把自己的分句"替换"掉。
-5. **`_single_recovery` 的目标锁定是"全局一名受益者"**（简化），加"按目标"的加成时必须
+5. **β 替换 α 的单位是 `skill_id`，不是 `skill_id#clause`**——否则基础分句会把自己的分句"替换"掉。
+6. **`_single_recovery` 的目标锁定是"全局一名受益者"**（简化），加"按目标"的加成时必须
    走 `MoodLedger.same_kind_winner`，不能自己写 `max()`。
-6. **条件必须被求值**：新增条件分支时，确认它所在的贡献循环里有
+7. **条件必须被求值**：新增条件分支时，确认它所在的贡献循环里有
    `if skill.condition is not None and not skill.condition(ctx): continue`（曾漏 3 处）。
-7. **模板挂在 clause 上**：`moods_skills.txt` 是 clause 级、每行带 `template_id` + `params`；
+8. **模板挂在 clause 上**：`moods_skills.txt` 是 clause 级、每行带 `template_id` + `params`；
    `skills_registry.txt` 是 buff 级 755 行覆盖台账。
-8. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
-9. **技能数值不要手写进 `skills.py`**：改 `resources/*.txt` → 重跑生成脚本。
-10. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 83 个全绿），
+9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
+10. **技能数值不要手写进 `skills.py`**：改 `resources/*.txt` → 重跑生成脚本。
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 79 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 
 ---
