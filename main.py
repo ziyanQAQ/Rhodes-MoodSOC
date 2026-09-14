@@ -10,12 +10,13 @@
 
 输出：JSON 打印到标准输出；加 `--json-file` 才额外写入 results/ 目录下的文件（默认不写）。
 
-用法示例：
-  python main.py --demo                                    # 演示场景，single 模式，目标泡泡
+用法示例（single 模式**必须**给 `--target`；`--period` 两种场景来源都缺省 0）：
+  python main.py --demo --target 泡泡                       # 演示场景，single 模式，目标泡泡
+  python main.py --demo --target 泡泡 --period 8            # 推进 8 小时
   python main.py --scenario-file scenarios/demo.json --target 泡泡 --period 8
   python main.py --mode base --scenario-file scenarios/demo.json
   python main.py --mode base --demo --period 12             # 先推进 12h 再评估布局可持续性
-  python main.py --demo --json-file                        # 额外把结果写入 JSON 文件
+  python main.py --demo --target 泡泡 --json-file           # 额外把结果写入 JSON 文件
   python main.py --demo --target 泡泡 --explain             # 打印心情流水账（为什么是这个速率）
 """
 from __future__ import annotations
@@ -31,7 +32,8 @@ from mood_soc import apply_entry_events, build_base_layout, evaluate, evaluate_b
 from mood_soc.battery import to_decimal
 from mood_soc.output import base_result_to_dict, dump_json, mood_result_to_dict, to_json_string
 
-# 内置演示场景：一个标准 243 布局的中枢 + 若干制造站 / 贸易站 / 办公室 / 宿舍
+# 内置演示场景：中枢满员 + 2 个制造站 / 1 个贸易站 / 办公室 / 满级宿舍
+# （与 scenarios/demo.json 只差办公室干员：这里用「遥」，demo.json 用「斥罪」）
 DEMO_SCENARIO = {
     "facilities": [
         # 中枢满员：玛恩纳提供回复 + 维什戴尔提供减免（含魔王联动）+ 令（消除岁）
@@ -114,7 +116,8 @@ def main() -> int:
         if world.get_operator(args.target) is None:
             print(f"错误：布局中不存在干员「{args.target}」", file=sys.stderr)
             return 1
-        # 演示场景缺省 8 小时；自定义场景缺省 0（即仅看当前状态）
+        # --period 缺省 0（即仅看当前状态）；演示场景与自定义场景一致，
+        # 需要推进时间时显式给 --period（如 --demo --target 泡泡 --period 8）。
         period = to_decimal(args.period if args.period > 0 else 0.0)
         result = evaluate(world, args.target, period)
         payload = mood_result_to_dict(result, period)

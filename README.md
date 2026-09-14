@@ -46,7 +46,7 @@ print(mood_ledger(world, "刺玫").explain())
 | 技能 | 条件 | 心情效果 |
 |---|---|---|
 | 双面间谍 / 「职业操守」α·β / 我自己的愿望 / 专业经理·α·β | 会客室内**只有自身**在工作 | 自身消耗 +1~+2 |
-| 潮汐守望（歌蕾蒂娅） | 没有其他深海猎人在宿舍以外 | 自身回复 +0.5（反之 +0.5 消耗/个） |
+| 潮汐守望（歌蕾蒂娅） | 宿舍以外每有 1 名深海猎人（**含她自己**） | 自身消耗 +0.5/名；「反之」的恢复分支随之不可达（见 `documents/04-特殊机制.md` 第 23 条） |
 | 互为半身（若叶睦） | 与丰川祥子同中枢 | 消除**自身**心情消耗影响 |
 | 资深料理人（森西） | 目标是**莱欧斯小队**干员 | 恢复效果额外 +0.15 |
 
@@ -332,7 +332,10 @@ sustain_hours（还能维持/恢复多久，evaluate 输出）：
 3. **与阵营共事**：同中枢且排除自身（`_cond_with_cc_faction`）。
    例：摆渡人"英雄的骄傲"与萨尔贡干员同中枢 +0.02。
 
-> 阵营表 `OPERATOR_FACTIONS` 是手工维护的（resources 数据里没有干员↔阵营映射）。
+> 阵营表 `OPERATOR_FACTIONS` **不是手工维护的**——它与 `FACTION_MEMBERS` 一起由
+> `scripts/generate_factions.py` 从上游 `cc.g.*` / `cc.tag.*` 生成（28 组 / 208 名干员 / 231 条记录），
+> 人工补充只有上游不列名单的「异格者」（`resources/factions_supplement.txt`）。
+> 要改干员↔阵营，改上游或补充表后重跑生成器，**不要**改代码。
 
 ### 工休比
 
@@ -348,26 +351,33 @@ sustain_hours（还能维持/恢复多久，evaluate 输出）：
 
 ```
 Rhodes-MoodSOC/
-├── main.py                命令行入口（--mode single|base / --demo / --scenario-file / --target / --period / --trace）
+├── main.py                命令行入口（--mode single|base / --demo / --scenario-file / --target / --period
+│                            / --out-dir / --json-file / --trace / --explain / --entry-events）
 ├── mood_soc/              核心包（库，可被 import）
 │   ├── __init__.py        对外公共 API 汇总（导出下面各模块的公开符号）
-│   ├── config.py          纯配置层：常量与数据表（无逻辑）
-│   ├── battery.py         纯数学层：安时积分法 + to_decimal/INF（与游戏规则无关）
-│   ├── models.py          数据模型层：Operator / Facility / BaseLayout / MoodResult / OperatorResult / BaseResult
+│   ├── config.py          纯配置层：常量 + 数据表 + 解析函数（无逻辑）
+│   ├── battery.py         纯数学层：安时积分法 + MoodBattery + to_decimal/INF（与游戏规则无关）
+│   ├── models.py          数据模型层：Operator / Facility（多房间·容量·副手·活动室）
+│   │                      / BaseLayout（按类型聚合）/ MoodResult（含 ledger）/ OperatorResult / BaseResult
 │   ├── skills.py          规则数据层：Skill / SkillEquip / SkillKind 框架 + 条件函数（末尾 re-export 数据）
+│   ├── skill_templates.py 分类字典：六轴枚举（ModelTier/Domain/Target/Effect/ValueShape/Stacking）+ 模板注册表
+│   ├── ledger.py          ★记录层：Contribution / MoodLedger（逐条贡献流水账）+ 轴 F 统一合成
+│   ├── variables.py       ★变量账本：26 种"中间货币"（人间烟火/热情值/无声共鸣…）+ 产出者收集
 │   ├── skills_data.py     技能数据表（自动生成，勿手改）：SKILLS / DEFAULT_OPERATORS / SKILL_EQUIPS / TRAITS
-│   ├── rules.py           业务逻辑层：把"布局 + 干员"折算成净速率
-│   ├── simulator.py       时间步进模拟器：处理红脸等时变情况
+│   ├── rules.py           业务逻辑层：**流水账驱动**——把"布局 + 干员"折算成消耗/回复/净速率 + 各项查询
+│   ├── simulator.py       时间步进模拟器：每步重算速率，处理"红脸 → 技能失效"等时变情况
 │   ├── report.py          展示层：中文结果格式化（文本）
-│   ├── output.py          输出层：结果 -> JSON dict / 写入文件
+│   ├── output.py          输出层：结果 -> JSON dict / 写入文件（inf -> null）
 │   └── scenario.py        输入解析层：字典/JSON -> BaseLayout
 ├── tests/                 黑盒测试（只断言"输入 → 输出"，不测内部结构）
 │   ├── __init__.py
 │   ├── test_api_blackbox.py   公开 API 黑盒：场景 JSON + 目标/时段 → 结果 JSON
 │   └── test_cli_blackbox.py   命令行黑盒：subprocess 调 main.py → stdout JSON / 退出码 / 结果文件
 ├── scripts/
-│   ├── maa_to_scenario.py  把 MAA 排班 JSON 转成本工具的场景 JSON
-│   └── generate_skills_data.py  把 resources 两份 CSV 生成为 mood_soc/skills_data.py
+│   ├── maa_to_scenario.py      把 MAA 排班 JSON 转成本工具的场景 JSON
+│   ├── classify_skills.py      给每个 clause 挂六轴模板 + 生成 755 行覆盖台账 + 零遗漏校验
+│   ├── generate_factions.py    从上游 termDescriptionDict 生成干员↔阵营/标签表
+│   └── generate_skills_data.py 把 resources 两份 txt 生成为 mood_soc/skills_data.py（技能数据管道）
 ├── scenarios/             demo.json + maa_shift1/2/3.json（示例场景）
 ├── resources/             ★ **数据**（不放文档）
 │   ├── 心情消耗回复和工休时间.docx        需求文档（心情消耗/回复/工休的**计算规则**）
@@ -407,10 +417,10 @@ Rhodes-MoodSOC/
 | 参数 | 取值 | 默认 | 说明 |
 |---|---|---|---|
 | `--mode` | `single` / `base` | `single` | 测算模式：`single` 只算一个干员；`base` 算整个基建 |
-| `--demo` | flag | 关 | 使用内置演示场景（内容同 `scenarios/demo.json`） |
+| `--demo` | flag | 关 | 使用 `main.py` 内置的 `DEMO_SCENARIO`（与 `scenarios/demo.json` **只差办公室干员**：内置用「遥」、demo.json 用「斥罪」） |
 | `--scenario-file` | 文件路径 | 无 | 从 JSON 文件读取场景 |
-| `--target` | 干员名 | 无 | single 模式的目标干员；`--demo` 时缺省为「泡泡」 |
-| `--period` | 小数（小时） | `0.0` | 目标时段；single 演示缺省 8、自定义场景缺省 0 |
+| `--target` | 干员名 | 无 | single 模式的目标干员；**必须显式提供**（`--demo` 也不会替你补「泡泡」） |
+| `--period` | 小数（小时） | `0.0` | 目标时段；**两种场景来源都缺省 0**（即只看当前状态，不推进时间） |
 | `--out-dir` | 目录 | `results` | JSON 文件输出目录（仅配合 `--json-file` 生效） |
 | `--json-file` | flag | 关 | 是否额外把结果写入 JSON 文件（默认只打印到 stdout） |
 | `--trace` | flag | 关 | 仅 single 模式：附加心情轨迹（时间步进模拟，输出到 stderr） |
@@ -418,7 +428,7 @@ Rhodes-MoodSOC/
 
 **场景来源优先级**：`--demo` > `--scenario-file`；两者都不给则打印帮助并退出。
 
-**single 模式**：必须提供 `--target`（`--demo` 时缺省为「泡泡」）。`--period` 缺省：`--demo` 为 8 小时，`--scenario-file` 为 0 小时（即只看当前状态）。
+**single 模式**：必须提供 `--target`（不带则打印错误并退出码 1）。`--period` 缺省 `0`（只看当前状态）。
 
 **base 模式**：忽略 `--target`；`--period` 缺省为 0；`--trace` 不生效。
 
@@ -430,11 +440,12 @@ Rhodes-MoodSOC/
 ### 1) single 模式
 
 ```bash
-python main.py --demo                                          # 演示场景，目标泡泡，8 小时
-python main.py --demo --target 斥罪 --period 8                 # 指定目标与时长
-python main.py --scenario-file scenarios/demo.json --target 泡泡 --period 8
+python main.py --demo --target 泡泡                              # 演示场景，目标泡泡，period 缺省 0
+python main.py --demo --target 泡泡 --period 8                  # 推进 8 小时
+python main.py --demo --target 遥 --period 8                    # 指定其它目标（内置演示的办公室干员是「遥」）
+python main.py --scenario-file scenarios/demo.json --target 斥罪 --period 8   # 自定义场景里的斥罪
 python main.py --demo --target 泡泡 --trace                    # 附带心情轨迹（文本）
-python main.py --demo --json-file                             # 额外把结果写入 results/ 下的 JSON 文件
+python main.py --demo --target 泡泡 --json-file                # 额外把结果写入 results/ 下的 JSON 文件
 ```
 
 返回 JSON（`--demo --target 泡泡 --period 8` 的真实输出）：
@@ -445,12 +456,15 @@ python main.py --demo --json-file                             # 额外把结果�
   "operator": "泡泡",
   "facility": "制造站",
   "period_hours": 8,
-  "net_rate": 0.1,
+  "net_rate": 0.05,
   "state": "工作中",
-  "mood": 23.2,
-  "sustain_hours": 232
+  "mood": 23.6,
+  "sustain_hours": 472
 }
 ```
+
+> 泡泡当前净速率 0.05/h（基础 1 − 设施减免 0.1 − 中枢满员 0.25 − 自身「囤积者」0.25 − 黍「春雷响，万物长」0.1
+> + 中枢回复 0.25，见 `--explain`）：8 小时后 23.6，之后还能工作 472h。
 
 ### 2) base 模式
 
@@ -465,13 +479,13 @@ python main.py --mode base --demo --period 12                           # 先推
 {
   "mode": "base",
   "period_hours": 0,
-  "layout_sustain_hours": 25.263158,
+  "layout_sustain_hours": 24,
   "bottleneck": "斥罪",
   "operators": [
-    {"name": "玛恩纳",   "facility": "控制中枢", "mood": 24, "sustain_hours": 25.263158, "mood_at_end": 6.315789},
-    {"name": "泡泡",     "facility": "制造站",   "mood": 24, "sustain_hours": 25.263158, "mood_at_end": 21.473684},
-    {"name": "斥罪",     "facility": "办公室",   "mood": 24, "sustain_hours": 25.263158, "mood_at_end": 0},
-    {"name": "菲亚梅塔", "facility": "宿舍",     "mood": 24, "sustain_hours": 0, "mood_at_end": 24}
+    {"name": "玛恩纳",   "facility": "控制中枢", "mood": 24, "sustain_hours": 24, "mood_at_end": 7.2},
+    {"name": "泡泡",     "facility": "制造站",   "mood": 24, "sustain_hours": 24, "mood_at_end": 22.8},
+    {"name": "斥罪",     "facility": "办公室",   "mood": 24, "sustain_hours": 24, "mood_at_end": 0},
+    {"name": "菲亚梅塔", "facility": "宿舍",     "mood": 24, "sustain_hours": 0,  "mood_at_end": 24}
   ]
 }
 ```
@@ -509,7 +523,7 @@ python main.py --mode base --demo --period 12                           # 先推
 
 | 函数 / 常量 | 签名 | 返回 | 说明 |
 |---|---|---|---|
-| `build_base_layout` | `(data)` | `BaseLayout` | 从场景 dict 构建布局（格式见 §4.3） |
+| `build_base_layout` | `(data, validate=False)` | `BaseLayout` | 从场景 dict 构建布局（格式见上文「3) 场景 JSON 格式」）；`validate=True` 时做容量/房间数自检并抛 `ValueError` |
 | `evaluate` | `(world, name, period_hours=0)` | `MoodResult` | single 模式：目标干员时段后的状态 |
 | `evaluate_base` | `(world, period_hours=0)` | `BaseResult` | base 模式：全体干员 + 布局可维持时长 |
 | `compute_net_rate` | `(world, name)` | `Decimal` | 某干员净速率（消耗 − 回复，>0 下降） |
@@ -571,9 +585,11 @@ python main.py --mode base --demo --period 12                           # 先推
 
 **布局 / 干员 / 设施**：
 
-- `Operator(name, mood=MOOD_MAX, skill_ids=[], trait=None, elite=2, level=1)` —— 干员（elite/level 控制技能解锁）
-- `Facility(ftype, level=1, operators=[], atmosphere=None)` —— 设施房间
-- `BaseLayout(facilities=[])` —— 基建布局；方法：`get_facility` / `control_center` / `facility_of` / `get_operator` / `all_operators`
+- `Operator(name, mood=MOOD_MAX, skill_ids=[], trait=None, factions=None, elite=2, level=1)` —— 干员（elite/level 控制技能解锁）
+- `Facility(ftype, level=1, operators=[], atmosphere=None, name="", deputies=[], slots=None, enabled=True)` —— 设施房间
+- `BaseLayout(facilities=[])` —— 基建布局；方法：`get_facility`（只取第一个，deprecated）/ `control_center` /
+  `facility_of` / `get_operator` / `all_operators` / `all_deputies` / `of_type` / `count_of_type` / `count_in` /
+  `all_dormitories` / `facilities_in` / `operators_in` / `working_operators` / `base_operators` / `validate`
 
 ### 5.3 输出层（`from mood_soc.output import ...`）
 

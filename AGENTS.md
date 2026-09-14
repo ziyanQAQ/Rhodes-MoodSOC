@@ -93,10 +93,11 @@ documents/
 ## ⚡ 最常用命令
 
 ```bash
-# 测算
-python main.py --demo                                  # 内置演示，目标泡泡 / 8h
+# 测算（single 模式必须给 --target；--period 缺省 0）
+python main.py --demo --target 泡泡                    # 内置演示，目标泡泡
+python main.py --demo --target 泡泡 --period 8         # 推进 8 小时
 python main.py --scenario-file scenarios/demo.json --target 泡泡 --period 8
-python main.py --demo --explain                        # 打印心情流水账（为什么是这个速率）
+python main.py --demo --target 泡泡 --explain           # 打印心情流水账（为什么是这个速率）
 python main.py --demo --target 菲亚梅塔 --entry-events  # 先结算进驻事件（M15a 心情互换）
 python main.py --mode base --demo                      # 整个布局还能维持多久
 python main.py --mode base --demo --period 12          # 先推进 12h 再评估
