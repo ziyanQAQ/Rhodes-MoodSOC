@@ -73,6 +73,7 @@ def build_entry_event_config(raw) -> "EntryEventConfig":
             scope=scope,
             restore_back=bool(raw.get("restore_back", raw.get("restoreBack", True))),
             force=bool(raw.get("force", False)),
+            per_shift=build_entry_shift_overrides(raw.get("per_shift", raw.get("perShift"))),
         )
     raise ValueError(f"entry_events 配置格式无法识别：{raw!r}")
 
@@ -143,6 +144,50 @@ class Facility:
 
 
 @dataclass
+class EntryShiftOverride:
+    """**某个班次**的进驻事件覆盖（字段为 `None` = 沿用全局 `EntryEventConfig`）。
+
+    排班是"多班轮换"（如 12h + 6h + 6h），而"这个班要不要换心情、换给谁、要不要强等"
+    经常每班不同（MAA 的排班文件里也是每个 plan 各自带一份 `Fiammetta` 设置）。
+    所以支持按班次覆盖：
+
+    ```json
+    "entry_events": {
+      "enabled": true, "scope": "anywhere",
+      "per_shift": [
+        {"enabled": true,  "swap_with": "巫恋", "force": true},
+        {"enabled": true,  "swap_with": "any"},
+        {"enabled": false}
+      ]
+    }
+    ```
+
+    - `key`：定位班次 —— 1 基序号（`1`/`"1"`，对应第 1/2/3 班）或**班次名**（如 `"Shift 2 · 6h"`）。
+      用列表写法时按位置自动编号。
+    - `swap_with`：`None` = 继承全局；`""`（JSON 里的 `null`/空串）= **明确"不指定"**
+      （回到默认口径：同宿舍「前一位进驻」）。
+    """
+    key: object = 0                      # int（1 基序号）或 str（班次名 / 数字串）
+    enabled: Optional[bool] = None
+    swap_with: Optional[str] = None
+    scope: Optional[str] = None
+    restore_back: Optional[bool] = None
+    force: Optional[bool] = None
+
+    def matches(self, index: int, label: str = "") -> bool:
+        """是否命中第 `index`（0 基）个班次。"""
+        key = self.key
+        if isinstance(key, bool):
+            return False
+        if isinstance(key, int):
+            return key == index + 1
+        text = str(key).strip()
+        if text.isdigit():
+            return int(text) == index + 1
+        return bool(label) and text == label
+
+
+@dataclass
 class EntryEventConfig:
     """**进驻事件**（M15a 患难之交）的结算配置 —— 来自场景 JSON 的顶层 `entry_events`。
 
@@ -168,12 +213,103 @@ class EntryEventConfig:
     - `force`：到该换的时候（每班开始）触发者**不满心情**时怎么办。
       `False`（默认）= 这次不换；`True` = **等她回满心情的那一刻再换**（强制换）。
       只有带时间的排班模拟（`ui.schedule.simulate_schedule`）能"等"；一次性 API 不会等待。
+    - `per_shift`：**按班次覆盖**上列各项（见 `EntryShiftOverride`）——
+      3 班排班就可以写"第 1 班换给巫恋、第 2 班自动挑最累的、第 3 班不用"。
     """
     enabled: Optional[bool] = None
     swap_with: Optional[str] = None
     scope: str = "dorm"
     restore_back: bool = True
     force: bool = False
+    per_shift: List["EntryShiftOverride"] = field(default_factory=list)
+
+
+def build_entry_shift_overrides(raw) -> List["EntryShiftOverride"]:
+    """解析 `entry_events.per_shift` → `[EntryShiftOverride, ...]`。
+
+    两种写法：
+
+    ```json
+    "per_shift": [ {"enabled": true, "swap_with": "巫恋"}, {"enabled": false} ]   // 列表＝按班次位置
+    "per_shift": { "1": {...}, "Shift 2 · 6h": {...} }                            // 字典＝按序号或班次名
+    ```
+
+    `swap_with` 的三种写法：**不写** = 继承全局；写 `null`/`""` = 明确"不指定"（回默认口径）；
+    写人名/`"any"` = 就按它。
+    """
+    if raw is None:
+        return []
+    items: List[tuple] = []
+    if isinstance(raw, list):
+        items = [(i + 1, v) for i, v in enumerate(raw)]
+    elif isinstance(raw, dict):
+        items = list(raw.items())
+    else:
+        raise ValueError(f"entry_events.per_shift 应当是数组或对象，收到 {raw!r}")
+
+    out: List[EntryShiftOverride] = []
+    for key, value in items:
+        if value is None:
+            out.append(EntryShiftOverride(key=key))
+            continue
+        if isinstance(value, bool):
+            out.append(EntryShiftOverride(key=key, enabled=value))
+            continue
+        if isinstance(value, str):
+            out.append(EntryShiftOverride(key=key, enabled=True, swap_with=value))
+            continue
+        if not isinstance(value, dict):
+            raise ValueError(f"entry_events.per_shift[{key!r}] 格式无法识别：{value!r}")
+        scope = value.get("scope")
+        if scope is None and "anywhere" in value:
+            scope = "anywhere" if value["anywhere"] else "dorm"
+        if scope is not None:
+            scope = str(scope).strip().lower()
+            if scope in ("any", "all", "global", "任意", "全部"):
+                scope = "anywhere"
+            if scope not in ("dorm", "anywhere"):
+                raise ValueError(f'per_shift[{key!r}].scope 只能是 "dorm" 或 "anywhere"，'
+                                 f"收到 {scope!r}")
+        swap_with = None
+        if "swap_with" in value or "swapWith" in value:
+            target = value.get("swap_with", value.get("swapWith"))
+            swap_with = str(target).strip() if target else ""      # "" = 明确不指定
+        out.append(EntryShiftOverride(
+            key=key,
+            enabled=(None if value.get("enabled") is None else bool(value["enabled"])),
+            swap_with=swap_with,
+            scope=scope,
+            restore_back=(None if value.get("restore_back", value.get("restoreBack")) is None
+                          else bool(value.get("restore_back", value.get("restoreBack")))),
+            force=(None if value.get("force") is None else bool(value["force"])),
+        ))
+    return out
+
+
+def resolve_entry_config(cfg: "EntryEventConfig", index: int, label: str = "",
+                         overrides: Optional[List["EntryShiftOverride"]] = None
+                         ) -> "EntryEventConfig":
+    """把**全局配置**与**该班次的覆盖**合并成"这一班的有效配置"。
+
+    `overrides=None` 时用 `cfg.per_shift`；命中多个则按顺序依次覆盖（后写的赢）。
+    返回的配置**不含** `per_shift`（已经解析完了）。
+    """
+    out = EntryEventConfig(enabled=cfg.enabled, swap_with=cfg.swap_with, scope=cfg.scope,
+                           restore_back=cfg.restore_back, force=cfg.force)
+    for ov in (cfg.per_shift if overrides is None else overrides):
+        if not ov.matches(index, label):
+            continue
+        if ov.enabled is not None:
+            out.enabled = ov.enabled
+        if ov.swap_with is not None:
+            out.swap_with = ov.swap_with or None      # "" → 回默认口径
+        if ov.scope is not None:
+            out.scope = ov.scope
+        if ov.restore_back is not None:
+            out.restore_back = ov.restore_back
+        if ov.force is not None:
+            out.force = ov.force
+    return out
 
 
 @dataclass

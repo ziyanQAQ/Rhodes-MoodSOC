@@ -665,11 +665,25 @@ def _swap_positions(world: BaseLayout, a: Operator, b: Operator) -> str:
             f"{b.name} 去 {fa.display_name}）")
 
 
+def entry_target_kind(swap_with, scope: str = "dorm") -> str:
+    """判断该按哪种口径找交换对象 → `"named"` / `"auto"` / `"default"`。
+
+    **行为与文案都从这里取**（曾经文案按 `swap_with` 单独判断，导致
+    `scope=anywhere` + 不点名时"实际自动挑、却写成前一位进驻"）。
+    """
+    name = (swap_with or "").strip()
+    if name.lower() in ENTRY_AUTO_TARGETS or name in ENTRY_AUTO_TARGETS:
+        return "auto"
+    if name:
+        return "named"
+    return "auto" if scope == "anywhere" else "default"
+
+
 def find_entry_target(world: BaseLayout, holder: Operator, facility: Facility,
                       swap_with=None, scope: str = "dorm"):
     """找进驻事件的交换对象 → `(Operator | None, 说明文本)`。
 
-    规则（`scope="anywhere"` 就是"**基建任意位置**都能换"）：
+    规则（`scope="anywhere"` 就是"**基建任意位置**都能换"，口径见 `entry_target_kind`）：
 
     | 配置 | 结果 |
     |---|---|
@@ -679,13 +693,13 @@ def find_entry_target(world: BaseLayout, holder: Operator, facility: Facility,
     | 没给 `swap_with` 且 `scope="dorm"` | 默认「**前一位进驻**」（同宿舍里排在触发者之前的那位） |
     """
     name = (swap_with or "").strip()
-    auto = name.lower() in ENTRY_AUTO_TARGETS or name in ENTRY_AUTO_TARGETS
-    if not name and scope != "anywhere":
+    kind = entry_target_kind(swap_with, scope)
+    if kind == "default":
         idx = facility.operators.index(holder)
         if idx == 0:
             return None, "（同一宿舍里没有「前一位进驻」的干员）"
         return facility.operators[idx - 1], ""
-    if auto or not name:          # 自动挑：显式 any / 或"任意位置但没点名"
+    if kind == "auto":
         pool = [o for o in world.all_operators() if o is not holder]
         if not pool:
             return None, "（基建里没有别的干员可以换）"
@@ -772,16 +786,19 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
                             skill_name=skill.name, template=skill.template_id, detail=note))
                     continue
                 if other.mood == op.mood:
+                    if swap_with:      # 点名/自动时给个说明，默认口径下静默跳过
+                        events.append(Contribution(
+                            Bucket.EVENT, "进驻事件未执行", ZERO, group="entry_swap_skipped",
+                            owner=op.name, target=other.name, skill_id=skill.id,
+                            skill_name=skill.name, template=skill.template_id,
+                            detail=f"（与 {other.name} 的心情相同（都是 {op.mood}），无需互换）"))
                     continue
                 before = (op.mood, other.mood)
                 op.mood, other.mood = before[1], before[0]
-                if (swap_with or "").strip().lower() in ENTRY_AUTO_TARGETS \
-                        or (swap_with or "").strip() in ENTRY_AUTO_TARGETS:
-                    how = f"自动挑的 {other.name}"
-                elif swap_with:
-                    how = f"指定的 {other.name}"
-                else:
-                    how = f"「前一位进驻」的 {other.name}"
+                how = {"auto": f"自动挑的 {other.name}",
+                       "named": f"指定的 {other.name}",
+                       "default": f"「前一位进驻」的 {other.name}"}[
+                           entry_target_kind(swap_with, scope)]
                 detail = (f"（与{how}互换：{op.name} "
                           f"{before[0]} → {before[1]}，{other.name} {before[1]} → {before[0]}）")
                 if not restore_back:

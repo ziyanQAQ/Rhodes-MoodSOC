@@ -90,6 +90,32 @@ class Test排班装配(unittest.TestCase):
         self.assertEqual(sch.shifts[0].hours, D("24"))
         self.assertEqual([n for n in sch.operator_names()], ["路人1", "路人2", "泡泡"])
 
+    def test_显式时长按顺序覆盖班次(self):
+        """`load_schedule(..., hours=[12,6,6])` 要真的生效（曾把 hours 静默忽略）。
+
+        三个场景文件各一班 —— 就是用户的"12h/6h/6h 三个文件"用法。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for i in range(3):
+                p = Path(tmp) / f"shift{i}.json"
+                p.write_text(json.dumps({"facilities": [
+                    {"type": "宿舍", "level": 5, "operators": [{"name": f"路人{i}", "mood": 24}]},
+                ]}, ensure_ascii=False), encoding="utf-8")
+                paths.append(p)
+            sch = load_schedule(paths, hours=[D("12"), D("6"), D("6")])
+        self.assertEqual([s.hours for s in sch.shifts], [D("12"), D("6"), D("6")])
+        self.assertEqual(sch.cycle_hours, D("24"))
+        self.assertEqual(sch.starts, [D("0"), D("12"), D("18")])
+        # 不给 hours 时按均分（没有任何时长提示）
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for i in range(3):
+                p = Path(tmp) / f"shift{i}.json"
+                p.write_text(json.dumps({"facilities": []}, ensure_ascii=False), encoding="utf-8")
+                paths.append(p)
+            self.assertEqual([s.hours for s in load_schedule(paths).shifts], [D("8")] * 3)
+
     def test_班次名没有时长则均分周期(self):
         """班次名里没有 `h` ⇒ 按班次数均分默认 24h（3 班 → 8/8/8）。"""
         with tempfile.TemporaryDirectory() as tmp:
@@ -342,6 +368,85 @@ class Test进驻事件与口径(MoodAssertMixin, unittest.TestCase):
         self.assertGreater(keep.mood_at("菲亚梅塔", D("6")), D("10"))
         self.assertEqual(swap.mood_at("菲亚梅塔", D("6")), D("0"))
         self.assertEqual(swap.mood_at("乙", D("6")), D("24"))        # 他在宿舍 → 保持满
+
+    def _three_shifts(self, entry_events, her_mood: str = "24"):
+        """三个文件各一班（12/6/6），每班布局相同：
+
+        宿舍 = 甲 20 + 菲亚梅塔；制造站 = 巫恋 6 + 乙 18；贸易站 = 龙舌兰 2 + 丙 12。
+        进驻事件配置放在第一个文件里（读配置看的是第一个班次）。
+        """
+        tmpdir = tempfile.mkdtemp()
+        paths = []
+        names = ("Shift 1 · 12h", "Shift 2 · 6h", "Shift 3 · 6h")
+        for i in range(3):
+            p = Path(tmpdir) / f"s{i}.json"
+            data = {"_source_plan": names[i],          # 班次名（按班次名定位覆盖时要用）
+                    "facilities": [
+                        {"type": "宿舍", "level": 5, "operators": [
+                            {"name": "甲", "mood": "20"}, {"name": "菲亚梅塔", "mood": her_mood}]},
+                        {"type": "制造站", "level": 3, "name": "制造站#1", "operators": [
+                            {"name": "巫恋", "mood": "6"}, {"name": "乙", "mood": "18"}]},
+                        {"type": "贸易站", "level": 3, "name": "贸易站#1", "operators": [
+                            {"name": "龙舌兰", "mood": "2"}, {"name": "丙", "mood": "12"}]},
+                    ]}
+            if i == 0:
+                data["entry_events"] = entry_events
+            p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            paths.append(p)
+        return load_schedule(paths, hours=[D("12"), D("6"), D("6")])
+
+    @staticmethod
+    def _swaps(traj):
+        return [m for m in traj.marks if m.kind == "entry" and "互换" in m.label]
+
+    def test_按班次逐班生效(self):
+        """三班 12/6/6：1 班换指定的人、2 班自动挑最累的、3 班完全不用。"""
+        sch = self._three_shifts({"enabled": True, "scope": "anywhere", "per_shift": [
+            {"swap_with": "巫恋"}, {"swap_with": "any"}, {"enabled": False}]})
+        self.assertEqual(sch.entry_config_for_shift(0).swap_with, "巫恋")
+        self.assertEqual(sch.entry_config_for_shift(1).swap_with, "any")
+        self.assertIs(sch.entry_config_for_shift(2).enabled, False)
+
+        traj = simulate_schedule(sch, cycles=1, entry_events=True)
+        swaps = self._swaps(traj)
+        self.assertEqual(len(swaps), 2, [m.label for m in swaps])       # 第 3 班不换
+        self.assertEqual([float(m.t) for m in swaps], [0.0, 12.0])
+        self.assertIn("指定的 巫恋", swaps[0].label)
+        self.assertIn("自动挑的 龙舌兰", swaps[1].label)                  # 龙舌兰 2 点，最累
+        self.assertFalse([m for m in traj.marks if float(m.t) == 18.0 and m.kind == "entry"
+                          and "互换" in m.label])
+
+    def test_按班次强制_逐班(self):
+        """逐班「强制」：只有第 1 班勾了 → 她回满的那一刻（7h）就换；不勾 → 等到第 2 班开始（12h）。"""
+        def entry(force_first):
+            return {"enabled": True, "scope": "anywhere", "swap_with": "巫恋",
+                    "per_shift": [{"force": force_first}, {}, {"enabled": False}]}
+
+        traj = simulate_schedule(self._three_shifts(entry(True), her_mood="10"),
+                                 cycles=1, entry_events=True)
+        swaps = self._swaps(traj)
+        self.assertEqual(len(swaps), 1)
+        self.assertLessEqual(abs(swaps[0].t - D("7")), D("0.01"))       # 她 10→24 需 7h
+
+        traj = simulate_schedule(self._three_shifts(entry(False), her_mood="10"),
+                                 cycles=1, entry_events=True)
+        swaps = self._swaps(traj)
+        self.assertEqual(len(swaps), 1)
+        self.assertLessEqual(abs(swaps[0].t - D("12")), D("0.01"))      # 只在下个班次开始时才试
+
+    def test_按班次写法与继承(self):
+        """按序号 / 按班次名定位；显式 null 清空对象；没写的字段继承全局。"""
+        sch = self._three_shifts({"enabled": True, "scope": "anywhere", "swap_with": "巫恋",
+                                  "per_shift": {"2": {"swap_with": None, "force": True},
+                                                "Shift 3 · 6h": {"enabled": False}}})
+        eff1 = sch.entry_config_for_shift(0)
+        self.assertEqual(eff1.swap_with, "巫恋")
+        self.assertTrue(eff1.restore_back)          # 没写 → 继承全局默认
+        eff2 = sch.entry_config_for_shift(1)
+        self.assertIsNone(eff2.swap_with)           # 明确清空 → 回默认口径
+        self.assertTrue(eff2.force)
+        self.assertEqual(eff2.scope, "anywhere")    # 没写 scope → 继承
+        self.assertIs(sch.entry_config_for_shift(2).enabled, False)
 
     def test_阈值集合覆盖已知心情条件(self):
         """事件阈值必须覆盖现有条件函数读的心情值（0/12/18/20/24）。"""

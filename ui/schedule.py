@@ -47,7 +47,8 @@ from mood_soc import (apply_entry_events, build_base_layout, compute_net_rate,
 from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import MOOD_MAX, MOOD_MIN
 from mood_soc.maa import read_maa
-from mood_soc.models import BaseLayout, build_entry_event_config
+from mood_soc.models import (BaseLayout, EntryEventConfig, EntryShiftOverride,
+                             build_entry_event_config, resolve_entry_config)
 from mood_soc.skills import DEFAULT_OPERATORS
 
 # 周期默认 24h；班次时长之和必须等于周期时长
@@ -258,8 +259,16 @@ class Schedule:
             cfg = getattr(s.world, "entry_events", None)
             if cfg is not None:
                 return cfg
-        from mood_soc.models import EntryEventConfig
         return EntryEventConfig()
+
+    def entry_config_for_shift(self, index: int, overrides=None) -> EntryEventConfig:
+        """第 `index` 班（0 基）的**有效**进驻事件配置（已合并按班次覆盖）。"""
+        shift = self.shifts[index]
+        return resolve_entry_config(self.entry_config(), index, shift.label, overrides)
+
+    def shift_labels(self) -> List[str]:
+        """各班次名（界面按班次配置时用）。"""
+        return [s.label for s in self.shifts]
 
 
 # ============================================================================
@@ -272,16 +281,20 @@ def load_schedule(paths: Sequence[Union[str, Path]],
 
     - 一个 MAA 文件可能含多个 plan ⇒ 每个 plan 一个班次（按文件顺序、plan 顺序）；
       **一个班次一个文件**（用户的 12h/6h/6h 三个文件）是最常见用法。
-    - 每班时长：显式 `hours` > 班次名提示 > 均分。
+    - 每班时长：**显式 `hours`（按班次顺序，可少于班次数）> 班次名提示 > 均分**。
     - 周期：默认 = 各班时长之和（自洽）；显式给 `cycle_hours` 时必须与之和相等。
     """
     shifts: List[Shift] = []
+    given = [to_decimal(h) for h in hours] if hours else []
     for p in paths:
         kind = shift_file_kind(p)
-        if kind == "maa":
-            shifts.extend(shifts_from_maa_file(p))
-        else:
-            shifts.extend(shifts_from_scenario_file(p))
+        new = (shifts_from_maa_file(p) if kind == "maa"
+               else shifts_from_scenario_file(p))
+        # 显式 hours 按顺序覆盖（一个文件可能含多个班次，就依次取）
+        for s in new:
+            if given:
+                s.hours = given.pop(0)
+        shifts.extend(new)
     if not shifts:
         raise ValueError("没有解析出任何班次")
     total = _hours_from_hints(shifts, cycle_hours)
@@ -488,28 +501,30 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       entry_scope: Optional[str] = None,
                       entry_restore_back: Optional[bool] = None,
                       entry_force: Optional[bool] = None,
+                      entry_per_shift: Optional[List[EntryShiftOverride]] = None,
                       max_segment: Decimal = MAX_SEGMENT_HOURS) -> Trajectory:
     """把排班跑成"整周期心情轨迹"（事件驱动精确积分）。
 
     参数：
         cycles        跑几个周期（心情跨周期连续，用来看是否收敛）
         initial_moods 周期起点的心情；缺省取**第一班布局里写的值**（没有则 24）
-        entry_events  是否结算进驻事件（M15a 患难之交；默认否）
+        entry_events  总开关：要不要结算进驻事件（M15a 患难之交；默认否）
         entry_swap_with  与**谁**换：人名 / `"any"`（自动挑全基建最累的）/
                        `None`（用场景 JSON，再没有＝「前一位进驻」）
-        entry_scope      `"dorm"`（限同宿舍）/ `"anywhere"`（**基建任意位置**）；
-                       `None` = 用场景 JSON
-        entry_restore_back  `True` = 只换心情、两人留在原位置（默认）；
-                       `False` = **位置也一起互换**；`None` = 用场景 JSON
-        entry_force      `True` = 到点（每班开始）触发者没满心情时**等她回满那一刻再换**；
-                       `False` = 这次不换；`None` = 用场景 JSON
+        entry_scope      `"dorm"`（限同宿舍）/ `"anywhere"`（**基建任意位置**）；`None` = 用 JSON
+        entry_restore_back  `True` = 只换心情、两人留在原位置（默认）；`False` = **位置也一起互换**
+        entry_force      `True` = 到点（每班开始）触发者没满心情时**等她回满那一刻再换**
+        entry_per_shift  **按班次覆盖**（`[EntryShiftOverride, ...]`）——
+                       3 班排班就可以"第 1 班换给巫恋、第 2 班自动挑最累的、第 3 班不用"；
+                       `None` = 用场景 JSON 里的 `per_shift`
         max_segment   单段最长时长（兜底安全上限）
 
     数值说明：单段内心情是精确的线性函数；误差只来自 Decimal 除法在 28 位有效数字处的
     舍入（量级 1e-26），界面上按"显示边界"舍入到 2 位小数即可。
 
     实现说明：每个班次都会**深拷贝一份布局副本**（`worlds`）供模拟使用——
-    这样 `entry_restore_back=False`（位置也互换）只在这次模拟里生效，不会污染排班本身。
+    这样 `entry_restore_back=False`（位置也互换）只在这次模拟里生效，不会污染排班本身；
+    同时把"这一班的有效配置"挂到副本上，`apply_entry_events` 直接读它。
     """
     if cycles < 1:
         raise ValueError("cycles 至少为 1")
@@ -521,12 +536,23 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     moods: Dict[str, Decimal] = {n: start_moods.get(n, MOOD_MAX) for n in names}
 
     cfg = schedule.entry_config()
-    scope = entry_scope if entry_scope is not None else getattr(cfg, "scope", "dorm")
-    restore_back = (entry_restore_back if entry_restore_back is not None
-                    else bool(getattr(cfg, "restore_back", True)))
-    force = entry_force if entry_force is not None else bool(getattr(cfg, "force", False))
-    swap_with = entry_swap_with if entry_swap_with is not None else getattr(cfg, "swap_with", None)
+    base = EntryEventConfig(
+        enabled=None,                     # 由 entry_events 总开关决定
+        swap_with=(entry_swap_with if entry_swap_with is not None else cfg.swap_with),
+        scope=(entry_scope if entry_scope is not None else cfg.scope),
+        restore_back=(entry_restore_back if entry_restore_back is not None else cfg.restore_back),
+        force=(entry_force if entry_force is not None else cfg.force),
+    )
     worlds = [copy.deepcopy(s.world) for s in schedule.shifts]
+    # 每个班次解析一次"这一班的有效配置"，挂到该班次的副本上（按班次覆盖在这里生效）。
+    # ⚠️ 覆盖列表要**显式传给 resolve_entry_config**：它默认读的是"第一个参数"的 per_shift，
+    #    而这里的 base 是拼出来的（per_shift 为空），不显式传就会把按班次配置整段忽略。
+    per_shift = list(entry_per_shift) if entry_per_shift is not None else list(cfg.per_shift)
+    effs: List[EntryEventConfig] = []
+    for i, s in enumerate(schedule.shifts):
+        eff = resolve_entry_config(base, i, s.label, per_shift)
+        effs.append(eff)
+        worlds[i].entry_events = eff
 
     times: List[Decimal] = [ZERO]
     series: Dict[str, List[Decimal]] = {n: [moods[n]] for n in names}
@@ -547,14 +573,15 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
 
     for seg_i, (t0, seg_end, idx) in enumerate(segments):
         world = worlds[idx]                 # 本班次的**可变副本**（位置互换只发生在副本里）
-        pending: List[str] = []             # "等她回满心情再换"的触发者（entry_force）
+        eff = effs[idx]                     # 本班次的**有效**进驻事件配置（含按班次覆盖）
+        pending: List[str] = []             # "等她回满心情再换"的触发者（force）
         # —— 进驻事件（可选）：进入班次那一刻先试一次 ——
         # 这是 t0 处的**跳变**：t0 之前是换心情前的值，t0 起是换之后的（就地改写节点，
         # 而不是追加同刻节点——否则 mood_at(t0) 会取到跳变前的旧值）。
-        if entry_events:
+        # 总开关（entry_events）打开时，逐班看这次要不要做（per_shift 里写 "enabled": false 就不做）。
+        if entry_events and eff.enabled is not False:
             _sync_moods(world, moods)
-            events = apply_entry_events(world, swap_with=swap_with, enabled=True,
-                                        scope=scope, restore_back=restore_back)
+            events = apply_entry_events(world, enabled=True)
             # ⚠️ 事件里可能只有"未执行"的说明（如配了 force 但她此刻没满心情）——
             # 那种情况既不算换成功、也不能拦住"等她回满"的等待逻辑。
             swapped = [ev for ev in events if ev.group == "entry_swap"]
@@ -563,7 +590,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             if swapped:
                 _read_back_moods(world, moods)
                 _record_jump(times, series, names, moods, t0)
-            elif force:
+            elif eff.force:
                 # 强制换心情：此刻她不满心情 → 登记，等她回满**那一刻**再换
                 pending = [h for h, _room in entry_event_holders(world)
                            if moods.get(h, MOOD_MAX) < MOOD_MAX]
@@ -600,13 +627,13 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             if pending and any(moods.get(h, ZERO) >= MOOD_MAX for h in pending):
                 pending = []
                 _sync_moods(world, moods)
-                events = apply_entry_events(world, swap_with=swap_with, enabled=True,
-                                            scope=scope, restore_back=restore_back)
+                events = apply_entry_events(world, enabled=True)
                 if events:
                     for ev in events:
                         marks.append(Mark(t, "entry", ev.detail))
-                    _read_back_moods(world, moods)
-                    _record_jump(times, series, names, moods, t)
+                    if any(ev.group == "entry_swap" for ev in events):
+                        _read_back_moods(world, moods)
+                        _record_jump(times, series, names, moods, t)
                 rates = None
                 groups = [[o.name for o in f.operators] for f in world.facilities]
             elif event_fired:

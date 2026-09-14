@@ -11,8 +11,9 @@ from __future__ import annotations
 import unittest
 from decimal import Decimal
 
-from mood_soc import (INF, apply_entry_events, build_base_layout, evaluate, evaluate_base,
-                       find_entry_target, simulate, time_to_mood)
+from mood_soc import (INF, apply_entry_events, build_base_layout, entry_target_kind, evaluate,
+                       evaluate_base, find_entry_target, simulate, time_to_mood)
+from mood_soc.models import build_entry_shift_overrides, resolve_entry_config
 from mood_soc.config import (FacilityType, WORK_FACILITIES, facility_max_count,
                              facility_slots)
 from mood_soc.output import base_result_to_dict, mood_result_to_dict
@@ -1271,6 +1272,49 @@ class Test进驻事件M15a(unittest.TestCase):
         target, note = find_entry_target(w, holder, dorm, "不存在的人", "anywhere")
         self.assertIsNone(target)
         self.assertIn("不在基建内", note)
+
+    def test_entry_target_kind(self):
+        """口径判定只有一处：行为与文案都从它取（曾出现"实际自动挑、文案写成前一位"）。"""
+        self.assertEqual(entry_target_kind(None, "dorm"), "default")
+        self.assertEqual(entry_target_kind(None, "anywhere"), "auto")
+        self.assertEqual(entry_target_kind("", "dorm"), "default")
+        self.assertEqual(entry_target_kind("any", "dorm"), "auto")
+        self.assertEqual(entry_target_kind("任意", "dorm"), "auto")
+        self.assertEqual(entry_target_kind("巫恋", "anywhere"), "named")
+
+    def test_按班次覆盖解析(self):
+        """`per_shift` 的三种写法：列表（按位置）、字典（按序号/班次名）、字段级继承。"""
+        cfg = self._cross_world({"enabled": True, "per_shift": [
+            {"enabled": False}, "乙", {"swap_with": None}]}).entry_events
+        self.assertEqual(len(cfg.per_shift), 3)
+        self.assertIs(cfg.per_shift[0].enabled, False)
+        self.assertEqual(cfg.per_shift[1].swap_with, "乙")       # 字符串简写 = 点名
+        self.assertEqual(cfg.per_shift[2].swap_with, "")         # null = 明确清空（回默认口径）
+
+        ov = build_entry_shift_overrides({"Shift 2 · 6h": {"force": True}})[0]
+        self.assertTrue(ov.matches(1, "Shift 2 · 6h"))
+        self.assertFalse(ov.matches(0, "Shift 1 · 12h"))
+        self.assertTrue(build_entry_shift_overrides([{"force": True}])[0].matches(0, "任意名"))
+        with self.assertRaises(ValueError):
+            build_entry_shift_overrides(123)
+        with self.assertRaises(ValueError):
+            build_entry_shift_overrides([{"scope": "月球"}])
+
+    def test_按班次合并成有效配置(self):
+        """`resolve_entry_config`：逐字段覆盖、未写的继承全局。"""
+        cfg = self._cross_world({"enabled": True, "scope": "anywhere", "swap_with": "巫恋",
+                                 "force": False,
+                                 "per_shift": [{"force": True, "scope": "dorm"},
+                                               {"swap_with": "any"}]}).entry_events
+        eff0 = resolve_entry_config(cfg, 0, "Shift 1 · 12h")
+        self.assertEqual((eff0.swap_with, eff0.scope, eff0.force), ("巫恋", "dorm", True))
+        eff1 = resolve_entry_config(cfg, 1, "Shift 2 · 6h")
+        self.assertEqual((eff1.swap_with, eff1.scope, eff1.force), ("any", "anywhere", False))
+        eff2 = resolve_entry_config(cfg, 2, "Shift 3 · 6h")      # 无覆盖 → 全继承
+        self.assertEqual((eff2.swap_with, eff2.scope, eff2.force), ("巫恋", "anywhere", False))
+        # 显式传 overrides 时以它为准（界面用它覆盖 JSON）
+        ui = [build_entry_shift_overrides([{"swap_with": "甲"}])[0]]
+        self.assertEqual(resolve_entry_config(cfg, 0, "x", ui).swap_with, "甲")
 
 
 class Test挂件位(unittest.TestCase):
