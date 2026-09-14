@@ -101,10 +101,42 @@ python main.py --scenario-file x.json --target 菲亚梅塔 --entry-events
 # [进驻事件] [M15a] 菲亚梅塔「患难之交」　（与「前一位进驻」的 路人 互换：菲亚梅塔 24 → 6，路人 6 → 24）
 ```
 
-```python
-from mood_soc import apply_entry_events          # ⚠️ 就地修改 world 的干员心情
-events = apply_entry_events(world)               # 返回事件流水账（Bucket.EVENT）
+#### 换不换、换谁：都可以配
+
+**场景 JSON 顶层**加一个 `entry_events` 就能定这两件事（不必每次敲命令行开关）：
+
+```json
+{
+  "entry_events": {"enabled": true, "swap_with": "路人"},
+  "facilities": [
+    {"type": "宿舍", "level": 5, "operators": [
+      {"name": "路人", "mood": 6}, {"name": "菲亚梅塔", "mood": 24}
+    ]}
+  ]
+}
 ```
+
+- `enabled`：`true` = 默认结算（CLI/界面不用再开）；`false` = **这个布局不换心情**；省略 = 未配置。
+- `swap_with`：**与谁**互换；省略 = 默认的「前一位进驻」。给了名字就必须是**同一宿舍**的另一位，
+  不在同一宿舍时**不换**，并记一条 `Bucket.EVENT` 说明原因（CLI/界面都会显示）。
+- 宽松写法：`"entry_events": true` / `false`，或直接写 `"entry_events": "某人"`。
+
+```python
+from mood_soc import apply_entry_events, entry_event_holders  # ⚠️ 前者就地修改 world 的干员心情
+events = apply_entry_events(world)                            # 默认：结算，用"前一位进驻"
+events = apply_entry_events(world, swap_with="路人")           # 指定与谁换
+events = apply_entry_events(world, enabled=False)             # 明确不换
+events = entry_event_holders(world)                           # [(触发者名, 所在房间)] 供界面提示
+```
+
+**优先级**（两边都能配，规则简单）：
+
+| | 取值 | 谁说了算 |
+|---|---|---|
+| 换不换 | `enabled` 参数 / JSON `enabled` / 都没有 | **显式参数 > JSON > 默认结算**（"调用这个函数"本身就是"要结算"） |
+| 换谁 | `swap_with` 参数 / JSON `swap_with` / 都没有 | **显式参数 > JSON > 「前一位进驻」** |
+
+命令行 `--entry-events` 与界面上的勾选都是"显式参数"，因此它们**优先于** JSON 里的 `enabled: false`。
 
 「前一位进驻」= `Facility.operators` 里排在触发者之前的那一位（该列表本来就是进驻顺序）。
 幂等：换完她就不再是满心情，重复调用不会再换回来。
@@ -441,7 +473,7 @@ Rhodes-MoodSOC/
 | `--out-dir` | 目录 | `results` | JSON 文件输出目录（仅配合 `--json-file` 生效） |
 | `--json-file` | flag | 关 | 是否额外把结果写入 JSON 文件（默认只打印到 stdout） |
 | `--trace` | flag | 关 | 仅 single 模式：附加心情轨迹（时间步进模拟，输出到 stderr） |
-| `--entry-events` | flag | 关 | 先结算**进驻事件**（M15a 患难之交心情互换）再测算；不指定则按布局给出的心情原样测算 |
+| `--entry-events` | flag | 关 | 先结算**进驻事件**（M15a 患难之交：菲亚梅塔进驻宿舍时与同宿舍某人互换心情）再测算；场景 JSON 顶层写 `"entry_events": {"enabled": true, "swap_with": "某人"}` 也能开启并指定与谁互换 |
 
 **场景来源优先级**：`--demo` > `--scenario-file`；两者都不给则打印帮助并退出。
 
@@ -525,6 +557,12 @@ python main.py --mode base --demo --period 12                           # 先推
 }
 ```
 
+顶层还可以可选地写 **`entry_events`**（进驻事件 = 进驻那一刻的换心情）：
+
+```json
+{"entry_events": {"enabled": true, "swap_with": "路人"}, "facilities": [ ... ]}
+```
+
 - `type` 支持中文名或英文枚举值（`control_center` / `manufacturing` / ...）。
 - 干员既可用名字字符串（自动套用内置技能，默认 `elite=2` 满练），也可用
   `{"name": "x", "mood": 20.5, "skill_ids": [...], "trait": "岁", "elite": 2, "level": 1}` 对象。
@@ -550,7 +588,9 @@ python main.py --mode base --demo --period 12                           # 先推
 | **一眼看到全部房间** | 看板用 21px 紧凑芯片：控制中枢横排一行，工作区（制造/贸易/发电）与辅助休息区（会客/办公/训练/加工/宿舍）分两列，**一屏放下，不用滚动** |
 | **一眼看到全部干员** | 底部「全员一览」把整个周期出现过的干员（含只出现在别的班次的）全摆出来，带位置标记（`制1`/`宿3`/`中`），按颜色看谁危险 |
 | 逐个位置设干员与心情 | 看板**左键**位置 → 选人/更换/清空；**右键**位置 → 设该干员心情（周期起点） |
+| **进驻事件（换心情）开关** | 工具栏「结算进驻事件（进驻那一刻换心情）」+ 旁边实时旁注（不结算 / 与前一位进驻者互换 / 与「某人」互换）；点「**这是什么／换谁…**」打开对话框：里面有"这是什么"的白话解释 + 换不换 + 与谁换（可指定同宿舍任意一人）。场景 JSON 顶层写了 `entry_events` 时，导入即自动同步到这里 |
 | 时间滑动 → 各位置心情实时变化 | 底部滑块（`←/→` 微调 15 分钟、`Home/End` 跳首尾、`空格` 播放/暂停） |
+| **播放**（看一天怎么走） | ▶ 播放 + **速度倍率 0.5x / 1x / 2x / 4x**（1x = 1 小时/秒，24 秒跑完一天） |
 | 对点：输入干员名 → 整周期心情曲线 | 右侧「对点查询」选人，或直接点「全员一览」里的芯片 → 曲线 + 关键数值（最低/最高及时刻、红脸段数与时长、各班最低） |
 
 技术底座是 tkinter（标准库），**没有引入任何第三方依赖**；界面规矩、计算口径与已知简化见
@@ -566,6 +606,8 @@ python main.py --mode base --demo --period 12                           # 先推
 | 函数 / 常量 | 签名 | 返回 | 说明 |
 |---|---|---|---|
 | `build_base_layout` | `(data, validate=False)` | `BaseLayout` | 从场景 dict 构建布局（格式见上文「3) 场景 JSON 格式」）；`validate=True` 时做容量/房间数自检并抛 `ValueError` |
+| `apply_entry_events` | `(world, swap_with=None, enabled=None)` | `list[Contribution]` | **进驻事件**（M15a 换心情）：`swap_with` 指定与谁换、`enabled` 强制开关；⚠️ **就地改** `world` 的心情。优先规则见上文 |
+| `entry_event_holders` | `(world)` | `list[(干员名, 房间名)]` | 列出可能触发进驻事件的干员（如菲亚梅塔），供界面提示 |
 | `evaluate` | `(world, name, period_hours=0)` | `MoodResult` | single 模式：目标干员时段后的状态 |
 | `evaluate_base` | `(world, period_hours=0)` | `BaseResult` | base 模式：全体干员 + 布局可维持时长 |
 | `compute_net_rate` | `(world, name)` | `Decimal` | 某干员净速率（消耗 − 回复，>0 下降） |
@@ -698,7 +740,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 ## 六、测试（黑盒）
 
 测试为**黑盒测试**：只通过「命令行」「公开 API」与「图形界面的计算核心」断言
-**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **117 个用例全绿**。
+**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **133 个用例全绿**。
 
 ```bash
 # 运行全部测试
