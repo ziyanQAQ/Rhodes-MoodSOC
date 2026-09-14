@@ -103,7 +103,7 @@ def _template_skills(op: Operator, template_id: str):
     """按**模板**取已生效技能（用于 M07b / M15a 这类「模板即机制」的技能）。
 
     这类技能的 `kind` 只是把它落到某个相近的族里，真正的机制由模板决定，
-    所以调度按 `template_id` 而不是按 `kind`（与 §4.25 的 M07b 同一约定）。
+    所以调度按 `template_id` 而不是按 `kind`（与 documents/04-特殊机制.md 第 25 条 的 M07b 同一约定）。
     """
     return [SKILLS[sid] for sid in _active_skill_ids(op) if SKILLS[sid].template_id == template_id]
 

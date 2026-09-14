@@ -88,7 +88,7 @@ FACILITY_TO_ROOM_TYPE = {
 #       · rooms[roomType].phases[等级-1].maxStationedNum —— 该等级可进驻人数
 # 快照 commit：0ef7f952dfd018392200157a5c79a6511ba69122（客户端 2.7.71）
 #
-# 复核方式（AGENTS.md §11）：
+# 复核方式（documents/06-数据来源.md）：
 #   python -c "import json;d=json.load(open('…/building_data.json',encoding='utf-8'));
 #              print({k:(v['maxCount'],[p['maxStationedNum'] for p in v['phases']])
 #                     for k,v in d['rooms'].items()})"

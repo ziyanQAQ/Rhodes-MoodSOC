@@ -386,7 +386,7 @@ def parse_params(raw: str) -> dict:
 def agd_commit(agd: Path) -> str:
     """上游仓库当前 commit（可追溯性：结论要能对回具体版本）。
 
-    策略见 AGENTS.md §11：未知数据一律以上游仓库为准，因此每次生成都要留下版本号。
+    策略见 documents/06-数据来源.md：未知数据一律以上游仓库为准，因此每次生成都要留下版本号。
     """
     import subprocess
     try:
@@ -421,7 +421,7 @@ def main() -> int:
         print(f"已更新 {SKILLS_TXT.relative_to(ROOT)}（{len(rows)} 个 clause）")
         print(f"已生成 {REGISTRY_TXT.relative_to(ROOT)}（{len(ledger)} 条 buff）")
         print(f"上游 ArknightsGameData：{agd} @ {agd_commit(agd)}"
-              f"（AGENTS.md §11 数据查找策略；结论请引用该 commit）")
+              f"（documents/06-数据来源.md；结论请引用该 commit）")
 
     # ---------------- 校验 ----------------
     print("\n=== 校验 ===")

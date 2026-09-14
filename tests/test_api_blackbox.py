@@ -166,7 +166,7 @@ class Test巫恋裁缝(unittest.TestCase):
         """巫恋·裁缝·α（self_consume）只对自己减耗 0.25；低语（facility_consume）对**全体含自身**加耗 0.25。
 
         口径依据：官方原文「…同时**全体**心情每小时消耗+0.25」→ 含自身（用户已拍板，
-        见 resources/skill_taxonomy.md；原 room_others「不含自身」口径作废）。
+        见 documents/05-技能分类大纲.md；原 room_others「不含自身」口径作废）。
 
         贸易站 3 人基准：1 - 0.1(设施) - 0.25(中枢) = 0.65。
         - 火哨"暖场"（self -0.1）→ 0.65 - 0.1 = 0.55；再受低语 +0.25 → 0.80。
@@ -346,7 +346,7 @@ class TestTrace(unittest.TestCase):
 class Test布局模型(unittest.TestCase):
     """P1 重构：多房间 / 容量 / 副手 / 活动室 / 按类型聚合 / 各设施基础消耗。
 
-    上游依据（AGENTS.md §11 数据查找策略）：
+    上游依据（documents/06-数据来源.md）：
       building_data.json → rooms[roomType].maxCount 与 rooms[roomType].phases[lv].maxStationedNum
     """
 
@@ -821,7 +821,7 @@ class Test分支条件P4b(unittest.TestCase):
     """P4b：把上游**完整原文**里可建模的分支条件纳入模型。
 
     这批子句的本地 condition 列是被截断的（`如果` / `反之` / `多心情子句`），
-    按 AGENTS.md §11 回上游取全文后才看出真实语义。
+    按 documents/06-数据来源.md 回上游取全文后才看出真实语义。
     过程中还暴露了 3 个「条件从未被求值」的循环（见各用例注释）。
     """
 

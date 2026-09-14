@@ -103,7 +103,7 @@ WORK_FACILITIES = ("POWER", "MANUFACTURING", "TRADING", "OFFICE", "RECEPTION")
 PARTIAL_WORK_FACILITIES = ("POWER", "OFFICE", "RECEPTION")
 
 # 按 (skill_id, clause) 精确挂条件函数——用于**原文被本地 CSV 截断、但上游文本完整**的分句。
-# 依据 AGENTS.md §11：逐条取自上游 buffs[].description（见各条注释里的原文）。
+# 依据 documents/06-数据来源.md：逐条取自上游 buffs[].description（见各条注释里的原文）。
 CLAUSE_COND = {
     # 会客室 6 条：「如果会客室内只有自身处于工作状态时，…心情每小时消耗 +N」
     ("meet_spd&cost_condChar_000", 1): "_cond_alone_in_facility",   # 双面间谍

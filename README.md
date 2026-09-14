@@ -15,11 +15,11 @@
 > 技能数值以两份 txt 为**权威来源**（docx 中的技能示例值已过时）。
 > 两份 txt 的**上游**是 `Kengxxiao/ArknightsGameData`（`zh_CN/gamedata/excel/building_data.json`）；
 > 结构分析、逐条对照结果、以及「是否属心情类」的待判定清单见
-> `resources/AGD_心情技能数据源分析.md`（该文档只是**数据源分析**，不参与计算）。
+> `documents/08-上游数据源分析.md`（该文档只是**数据源分析**，不参与计算）。
 >
 > **技能分类**：每条技能都挂在一个**六轴模板**（`M01`~`M17` 心情类 / `X01`~`X11` 非心情）上，
 > 新增干员技能 = 认模板 + 填参数；上游全部 buff 都有覆盖台账，未归类会**硬报错**。
-> 见 `resources/skill_taxonomy.md`（分类大纲 + 模板字典）与 `resources/skills_registry.txt`（台账）。
+> 见 `documents/05-技能分类大纲.md`（分类大纲 + 模板字典）与 `resources/skills_registry.txt`（台账）。
 
 ### 心情流水账（可解释）
 
@@ -179,23 +179,24 @@ W「索然无味」= 1.0（设施）+ 1.0（自身技能）= 2.0/h  → 一管 2
 ### 开发约定
 
 - **每次改动即时提交**：每完成一次修改就 `git commit` 一次，提交信息用 **1–15 个字**简要描述
-  （如「修复替换链」「补变量账本」）。
-- 改了代码 / 数据 / 文档，必须同步更新 `AGENTS.md` 与 `README.md`。
-- **`AGENTS.md` 有 64KB 指令预算**：超了会被截断。§4 只留"规则 + 关键出处"，
-  长篇证据链与 bug 史写进 `resources/mood_engine_design.md` / `resources/data_lookup_policy.md`。
+  （如「修复替换链」「补变量账本」）。一次提交只做一件事。
+- **改完同步文档**：至少更新本文件与 `AGENTS.md`，以及 `documents/` 下受影响的那一篇。
+- **目录分工**：`resources/` 只放**数据**，`documents/` 放**文档**（按门类分文件，
+  索引见 `documents/README.md`）；根 `AGENTS.md` 是给 AI 的**精简入口**，保持精简
+  （64KB 指令预算，超了会被截断），细节一律写进 `documents/`。
 
 ### 技能分类与阵营表
 
 - **分类**：每个技能 clause 挂在六轴模板（`M01`~`M17` 心情类 / `X01`~`X11` 非心情）上，
   新增干员技能 = 认模板 + 填参数；上游全部 755 条 buff 都有覆盖台账，未归类**硬报错**。
-  见 `resources/skill_taxonomy.md`、`resources/skills_registry.txt`。
+  见 `documents/05-技能分类大纲.md`、`resources/skills_registry.txt`。
 - **阵营/标签**：`resources/factions.txt` 由 `scripts/generate_factions.py` 从上游
   `cc.g.*` / `cc.tag.*` 自动生成（28 组 231 条），**不手工维护**
   （人工补充只有上游不列名单的「异格者」）。生成器会校验技能引用的阵营名都存在，
   **包括写在条件表达式里的名字**（`_cond_target_in_faction` / `_cond_target_is`），
   写错阵营名或干员名都会直接报错。
-- **架构**：运行时（派发/布局/记录）的可拓展性诊断与重构设计见 `resources/mood_engine_design.md`。
-- **数据查找**：完整的上游查证策略见 `resources/data_lookup_policy.md`
+- **架构**：运行时（派发/布局/记录）的可拓展性诊断与重构设计见 `documents/07-设计史.md`。
+- **数据查找**：完整的上游查证策略见 `documents/06-数据来源.md`
   （拉取命令、四个坑、查完之后的三件事，以及**哪些数据上游根本没有**的清单——
   例如加工站「配方心情消耗」在数据 dump 里没有字段，别去反推）。
 
@@ -213,7 +214,7 @@ W「索然无味」= 1.0（设施）+ 1.0（自身技能）= 2.0/h  → 一管 2
   `git clone --filter=blob:none --depth 1 --no-checkout <仓库> <目录>` 后用
   `git sparse-checkout set zh_CN/gamedata/excel` 只取表。
 - 注意：仓库是**纯数据 dump**，没有公式实现；"怎么算"仍以需求 docx 为准。
-- 完整策略（含四个坑与查完后的动作）见 `AGENTS.md` §11。
+- 完整策略（含四个坑、查完后的动作、**上游缺失清单**）见 `documents/06-数据来源.md`。
 
 > **精度策略**：全部数值计算使用 Python 标准库 `decimal.Decimal`（十进制精确），
 > 避免 float 无法精确表示 `0.1 / 0.3 / 0.05 / 0.0004` 等十进制小数带来的累积误差。
@@ -354,13 +355,19 @@ Rhodes-MoodSOC/
 │   ├── maa_to_scenario.py  把 MAA 排班 JSON 转成本工具的场景 JSON
 │   └── generate_skills_data.py  把 resources 两份 CSV 生成为 mood_soc/skills_data.py
 ├── scenarios/             demo.json + maa_shift1/2/3.json（示例场景）
-├── resources/             心情消耗回复和工休时间.docx + moods_skills.txt + operators.txt
-│                          + skills_registry.txt（755 行 buff 覆盖台账）
-│                          + skill_taxonomy.md（六轴 + 模板字典）
-│                          + arknights-infra-schedule-maa.json + AGD_心情技能数据源分析.md
+├── resources/             ★ **数据**（不放文档）
+│   ├── 心情消耗回复和工休时间.docx        需求文档（心情消耗/回复/工休的**计算规则**）
+│   ├── moods_skills.txt / operators.txt   技能库 + 干员↔技能映射（含 template_id/params）
+│   ├── skills_registry.txt                上游 755 条 buff 的覆盖台账
+│   ├── factions.txt / factions_supplement.txt  阵营/标签表（上游生成）
+│   ├── variable_producers.txt             变量产出者表（人间烟火/热情值/无声共鸣）
+│   └── arknights-infra-schedule-maa.json  MAA 排班样例（转换脚本的输入）
+├── documents/             ★ **文档**（按门类分文件，索引见 documents/README.md）
+│   ├── README.md            文档索引 + §编号约定 + 维护约定
+│   └── 01-架构.md … 09-开发指南.md
 ├── results/               运行生成的结果 JSON（已被 gitignore）
-├── README.md              面向人类的完整说明
-├── AGENTS.md              给 AI 的项目速读指南
+├── README.md              面向人类的完整说明（人类入口）
+├── AGENTS.md              给 AI 的精简入口（DSH 只从项目根自动加载它）
 ├── requirements.txt       仅标准库，无第三方依赖（Python 3.9+）
 └── .venv/                 Python 3.14 虚拟环境（uv 创建）
 ```
