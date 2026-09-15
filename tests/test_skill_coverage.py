@@ -287,6 +287,28 @@ class Test模板级(unittest.TestCase):
         self.assertEqual(world.get_operator("菲亚梅塔").mood, Decimal("10"))
         self.assertEqual(world.get_operator("路人甲").mood, Decimal("24"))
 
+    def test_不以物喜按上游原文走回复侧(self):
+        """夕「不以物喜」：上游写「控制中枢内所有干员的心情每小时**恢复**+0.05」→ 回复侧。
+
+        回归用例：这条原先按 `M05`「同设施全体**消耗** -0.05」建模（净效果看起来一样，
+        但消耗侧末尾有「钳位 ≥0」，中枢里有人消耗已经减到 0 时就会少给 0.05）。
+        见 `documents/05-技能分类大纲.md` §5.12。
+        """
+        world = build_base_layout({"facilities": [
+            {"type": "控制中枢", "level": 5, "operators": ["夕", "路人甲"]},
+        ]})
+        cls = SKILLS["control_mp_cost&bd1_000#1"]
+        self.assertEqual(cls.kind, SkillKind.CC_RECOVER)
+        self.assertEqual(cls.value, Decimal("0.05"))
+        self.assertEqual(cls.template_id, "M03")
+        for who in ("夕", "路人甲"):                     # 中枢内**每人**各一条
+            got = [c.value for c in mood_ledger(world, who).of(Bucket.RECOVER)
+                   if base_skill_id(c.skill_id) == "control_mp_cost&bd1_000"]
+            self.assertEqual(got, [Decimal("0.05")], f"{who} 应当收到 +0.05 回复")
+        # 消耗侧不该再有她这条
+        self.assertEqual([c for c in mood_ledger(world, "路人甲").of(Bucket.CONSUME)
+                          if base_skill_id(c.skill_id) == "control_mp_cost&bd1_000"], [])
+
     def test_登记不建模的模板不产生心情贡献(self):
         """X 族（非心情）与 M15b/M16：登记在册但**一条 clause 都不该有**。"""
         for tid, t in TEMPLATES.items():
@@ -397,14 +419,16 @@ class Test描述对照(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_描述里的数字与数据表一致(self):
+        """上游描述里的数字 + 方向词，与数据表逐条一致（当前 0 处差异）。"""
         bad = [(d.key, d.detail) for d in self.results if not d.ok]
         self.assertEqual(bad, [], f"有 {len(bad)} 条与上游描述对不上")
         counts = {}
         for d in self.results:
             counts[d.status] = counts.get(d.status, 0) + 1
-        self.assertEqual(counts.get("ok"), 245)
+        self.assertEqual(counts.get("ok"), 246)
         self.assertEqual(counts.get("skip"), 4)          # value=0 的消除/事件类
-        self.assertEqual(counts.get("known"), 1)         # 已登记差异（不以物喜）
+        self.assertEqual(counts.get("known"), None)      # 已无"已登记差异"
+        self.assertEqual(V.L3_KNOWN_DIFFS, {})
 
     def test_已登记差异必须还在差异状态(self):
         """自清理：`L3_KNOWN_DIFFS` 里的条目修好之后必须从表里删掉，否则本用例会红。"""

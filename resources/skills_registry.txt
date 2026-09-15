@@ -32,7 +32,7 @@ control_mp_bd2[000],团队合作,CONTROL,A4,X09,no,非心情，登记不建模
 control_mp_bd[000],情报储备,CONTROL,A4,X09,no,非心情，登记不建模
 control_mp_bd[010],乌萨斯特饮,CONTROL,A4,X09,no,非心情，登记不建模
 control_mp_bd_cost_expand[000],孤光共照,CONTROL,A1,M02b,yes,clause 级已建模；持有 1 人
-control_mp_cost&bd1[000],"""不以物喜""",CONTROL,A1,M05,yes,clause 级已建模；持有 1 人
+control_mp_cost&bd1[000],"""不以物喜""",CONTROL,A1,M03,yes,clause 级已建模；持有 1 人
 control_mp_cost&bd2[000],"""不以己悲""",CONTROL,A1,M07a,yes,clause 级已建模；持有 1 人
 control_mp_cost&bd2[010],耐力回复,CONTROL,A1,M07a,yes,clause 级已建模；持有 1 人
 control_mp_cost&bd3[000],生活的重压,CONTROL,A1,M07a,yes,clause 级已建模；持有 1 人

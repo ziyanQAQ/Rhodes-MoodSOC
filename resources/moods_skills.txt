@@ -23,7 +23,7 @@ control_mp_aegir2_010,1,集群狩猎·β,recover,control_room,进驻控制中枢
 control_mp_bd&trade_000,1,演技的怪物,drain,self,self,每有,10,complex,,M07a,stacking=sum;partial_mode=apply;partial=true;var=热情值;var_per=8
 control_mp_bd_cost_expand_000,1,孤光共照,recover,work_area,进驻控制中枢时，<$cc.c.room2>其他设,,50,auto,chongyue_fixed,M02b,scope=room2;max_group=room2_recover;partial=false
 control_mp_bd_cost_expand_000,2,孤光共照,recover,work_area,进驻控制中枢时，<$cc.c.room2>其他设,每有20点人间烟火,50,complex,,M02b,scope=room2;max_group=room2_recover;partial_mode=apply;partial=true;var=人间烟火;var_per=20
-control_mp_cost&bd1_000,1,"""不以物喜""",drain,room,进驻控制中枢时，控制中枢内所有干员的心情每小时恢,,-50,auto,,M05,include_self=true;stacking=sum;partial=false
+control_mp_cost&bd1_000,1,"""不以物喜""",recover,control_room,进驻控制中枢时，控制中枢内所有干员的心情每小时恢,,50,auto,,M03,target=cc_all;stacking=sum;partial=false
 control_mp_cost&bd2_000,1,"""不以己悲""",drain,self,self,,500,auto,,M07a,stacking=sum;partial=false
 control_mp_cost&bd2_010,1,耐力回复,drain,self,self,,500,auto,,M07a,stacking=sum;partial=false
 control_mp_cost&bd3_000,1,生活的重压,drain,self,self,热情值,50,complex,,M07a,stacking=sum;partial_mode=apply;partial=true;var=热情值;var_min=40
