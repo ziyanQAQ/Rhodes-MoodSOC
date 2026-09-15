@@ -339,12 +339,45 @@ class Test新增交互(unittest.TestCase):
             app.update()
 
     # ------------------------------------------------------- 进驻事件（换心情）
+    def test_工具栏不再有换心情开关(self):
+        """开关只有**一个**入口（设置框里的「① 开启心情交换」）——工具栏不能再冒出第二个。
+
+        背景：工具栏原来放着一个 `Checkbutton`，而框里又有一个 ①，两处写同一个变量；
+        虽然状态永远一致（同一个 `BooleanVar`），但"同一个开关出现两次"看上去像两个打架的设置。
+        这条测试盯着它别再回来。
+        """
+        from tkinter import ttk
+
+        app = self.app
+        bar = app.entry_detail.master
+        boxes = []
+
+        def walk(w):
+            for c in w.winfo_children():
+                if isinstance(c, ttk.Checkbutton):
+                    boxes.append(str(c))
+                walk(c)
+
+        walk(bar)
+        self.assertEqual(boxes, [], "工具栏不该再有换心情开关（唯一入口＝设置框里的 ①）")
+        # 关着时工具栏留空；开没开由状态栏说明
+        app.entry_events.set(False)
+        app._sync_entry_label()
+        self.assertEqual(app.entry_detail.cget("text"), "")
+        self.assertIn("换心情：关", app._entry_status())
+        app.entry_events.set(True)
+        app.entry_swap_with, app.entry_scope, app.entry_when = None, "dorm", "full"
+        self.assertIn("换心情：与同宿舍前一位进驻者互换·没满就不换", app._entry_status())
+        app._sync_entry_label()
+        app.entry_events.set(False)
+        app._sync_entry_label()
+
     def test_进驻事件开关有说明且状态可见(self):
-        """开关旁的旁注只写「换谁 + 要不要等她满」——三个设置的紧凑版。"""
+        """工具栏那串摘要只写「换谁 + 要不要等她满」；关着时留空（三个设置的紧凑版）。"""
         app = self.app
         app.entry_events.set(False)
         app._sync_entry_label()
-        self.assertIn("不结算", app.entry_detail.cget("text"))
+        self.assertEqual(app.entry_detail.cget("text"), "")
         app.entry_events.set(True)
         app.entry_swap_with, app.entry_scope, app.entry_when = None, "dorm", "full"
         app._sync_entry_label()

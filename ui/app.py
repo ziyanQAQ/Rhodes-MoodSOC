@@ -141,11 +141,14 @@ class MoodSocApp(tk.Tk):
         cb.pack(side="left")
         cb.bind("<<ComboboxSelected>>", lambda _e: self._on_cycles())
 
-        ttk.Checkbutton(bar, text="结算进驻事件（菲亚梅塔换心情）", variable=self.entry_events,
-                        command=self.recompute).pack(side="left")
+        # 换心情**没有**工具栏开关：唯一入口是「设置…」里的「① 开启心情交换」。
+        # 这里只放"名字 + 摘要"，关着时摘要是空的（开没开由状态栏说明），
+        # 免得同一个开关出现在两处、旁注还要在"开不开"与"换给谁"之间换轨。
+        tk.Label(bar, text="菲亚梅塔换心情", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(16, 4))
         self.entry_detail = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
                                      font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        self.entry_detail.pack(side="left", padx=(6, 4))
+        self.entry_detail.pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="设置…", command=self.edit_entry_events).pack(
             side="left", padx=(0, 0))
 
@@ -261,7 +264,9 @@ class MoodSocApp(tk.Tk):
         if SAMPLE.exists():
             try:
                 self.load_paths([SAMPLE])
-                self.status.configure(text=f"已载入示例排班：{SAMPLE.name}（可用「导入排班…」换成你的）")
+                self.status.configure(
+                    text=f"已载入示例排班：{SAMPLE.name}（可用「导入排班…」换成你的）"
+                         f"　｜　{self._entry_status()}")
             except Exception as exc:                       # noqa: BLE001 —— 启动兜底
                 self.status.configure(text=f"示例排班载入失败：{exc}")
 
@@ -301,7 +306,7 @@ class MoodSocApp(tk.Tk):
             messagebox.showerror("读取失败", str(exc), parent=self)
 
     def recompute(self, fit_slider: bool = False):
-        """结构变化后重算轨迹（改布局 / 改时长 / 改周期数 / 改进驻事件开关）。"""
+        """结构变化后重算轨迹（改布局 / 改时长 / 改周期数 / 改换心情设置）。"""
         if self.schedule is None:
             return
         t0 = time.perf_counter()
@@ -328,7 +333,7 @@ class MoodSocApp(tk.Tk):
         self.status.configure(
             text=f"{len(self.schedule.shifts)} 班 / 周期 {theme.fmt_hours(self.schedule.cycle_hours)}"
                  f"　干员 {len(self.traj.names)} 名　轨迹节点 {len(self.traj.times)}"
-                 f"　重算耗时 {ms:.0f} ms")
+                 f"　重算耗时 {ms:.0f} ms　｜　{self._entry_status()}")
 
     def _refresh_layout(self, quick: bool = False):
         """看板只在"当前时刻所在班次的布局"变化时刷新（房间结构没变则只换内容）。
@@ -591,13 +596,13 @@ class MoodSocApp(tk.Tk):
         return "等她满" if when == "wait" else ""
 
     def _sync_entry_label(self):
-        """把当前设置写在开关旁边（极简；完整说明在「设置…」对话框里）。
+        """工具栏那串摘要（只有"换谁·要不要等她满"；**关着时留空**，开没开由状态栏说）。
 
-        三个设置 → 一行字：`（塞雷娅·等她满）` / `（前一位）` / `（最累的）`；
-        配了按班次覆盖时只写 `（按班次）`，明细进状态栏。
+        开关本身只有设置框里那一个入口，所以这里不再出现「（不结算）」这类"开不开"的字眼，
+        免得同一位置一会儿说开不开、一会儿说换给谁。
         """
         if not self.entry_events.get():
-            self.entry_detail.configure(text="（不结算）")
+            self.entry_detail.configure(text="")
             return
         if self.entry_per_shift:
             self.entry_detail.configure(text="（按班次）")
@@ -608,6 +613,18 @@ class MoodSocApp(tk.Tk):
         token = self._when_token(self.entry_when)
         self.entry_detail.configure(text=f"（{target}·{token}）" if token
                                     else f"（{target}）")
+
+    def _entry_status(self) -> str:
+        """状态栏里的换心情状态（工具栏不再显示"开没开"，所以这里要写清楚）。"""
+        if not self.entry_events.get():
+            return "换心情：关（按你写的初始心情开始；点「设置…」打开）"
+        if self.entry_per_shift:
+            return "换心情：按班次"
+        kind = entry_target_kind(self.entry_swap_with, self.entry_scope)
+        who = {"auto": "全基建最累的", "named": f"「{self.entry_swap_with}」",
+               "default": "同宿舍前一位进驻者"}[kind]
+        token = self._when_token(self.entry_when)
+        return f"换心情：与{who}互换" + (f"·{token}" if token else "·没满就不换")
 
     def _per_shift_brief(self) -> str:
         """按班次的紧凑摘要：`（按班次：1巫恋·强等·3不用）`。"""
