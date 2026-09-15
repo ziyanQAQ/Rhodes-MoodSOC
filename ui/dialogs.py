@@ -197,24 +197,29 @@ def ask_mood(parent, who: str, current, note: str = "") -> Optional[Decimal]:
     return dlg.result
 
 
-class ShiftSettingsDialog(tk.Toplevel):
-    """班次设置：周期时长 + 每班时长（两者必须相等，实时校验）。"""
+class TimelinePanel(tk.Frame):
+    """**时间轴**：周期时长 + 每班时长（两者必须相等，实时校验）。
 
-    def __init__(self, parent, labels: Sequence[str], hours: Sequence, cycle: Decimal):
-        super().__init__(parent, bg=theme.BG)
-        self.title("班次设置")
-        self.resizable(False, False)
-        self.result: Optional[List[Decimal]] = None
+    宿主：`ShiftSettingsDialog`（独立对话框）与 `ui.settings` 的设置中心分区。
+    `on_change(hours)`：合法时回调（设置中心用它做"改动立即生效"；独立对话框不传）。
+    """
+
+    def __init__(self, master, labels: Sequence[str], hours: Sequence, cycle: Decimal,
+                 on_change=None, on_validity=None):
+        super().__init__(master, bg=theme.BG)
         self._labels = list(labels)
+        self._on_change = on_change
+        self.on_validity = on_validity      # 校验结果变化时回调（对话框用它开关「应用」）
+        self.valid = False
 
         tk.Label(self, text="以 24 小时为一个周期：设置几班、每班几小时",
                  bg=theme.BG, fg=theme.TEXT, font=(theme.FONT_FAMILY, theme.FS_TITLE)
-                 ).pack(anchor="w", padx=theme.PAD, pady=(theme.PAD, 2))
+                 ).pack(anchor="w", pady=(0, 2))
         tk.Label(self, text="各班长之和必须等于周期时长", bg=theme.BG, fg=theme.MUTED,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.PAD)
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w")
 
         cyc = tk.Frame(self, bg=theme.BG)
-        cyc.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, 2))
+        cyc.pack(fill="x", pady=(theme.GAP, 2))
         tk.Label(cyc, text="周期（小时）", bg=theme.BG, fg=theme.TEXT,
                  font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(side="left")
         self.cycle_var = tk.StringVar(value=theme.fmt_mood(cycle, 3))
@@ -223,7 +228,7 @@ class ShiftSettingsDialog(tk.Toplevel):
 
         self.rows: List[tk.StringVar] = []
         grid = tk.Frame(self, bg=theme.BG)
-        grid.pack(fill="x", padx=theme.PAD, pady=theme.GAP)
+        grid.pack(fill="x", pady=theme.GAP)
         for i, (label, h) in enumerate(zip(self._labels, hours)):
             tk.Label(grid, text=label, bg=theme.BG, fg=theme.TEXT, anchor="w",
                      font=(theme.FONT_FAMILY, theme.FS_BODY)).grid(row=i, column=0, sticky="w",
@@ -238,16 +243,8 @@ class ShiftSettingsDialog(tk.Toplevel):
 
         self.msg = tk.Label(self, text="", bg=theme.BG, fg=theme.MUTED,
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        self.msg.pack(anchor="w", padx=theme.PAD)
-
-        btns = tk.Frame(self, bg=theme.BG)
-        btns.pack(fill="x", padx=theme.PAD, pady=theme.PAD)
-        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
-        self.ok = ttk.Button(btns, text="应用", style="Accent.TButton", command=self._ok)
-        self.ok.pack(side="right", padx=(0, 6))
-        self.bind("<Escape>", lambda _e: self.destroy())
+        self.msg.pack(anchor="w")
         self._validate()
-        _modal(self, parent)
 
     def _even(self) -> None:
         try:
@@ -270,23 +267,74 @@ class ShiftSettingsDialog(tk.Toplevel):
         cycle, hours = self._parse()
         if cycle is None:
             self.msg.configure(text="请输入数字", fg=theme.DANGER)
-            self.ok.state(["disabled"])
+            self.valid = False
+            self._notify()
             return
         total = sum(hours, Decimal("0"))
         if total != cycle:
             self.msg.configure(text=f"合计 {theme.fmt_mood(total, 3)}h ≠ 周期 "
                                     f"{theme.fmt_mood(cycle, 3)}h", fg=theme.DANGER)
-            self.ok.state(["disabled"])
+            self.valid = False
         elif any(h <= 0 for h in hours):
             self.msg.configure(text="每班时长必须为正数", fg=theme.DANGER)
-            self.ok.state(["disabled"])
+            self.valid = False
         else:
             self.msg.configure(text=f"合计 {theme.fmt_mood(total, 3)}h = 周期 ✔", fg=theme.OK)
-            self.ok.state(["!disabled"])
+            self.valid = True
+        self._notify()
+
+    def _notify(self) -> None:
+        if self.on_validity is not None:
+            self.on_validity(self.valid)
+        if self._on_change is not None and self.valid:
+            self._on_change(self.value())
+
+    def value(self) -> Optional[List[Decimal]]:
+        """合法时返回各班时长，否则 None。"""
+        cycle, hours = self._parse()
+        if cycle is None or sum(hours, Decimal("0")) != cycle or any(h <= 0 for h in hours):
+            return None
+        return hours
+
+
+class ShiftSettingsDialog(tk.Toplevel):
+    """班次设置：周期时长 + 每班时长（薄壳：时间轴面板 + 取消/应用）。"""
+
+    def __init__(self, parent, labels: Sequence[str], hours: Sequence, cycle: Decimal):
+        super().__init__(parent, bg=theme.BG)
+        self.title("班次设置")
+        self.resizable(False, False)
+        self.result: Optional[List[Decimal]] = None
+
+        self.panel = TimelinePanel(self, labels, hours, cycle)
+        self.panel.pack(fill="x", padx=theme.PAD, pady=(theme.PAD, 0))
+        # 兼容旧调用：面板上的控件名直接挂在对话框上（msg / rows / cycle_var）
+        self.cycle_var, self.rows, self.msg = (self.panel.cycle_var, self.panel.rows,
+                                              self.panel.msg)
+
+        btns = tk.Frame(self, bg=theme.BG)
+        btns.pack(fill="x", padx=theme.PAD, pady=theme.PAD)
+        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
+        self.ok = ttk.Button(btns, text="应用", style="Accent.TButton", command=self._ok)
+        self.ok.pack(side="right", padx=(0, 6))
+        # 校验结果 → 「应用」的可用性（面板只报"合不合法"，按钮归宿主管）
+        self.panel.on_validity = self._on_validity
+        self._on_validity(self.panel.valid)
+        self.bind("<Escape>", lambda _e: self.destroy())
+        _modal(self, parent)
+
+    def _on_validity(self, valid: bool) -> None:
+        self.ok.state(["!disabled"] if valid else ["disabled"])
+
+    def _even(self) -> None:
+        self.panel._even()
+
+    def _parse(self):
+        return self.panel._parse()
 
     def _ok(self) -> None:
-        cycle, hours = self._parse()
-        if cycle is None or sum(hours, Decimal("0")) != cycle:
+        hours = self.panel.value()
+        if hours is None:
             return
         self.result = hours
         self.destroy()
@@ -298,7 +346,7 @@ def ask_shift_hours(parent, labels: Sequence[str], hours: Sequence, cycle: Decim
     return dlg.result
 
 
-class EntryEventDialog(tk.Toplevel):
+class EntryEventMixin:
     """**进驻事件**（M15a 患难之交）设置 —— **一张表说尽"每个班次怎么换"**。
 
     | 控件 | 落到引擎 |
@@ -316,6 +364,10 @@ class EntryEventDialog(tk.Toplevel):
 
     固定口径（不设开关）：**「对方心情是多少」照换**（双方都是 24 也执行）；
     **位置不动**（只换心情，界面固定 `restore_back=True`）。
+
+    ⚠️ 本类**只建控件、只收结果**，自己不是窗口：宿主有两种——
+    `EntryEventDialog`（独立对话框）与 `ui.settings` 里的设置中心分区（Frame）。
+    两者共用这一份实现，免得出现"两套入口两套行为"。
     """
 
     TITLE = "进驻事件设置（换心情）"
@@ -323,14 +375,13 @@ class EntryEventDialog(tk.Toplevel):
     PREV = "前一位进驻（同宿舍）"              # 游戏原口径：swap_with=None + scope="dorm"
     AUTO = "全基建最累的那位（自动）"            # swap_with="any" + scope="anywhere"
 
-    def __init__(self, parent, enabled: bool, swap_with, candidates: Sequence[str],
-                 current_holders: Sequence[str] = (), scope: str = "dorm",
-                 restore_back: bool = True, when: str = "immediate",
-                 shift_labels: Sequence[str] = (), per_shift: Sequence = ()):
-        super().__init__(parent, bg=theme.BG)
-        self.title(self.TITLE)
-        self.resizable(False, False)
-        self.result = None      # (enabled, swap_with, scope, restore_back, when, per_shift)
+    def _init_entry_body(self, parent, enabled: bool, swap_with, candidates: Sequence[str],
+                         current_holders: Sequence[str] = (), scope: str = "dorm",
+                         restore_back: bool = True, when: str = "immediate",
+                         shift_labels: Sequence[str] = (), per_shift: Sequence = (),
+                         on_change=None):
+        """把状态收好并建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。"""
+        self._on_change = on_change
         self._candidates = list(candidates)
         self._shift_labels = list(shift_labels)
         self._per_shift_in = list(per_shift)
@@ -353,7 +404,7 @@ class EntryEventDialog(tk.Toplevel):
         # ① 总开关
         self.enabled = tk.BooleanVar(value=bool(enabled))
         ttk.Checkbutton(self, text="① 开启心情交换（进驻宿舍那一刻，与她互换心情）",
-                        variable=self.enabled, command=self._sync).pack(anchor="w", **pad)
+                        variable=self.enabled, command=self._on_enabled).pack(anchor="w", **pad)
 
         holders = "、".join(current_holders) if current_holders else "（本排班里没有）"
         tk.Label(self, text=f"触发者：{holders}。勾了「用」的班次才换心情；"
@@ -371,15 +422,7 @@ class EntryEventDialog(tk.Toplevel):
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=520,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
                                                                pady=(theme.GAP, 0))
-
-        self.btn_frame = tk.Frame(self, bg=theme.BG)
-        self.btn_frame.pack(fill="x", **pad, pady=(theme.GAP, theme.PAD))
-        ttk.Button(self.btn_frame, text="取消", command=self.destroy).pack(side="right")
-        ttk.Button(self.btn_frame, text="应用", style="Accent.TButton",
-                   command=self._ok).pack(side="right", padx=(0, 6))
-        self.bind("<Escape>", lambda _e: self.destroy())
         self._sync()
-        _modal(self, parent)
 
     # ------------------------------------------------------------ 逐班表格
     def _target_label(self, swap_with, scope: str) -> str:
@@ -451,15 +494,18 @@ class EntryEventDialog(tk.Toplevel):
                      anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
             use = tk.BooleanVar(value=use_d)
             chk = tk.Checkbutton(row, text="", variable=use, bg=theme.BG,
-                                 activebackground=theme.BG, highlightthickness=0)
+                                 activebackground=theme.BG, highlightthickness=0,
+                                 command=self._notify)
             chk.pack(side="left", padx=(4, 0))
             who = tk.StringVar(value=who_d)
             box_who = ttk.Combobox(row, textvariable=who, state="readonly", values=values,
                                    width=22)
             box_who.pack(side="left", padx=(4, 6))
+            box_who.bind("<<ComboboxSelected>>", lambda _e: self._notify())
             force = tk.BooleanVar(value=force_d)
             chk_force = tk.Checkbutton(row, text="", variable=force, bg=theme.BG,
-                                       activebackground=theme.BG, highlightthickness=0)
+                                       activebackground=theme.BG, highlightthickness=0,
+                                       command=self._notify)
             chk_force.pack(side="left", padx=(4, 0))
             self.shift_use.append(use)
             self.shift_who.append(who)
@@ -491,7 +537,17 @@ class EntryEventDialog(tk.Toplevel):
             except (tk.TclError, AttributeError):
                 w.configure(state="normal" if on else "disabled")
 
-    def _ok(self) -> None:
+    def _on_enabled(self) -> None:
+        """① 总开关：置灰表格 + 通知宿主（设置中心＝立即生效）。"""
+        self._sync()
+        self._notify()
+
+    def _notify(self) -> None:
+        """表格/开关改动 → 通知宿主（独立对话框没有回调；设置中心用它做"改动立即生效"）。"""
+        if self._on_change is not None:
+            self._on_change(self.value())
+
+    def value(self):
         """收成 `(enabled, swap_with, scope, restore_back, when, per_shift)`。
 
         **第 1 个勾着「用」的班次那一行充当全局默认**（写进 `swap_with`/`scope`/`when`），
@@ -517,9 +573,50 @@ class EntryEventDialog(tk.Toplevel):
                 # `""`＝明确"不指定"（回到「前一位进驻」），否则会被全局的指定对象盖住
                 swap_with=(sw if sw is not None else ""),
                 scope=scope, when=("wait" if force else "full")))
-        self.result = (bool(self.enabled.get()), base_sw, base_scope, True,
-                       "wait" if base_force else "full", per_shift)
+        return (bool(self.enabled.get()), base_sw, base_scope, True,
+                "wait" if base_force else "full", per_shift)
+
+
+class EntryEventDialog(tk.Toplevel, EntryEventMixin):
+    """「换心情」设置的**独立对话框**（薄壳：标题 + 说明面板 + 取消/应用）。"""
+
+    def __init__(self, parent, enabled: bool, swap_with, candidates: Sequence[str],
+                 current_holders: Sequence[str] = (), scope: str = "dorm",
+                 restore_back: bool = True, when: str = "immediate",
+                 shift_labels: Sequence[str] = (), per_shift: Sequence = ()):
+        super().__init__(parent, bg=theme.BG)
+        self.title(self.TITLE)
+        self.resizable(False, False)
+        self.result = None      # (enabled, swap_with, scope, restore_back, when, per_shift)
+        self._init_entry_body(parent, enabled, swap_with, candidates, current_holders,
+                              scope=scope, restore_back=restore_back, when=when,
+                              shift_labels=shift_labels, per_shift=per_shift)
+        btns = tk.Frame(self, bg=theme.BG)
+        btns.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, theme.PAD))
+        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
+        ttk.Button(btns, text="应用", style="Accent.TButton",
+                   command=self._ok).pack(side="right", padx=(0, 6))
+        self.bind("<Escape>", lambda _e: self.destroy())
+        _modal(self, parent)
+
+    def _ok(self) -> None:
+        self.result = self.value()
         self.destroy()
+
+
+class EntryEventPanel(tk.Frame, EntryEventMixin):
+    """「换心情」设置**内容本体**（嵌进设置中心用；改动经 `on_change` 立即生效）。"""
+
+    def __init__(self, master, enabled: bool, swap_with, candidates: Sequence[str],
+                 current_holders: Sequence[str] = (), scope: str = "dorm",
+                 restore_back: bool = True, when: str = "immediate",
+                 shift_labels: Sequence[str] = (), per_shift: Sequence = (),
+                 on_change=None):
+        super().__init__(master, bg=theme.BG)
+        self._init_entry_body(master, enabled, swap_with, candidates, current_holders,
+                              scope=scope, restore_back=restore_back, when=when,
+                              shift_labels=shift_labels, per_shift=per_shift,
+                              on_change=on_change)
 
 
 def messagebox_showinfo_safe(parent, text: str) -> None:
@@ -596,7 +693,7 @@ def ask_level(parent, name: str, current: int, max_level: int, slots_of) -> Opti
     return dlg.result
 
 
-class IdleToDormDialog(tk.Toplevel):
+class IdleToDormMixin:
     """**闲置入宿**设置 —— 一个总开关 + 一张"候选人一行"的表。
 
     规则（框内也写给用户看）：把"**没在上班、也不在宿舍、心情还没满**"的干员安排进宿舍——
@@ -614,21 +711,22 @@ class IdleToDormDialog(tk.Toplevel):
     「换谁」下拉**只列那一刻在宿舍且心情满的人**（每次可选的人都不一样）。
 
     ⚠️ 改动会**实时生效**：每次勾选 / 改目标都会回调 `on_change(状态)` ——
-    调用方（`ui.app`）把它套进模拟重算并返回**新的分组表**，本对话框据此重建表格
+    调用方（`ui.app`）把它套进模拟重算并返回**新的分组表**，本面板据此重建表格
     （因为改动会影响后面每一次的候选）。取消时由调用方回滚。
+
+    ⚠️ 本类**只建控件、只收状态**，自己不是窗口：宿主是 `IdleToDormDialog`（独立对话框）
+    或 `ui.settings` 的设置中心分区（Frame）。
     """
 
     TITLE = "闲置入宿设置（未满的闲置干员进宿舍）"
     AUTO = "自动（挑宿舍里满心情的一位）"
     REBUILD_MS = 250              # 改动后的防抖：连续点几下只重算一次
 
-    def __init__(self, parent, enabled: bool, groups: Sequence,
-                 on_change=None, note: str = ""):
-        super().__init__(parent, bg=theme.BG)
-        self.title(self.TITLE)
-        self.resizable(False, False)
+    def _init_idle_body(self, parent, enabled: bool, groups: Sequence,
+                        on_change=None, note: str = ""):
+        """把状态收好并建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。"""
         self.result = None
-        # { (周期, 班次, 干员): (参与, 换谁 或 None) } —— 对话框里的"当前状态"（源真源）
+        # { (周期, 班次, 干员): (参与, 换谁 或 None) } —— 面板里的"当前状态"（源真源）
         self.state: dict = {}
         self._groups = list(groups)
         self._on_change = on_change
@@ -636,8 +734,8 @@ class IdleToDormDialog(tk.Toplevel):
         self._widgets: list = []       # ① 关掉时要置灰的控件
         self._job = None
         self._busy = False
-
         pad = dict(padx=theme.PAD)
+
         tk.Label(self, text="闲置入宿 = 把没在上班、也不在宿舍、心情还没满的干员安排进宿舍恢复。",
                  bg=theme.BG, fg=theme.TEXT, justify="left", wraplength=600,
                  font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(anchor="w", **pad,
@@ -666,14 +764,7 @@ class IdleToDormDialog(tk.Toplevel):
             tk.Label(self, text=note, bg=theme.BG, fg=theme.MUTED, justify="left",
                      wraplength=600, font=(theme.FONT_FAMILY, theme.FS_SMALL)
                      ).pack(anchor="w", **pad)
-        btns = tk.Frame(self, bg=theme.BG)
-        btns.pack(fill="x", **pad, pady=(theme.GAP, theme.PAD))
-        ttk.Button(btns, text="取消（回滚）", command=self._cancel).pack(side="right")
-        ttk.Button(btns, text="应用", style="Accent.TButton", command=self._ok).pack(
-            side="right", padx=(0, 6))
-        self.bind("<Escape>", lambda _e: self._cancel())
         self._sync()
-        _modal(self, parent)
 
     # ------------------------------------------------------------ 表格
     def _build_table(self) -> None:
@@ -798,14 +889,41 @@ class IdleToDormDialog(tk.Toplevel):
             except (tk.TclError, AttributeError):
                 w.configure(state="normal" if on else "disabled")
 
-    def destroy(self) -> None:
-        """关窗时把还没跑的重建任务取消（否则会对着已销毁的控件报 invalid command name）。"""
+    def _cancel_job(self) -> None:
+        """取消还没跑的重建任务（否则会对着已销毁的控件报 invalid command name）。"""
         if self._job is not None:
             try:
                 self.after_cancel(self._job)
             except tk.TclError:
                 pass
             self._job = None
+
+    def value(self):
+        """收成 `(enabled, {(周期, 班次, 干员): (参与, 换谁)})`。"""
+        self._collect()
+        return (bool(self.enabled.get()), dict(self.state))
+
+
+class IdleToDormDialog(tk.Toplevel, IdleToDormMixin):
+    """「闲置入宿」设置的**独立对话框**（薄壳：底部「取消（回滚）/ 应用」）。"""
+
+    def __init__(self, parent, enabled: bool, groups: Sequence,
+                 on_change=None, note: str = ""):
+        super().__init__(parent, bg=theme.BG)
+        self.title(self.TITLE)
+        self.resizable(False, False)
+        self._init_idle_body(parent, enabled, groups, on_change=on_change, note=note)
+        btns = tk.Frame(self, bg=theme.BG)
+        btns.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, theme.PAD))
+        ttk.Button(btns, text="取消（回滚）", command=self._cancel).pack(side="right")
+        ttk.Button(btns, text="应用", style="Accent.TButton", command=self._ok).pack(
+            side="right", padx=(0, 6))
+        self.bind("<Escape>", lambda _e: self._cancel())
+        _modal(self, parent)
+
+    def destroy(self) -> None:
+        """关窗时把还没跑的重建任务取消。"""
+        self._cancel_job()
         super().destroy()
 
     def _cancel(self) -> None:
@@ -814,10 +932,26 @@ class IdleToDormDialog(tk.Toplevel):
         self.destroy()
 
     def _ok(self) -> None:
-        """收成 `(enabled, {(周期, 班次, 干员): (参与, 换谁)})`。"""
-        self._collect()
-        self.result = (bool(self.enabled.get()), dict(self.state))
+        self.result = self.value()
         self.destroy()
+
+
+class IdleToDormPanel(tk.Frame, IdleToDormMixin):
+    """「闲置入宿」设置**内容本体**（嵌进设置中心用）。
+
+    改动经 `on_change` **实时生效**（防抖 250ms）——与独立对话框同一份逻辑；
+    面板不需要"应用"（关掉设置中心即接受），也不需要"取消回滚"。
+    """
+
+    def __init__(self, master, enabled: bool, groups: Sequence,
+                 on_change=None, note: str = ""):
+        super().__init__(master, bg=theme.BG)
+        self._init_idle_body(master, enabled, groups, on_change=on_change, note=note)
+
+    def destroy(self) -> None:
+        """销毁时取消还没跑的重建任务（否则会对着已销毁的控件报 invalid command name）。"""
+        self._cancel_job()
+        tk.Frame.destroy(self)
 
 
 def ask_idle_to_dorm(parent, enabled: bool, groups: Sequence, on_change=None, note: str = ""):

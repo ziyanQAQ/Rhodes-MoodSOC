@@ -57,21 +57,26 @@ def split_names(text: str) -> List[str]:
     return out
 
 
-class BatchDialog(tk.Toplevel):
-    """批量设置（模态）：返回 `(changes, moods)`，取消返回 `None`。
+class BatchMixin:
+    """「批量设置」的**全部控件与逻辑**：当前布局的干员 + 练度 + 心情，一张表改完。
+
+    宿主有两个（共用这一份实现，免得"两套入口两套行为"）：
+    `BatchDialog`（独立对话框）与 `ui.settings` 设置中心里的「干员与心情」分区（Frame）。
 
     - `changes`：**改过干员的班次** → `{班次下标: 布局}`（场景格式，可逐班喂 `replaced_shift`）
     - `moods`：需要写进 `initial_moods` 的心情（**只含与导入值不同的项**，整份替换即可）
+
+    `on_change(changes, moods)`：改完任一处就回调（设置中心用它做"改动立即生效"）；
+    独立对话框不传（由「应用」按钮一次性收）。
     """
 
-    def __init__(self, parent, schedule, shift_index: int = 0,
-                 initial_moods: Optional[Dict[str, Decimal]] = None,
-                 imported_moods: Optional[Dict[str, Decimal]] = None,
-                 moods_now: Optional[Dict[str, Decimal]] = None,
-                 current_t=Decimal("0")):
-        super().__init__(parent, bg=theme.BG)
-        self.title("批量设置 · 当前布局的干员与心情")
-        self.result = None
+    def _init_batch_body(self, parent, schedule, shift_index: int = 0,
+                         initial_moods: Optional[Dict[str, Decimal]] = None,
+                         imported_moods: Optional[Dict[str, Decimal]] = None,
+                         moods_now: Optional[Dict[str, Decimal]] = None,
+                         current_t=Decimal("0"), on_change=None):
+        """装好状态 + 建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。"""
+        self._on_change = on_change
         self._schedule = schedule
         self._labels = schedule.shift_labels()
         self._shift_index = max(0, min(int(shift_index), len(schedule.shifts) - 1))
@@ -93,9 +98,7 @@ class BatchDialog(tk.Toplevel):
         self._cells: List[Tuple[int, int]] = []      # 表格里的 (设施下标, 位次)
 
         head = tk.Frame(self, bg=theme.BG)
-        head.pack(fill="x", padx=theme.PAD, pady=(theme.PAD, 2))
-        tk.Label(head, text="批量设置", bg=theme.BG, fg=theme.TEXT,
-                 font=(theme.FONT_FAMILY, theme.FS_TITLE)).pack(side="left")
+        head.pack(fill="x", pady=(0, 2))
         tk.Label(head, text="　班次", bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
         self.shift_var = tk.StringVar(value=self._labels[self._shift_index])
@@ -115,18 +118,16 @@ class BatchDialog(tk.Toplevel):
 
         self.err = tk.Label(self, text="", bg=theme.BG, fg=theme.DANGER, anchor="w",
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        self.err.pack(fill="x", padx=theme.PAD)
-
-        btns = tk.Frame(self, bg=theme.BG)
-        btns.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, theme.PAD))
-        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
-        ttk.Button(btns, text="应用", style="Accent.TButton",
-                   command=self._ok).pack(side="right", padx=(0, 6))
-
-        self.bind("<Escape>", lambda _e: self.destroy())
+        self.err.pack(fill="x")
         self._rebuild_rows()
-        self._center(parent)
-        self._modal(parent)
+
+    def _notify(self) -> None:
+        """改动 → 通知宿主（设置中心＝立即生效；独立对话框没有回调）。"""
+        if self._on_change is None:
+            return
+        res = self.value()
+        if res is not None:
+            self._on_change(*res)
 
     # ================================================================ 房间等级区
     def _build_level_bar(self) -> None:
@@ -184,6 +185,7 @@ class BatchDialog(tk.Toplevel):
         self._mark_dirty()
         self._rebuild_rows()
         self._sync_level_note()
+        self._notify()
 
     # ================================================================ 心情区
     def _build_mood_bar(self) -> None:
@@ -215,6 +217,7 @@ class BatchDialog(tk.Toplevel):
             self._moods[n] = Decimal(value)
         self._refresh_mood_cells()
         self.err.configure(text="")
+        self._notify()
 
     def _set_uniform(self) -> None:
         v = parse_mood(self.uniform.get())
@@ -232,12 +235,14 @@ class BatchDialog(tk.Toplevel):
                 self._moods[n] = Decimal(str(self._now[n]))
         self._refresh_mood_cells()
         self.err.configure(text=f"已按 {theme.fmt_clock(self._current_t)} 的实际心情回填")
+        self._notify()
 
     def _restore_imported(self) -> None:
         for n in self._moods:
             self._moods[n] = Decimal(str(self._imported.get(n, MOOD_MAX)))
         self._refresh_mood_cells()
         self.err.configure(text="")
+        self._notify()
 
     # ================================================================ 干员区
     def _build_op_bar(self) -> None:
@@ -382,6 +387,7 @@ class BatchDialog(tk.Toplevel):
             if r["op"].cget("text").startswith(name):
                 r["op"].configure(text=self._op_text(name))
                 break
+        self._notify()
 
     def _set_all_elite(self, elite: int) -> None:
         """一键把当前班次所有干员设为该精英化（默认口径就是 E2 满练）。"""
@@ -392,6 +398,7 @@ class BatchDialog(tk.Toplevel):
         self._mark_dirty()
         self._refresh_elite_cells()
         self.err.configure(text=f"已把本班次全部干员设为 E{elite}（点「应用」才生效）")
+        self._notify()
 
     def _refresh_elite_cells(self) -> None:
         for name, var in self._elite_vars.items():
@@ -529,6 +536,7 @@ class BatchDialog(tk.Toplevel):
         self._mark_dirty()
         self._rebuild_rows()
         self.err.configure(text="已清空本班次（点「应用」才生效）")
+        self._notify()
 
     def _paste_names(self) -> None:
         self._collect_moods()
@@ -571,6 +579,7 @@ class BatchDialog(tk.Toplevel):
         if left:
             msg += f"；{left} 人没有位置"
         self.err.configure(text=msg + "（点「应用」才生效）")
+        self._notify()
 
     def _all_slots(self) -> List[Tuple[int, int]]:
         out: List[Tuple[int, int]] = []
@@ -591,20 +600,20 @@ class BatchDialog(tk.Toplevel):
         self.err.configure(text=text)
         self.bell()
 
-    def _ok(self) -> None:
+    def value(self):
+        """收成 `(changes, moods)`；有非法输入时返回 `None`（并在 `err` 里写原因）。"""
         bad = [n for n, var in self._mood_vars.items() if parse_mood(var.get()) is None]
         if bad:
             self._error("心情要在 0 ~ 24 之间（检查：" + "、".join(bad[:4]) +
                         ("…" if len(bad) > 4 else "") + "）")
-            return
+            return None
         self._collect_moods()
         # 干员改动：所有被改过的班次（下标 → 布局），调用方逐班 `replaced_shift`
         changes = {i: [dict(f, operators=[self._op_spec(n) for n in f.get("operators", []) if n])
                        for f in facs] for i, facs in self._draft.items()}
         moods = {n: v for n, v in self._moods.items()
                  if Decimal(str(self._imported.get(n, MOOD_MAX))) != v}
-        self.result = (changes, moods)
-        self.destroy()
+        return changes, moods
 
     # ================================================================ 窗口杂务
     def _center(self, parent) -> None:
@@ -621,6 +630,52 @@ class BatchDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
         self.focus_set()
+
+
+class BatchDialog(tk.Toplevel, BatchMixin):
+    """「批量设置」的**独立对话框**（薄壳：标题 + 取消/应用）。返回 `(changes, moods)`。"""
+
+    def __init__(self, parent, schedule, shift_index: int = 0,
+                 initial_moods: Optional[Dict[str, Decimal]] = None,
+                 imported_moods: Optional[Dict[str, Decimal]] = None,
+                 moods_now: Optional[Dict[str, Decimal]] = None,
+                 current_t=Decimal("0")):
+        super().__init__(parent, bg=theme.BG)
+        self.title("批量设置 · 当前布局的干员与心情")
+        self.result = None
+        self._init_batch_body(parent, schedule, shift_index=shift_index,
+                              initial_moods=initial_moods, imported_moods=imported_moods,
+                              moods_now=moods_now, current_t=current_t)
+
+        btns = tk.Frame(self, bg=theme.BG)
+        btns.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, theme.PAD))
+        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
+        ttk.Button(btns, text="应用", style="Accent.TButton",
+                   command=self._ok).pack(side="right", padx=(0, 6))
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self._center(parent)
+        self._modal(parent)
+
+    def _ok(self) -> None:
+        res = self.value()
+        if res is None:
+            return
+        self.result = res
+        self.destroy()
+
+
+class BatchPanel(tk.Frame, BatchMixin):
+    """「批量设置」内容本体（嵌进设置中心用；`value()` 收结果、`on_change` 即时生效）。"""
+
+    def __init__(self, master, schedule, shift_index: int = 0,
+                 initial_moods: Optional[Dict[str, Decimal]] = None,
+                 imported_moods: Optional[Dict[str, Decimal]] = None,
+                 moods_now: Optional[Dict[str, Decimal]] = None,
+                 current_t=Decimal("0"), on_change=None):
+        super().__init__(master, bg=theme.BG)
+        self._init_batch_body(master, schedule, shift_index=shift_index,
+                              initial_moods=initial_moods, imported_moods=imported_moods,
+                              moods_now=moods_now, current_t=current_t, on_change=on_change)
 
 
 class PasteDialog(tk.Toplevel):
