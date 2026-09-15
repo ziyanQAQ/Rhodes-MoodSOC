@@ -891,6 +891,53 @@ class Test新增交互(unittest.TestCase):
         app._on_cycles()
         app.recompute()
 
+    def test_空格只管播放(self):
+        """空格在任何焦点下都只切换播放/暂停：不会"按下"工具栏按钮（曾经会又开一次设置框）。
+
+        背景：`ttk.Button` 自带 `<Key-space>` 类绑定＝"按下当前聚焦的按钮"，所以点过
+        「换心情设置」之后按空格会再弹一次那个模态框；现在主窗口里的控件都挂了
+        widget 级 `<space>`（播放/暂停 + `break`），而且工具栏按钮不参与 Tab 焦点。
+        """
+        from tkinter import ttk
+
+        app = self.app
+        bar = app.entry_detail.master
+        btns = {}
+
+        def walk(w):
+            for c in w.winfo_children():
+                if isinstance(c, ttk.Button):
+                    btns[c.cget("text")] = c
+                walk(c)
+
+        walk(bar)
+        self.assertIn("换心情设置", btns)
+        tabbable = [t for t, b in btns.items() if str(b.cget("takefocus")) not in ("0", "False")]
+        self.assertEqual(tabbable, [], "工具栏按钮不该参与 Tab 焦点")
+
+        opened = []
+
+        def collect():
+            opened.extend(w for w in app.winfo_children() if w.winfo_class() == "Toplevel")
+            for w in list(opened):
+                w.destroy()
+
+        btn = btns["换心情设置"]
+        before = app._playing
+        btn.focus_force()
+        app.update()
+        app.after(0, lambda: btn.event_generate("<space>"))
+        app.after(300, collect)                      # 万一真弹了框，这里把它收掉（不会卡住）
+        t0 = time.perf_counter()
+        while time.perf_counter() - t0 < 0.8:
+            app.update()
+            time.sleep(0.01)
+        self.assertEqual(opened, [], "空格不该触发工具栏按钮（尤其是又开一次设置框）")
+        self.assertNotEqual(app._playing, before, "空格应当仍然是播放/暂停")
+        if app._playing:
+            app.toggle_play()                        # 复原，别把状态留给其它用例
+        app.focus_set()
+
     def test_时间滑块两侧按钮与步长提示(self):
         """滑块两侧改成纯箭头（原来写 "◀ 15min" 容易被误读成"15 分钟前/时长"），
         步长与快捷键改用右侧一句人话提示。"""

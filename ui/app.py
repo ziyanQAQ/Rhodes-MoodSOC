@@ -116,6 +116,7 @@ class MoodSocApp(tk.Tk):
         self._build_body()
         self._build_bottom()
         self._bind_keys()
+        self._space_only_plays(self)          # 空格永远＝播放/暂停（别去"按下"聚焦的按钮）
 
         self._autoload_job = self.after(60, self._autoload_sample)
     # ================================================================== 样式
@@ -192,6 +193,12 @@ class MoodSocApp(tk.Tk):
         self.speed_hint.pack(side="left", padx=(3, 0))
         ttk.Button(play, text="回到起点", command=lambda: self.set_time(Decimal("0"))
                    ).pack(side="left", padx=(8, 0))
+        # 工具栏按钮**不参与 Tab 焦点**（takefocus=False）：免得 Tab 停到某颗按钮上之后，
+        # 空格/回车把它"按下"却又开一次设置框 —— 空格在本窗口里只该管播放/暂停。
+        for w in (bar, play):
+            for child in w.winfo_children():
+                if isinstance(child, ttk.Button):
+                    child.configure(takefocus=False)
         self._on_speed()
         self._sync_entry_label()
     # ================================================================== 主体
@@ -280,6 +287,29 @@ class MoodSocApp(tk.Tk):
         self.bind("<Home>", lambda _e: self.set_time(Decimal("0")))
         self.bind("<End>", lambda _e: self.set_time(self._total_hours()))
         self.bind("<space>", lambda _e: self.toggle_play())
+
+    # ------------------------------------------------------------ 空格只管播放
+    def _space_only_plays(self, root) -> None:
+        """让**空格只控制播放/暂停**：给主窗口里的控件挂 widget 级 `<space>`（先于类绑定执行、并
+        `break`），把 `ttk.Button` 自带的 `<Key-space>`（＝"按下"当前聚焦的按钮）等类绑定挡掉。
+
+        为什么需要：`ttk::button` 的类绑定把空格绑成"按下按钮"，只要焦点落在工具栏按钮上
+        （点过它、或 Tab 停上去），按空格就会又打开一次那个对话框（比如「换心情设置」），
+        而窗口级的"空格＝播放/暂停"也照旧触发 —— 一次按键两件事。
+
+        ⚠️ 只挂主窗口里的控件：对话框是独立 toplevel，里面"空格＝按下当前按钮"是正常行为，不动它。
+        输入框（Entry/Text）**不挂**，那里空格得当字符用。
+        """
+        def handler(_e):
+            self.toggle_play()
+            return "break"
+
+        stack = [root]
+        while stack:
+            w = stack.pop()
+            if w.winfo_class() in ("TButton", "Button", "TCombobox", "TScale", "Canvas"):
+                w.bind("<space>", handler)
+            stack.extend(w.winfo_children())
 
     # ================================================================== 数据流
     def _autoload_sample(self):
@@ -975,6 +1005,7 @@ class MoodSocApp(tk.Tk):
                            command=lambda k=i: self.set_time(self.schedule.starts[k]))
             b.pack(side="left", padx=(0, 4))
             self.shift_buttons.append(b)
+        self._space_only_plays(self.shift_bar)     # 新建的班次按钮也要"空格＝播放/暂停"
 
     def _highlight_shift_button(self):
         idx = self.schedule.index_at(self.current_t) if self.schedule else -1
