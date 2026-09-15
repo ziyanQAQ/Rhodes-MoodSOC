@@ -353,7 +353,12 @@ class MoodSocApp(tk.Tk):
 
     # ================================================================== 数据流
     def _autoload_sample(self):
+        """冷启动时自动载入示例排班（**只在开局没排班时**）。"""
+        self._autoload_job = None
         if not self.winfo_exists():
+            return
+        if self.schedule is not None:
+            # 启动那 60ms 内已经载入过（手动导入、或测试里先 load_paths）→ 不要覆盖人家
             return
         if SAMPLE.exists():
             try:
@@ -367,6 +372,11 @@ class MoodSocApp(tk.Tk):
     def load_paths(self, paths):
         """按文件集合装配排班（可能抛 ValueError，调用方展示原因）。"""
         sch = load_schedule(paths)
+        # 设置中心里握着"当前排班"（面板建好后就认那一份）→ 换排班前先把它关掉，
+        # 免得面板往旧 schedule 上写（各个面板都是进入分区时按最新排班重建的）。
+        if self.settings_dlg is not None and self.settings_dlg.winfo_exists():
+            self.settings_dlg.destroy()
+        self.settings_dlg = None
         self.schedule = sch
         self.initial_moods.clear()
         self.current_t = Decimal("0")
@@ -1172,11 +1182,18 @@ class MoodSocApp(tk.Tk):
 
     # ================================================================== 收尾
     def destroy(self):
-        """退出前取消所有挂起的 `after` 回调。
+        """退出前取消所有挂起的 `after` 回调，并关掉设置中心。
 
         否则窗口销毁后回调仍会触发，Tk 会打印
         `invalid command name "..._autoload_sample"`（测试里尤其吵）。
         """
+        if self.settings_dlg is not None:
+            try:
+                if self.settings_dlg.winfo_exists():
+                    self.settings_dlg.destroy()
+            except tk.TclError:
+                pass
+            self.settings_dlg = None
         for attr in ("_refresh_job", "_settle_job", "_play_job", "_autoload_job"):
             job = getattr(self, attr, None)
             if job:
