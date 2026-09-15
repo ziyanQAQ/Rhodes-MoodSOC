@@ -67,13 +67,19 @@ class MoodChip(tk.Frame):
 
     # ------------------------------------------------------------------ 内容
     def set(self, operator: Optional[str], mood=None, tag: str = "", dim: bool = False,
-            name_limit: int = 5) -> None:
-        """设置内容。`operator=None` = 空位；`mood=None` = 该干员此刻不在基建内。"""
+            name_limit: int = 5, badge: str = "") -> None:
+        """设置内容。`operator=None` = 空位；`mood=None` = 该干员此刻不在基建内。
+
+        `badge`：跟着名字显示的小角标（**只有非精英化二才给**，如 `E1`）——
+        练度不够会让技能不生效，"一眼看出谁没满练"比翻设置有用。
+        """
         self.operator = operator
         self.tag_text = tag
         self.tag.configure(text=tag)
         self.dim = dim
         self._paint_key = None                     # 强制重绘
+        self._badge = badge
+        self._name_limit = name_limit
         if operator is None:
             self.name.configure(text="＋ 空位", fg=theme.MUTED)
             self.last_mood = mood
@@ -81,9 +87,26 @@ class MoodChip(tk.Frame):
             self.bar.configure(bg=theme.BORDER)
             self._paint_bg(theme.PANEL_ALT, theme.BORDER)
             return
-        label = operator if len(operator) <= name_limit else operator[: name_limit - 1] + "…"
-        self.name.configure(text=label, fg=theme.TEXT)
+        self.name.configure(text=self._name_text(), fg=theme.TEXT)
         self.update_mood(mood)
+
+    def _name_text(self) -> str:
+        """名字 + 练度角标（角标占位，所以有角标时名字截得更短）。"""
+        operator = self.operator or ""
+        badge = getattr(self, "_badge", "")
+        limit = getattr(self, "_name_limit", 5)
+        if badge:
+            limit = max(2, limit - len(badge) - 1)
+        label = operator if len(operator) <= limit else operator[: limit - 1] + "…"
+        return f"{label} {badge}" if badge else label
+
+    def set_badge(self, badge: str) -> None:
+        """只更新练度角标（不动心情）——「全员一览」重建网格后用得上。"""
+        if badge == getattr(self, "_badge", ""):
+            return
+        self._badge = badge
+        if self.operator:
+            self.name.configure(text=self._name_text(), fg=theme.TEXT)
 
     def update_mood(self, mood, dim: Optional[bool] = None, quick: bool = False) -> None:
         """更新心情。

@@ -31,7 +31,7 @@ if str(ROOT) not in sys.path:
 
 from ui import theme  # noqa: E402
 from ui.batch import ask_batch  # noqa: E402
-from ui.board import BaseBoard, facility_tag  # noqa: E402
+from ui.board import BaseBoard, elite_badge, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
 from ui.dialogs import (ask_entry_event, ask_idle_to_dorm, ask_level, ask_mood,  # noqa: E402
                         ask_operator, ask_shift_hours)
@@ -39,6 +39,7 @@ from ui.roster import RosterStrip  # noqa: E402
 from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
                          default_initial_moods, load_schedule, simulate_schedule)
 from mood_soc import entry_event_holders, entry_target_kind  # noqa: E402
+from mood_soc import mood_skill_summary  # noqa: E402
 from mood_soc.config import (MOOD_MAX, FacilityType, facility_max_level,  # noqa: E402
                              facility_slots)
 from mood_soc.models import IdleToDormEntry, normalize_entry_when  # noqa: E402
@@ -395,6 +396,7 @@ class MoodSocApp(tk.Tk):
             self.current_t = Decimal("0")
         self.scale.configure(to=float(total))
         self.roster.set_operators(self.traj.names)
+        self.roster.set_badges(self._elite_badges())
         self._refresh_layout()
         self._sync_operator_box()
         self._sync_entry_label()
@@ -414,7 +416,9 @@ class MoodSocApp(tk.Tk):
         """
         idx = self.schedule.index_at(self.current_t)
         shift = self.schedule.shifts[idx]
-        sig = (idx, tuple((f.display_name, tuple(o.name for o in f.operators))
+        # 签名里带上练度：精英化一变，芯片上的 `E0/E1` 角标要跟着变
+        # （否则结构"看起来没变"，看板就不会刷新内容）
+        sig = (idx, tuple((f.display_name, tuple((o.name, o.elite) for o in f.operators))
                           for f in shift.world.facilities))
         if sig != self._layout_sig:
             self.board.set_layout(shift, sub_title=self._shift_span_text(idx))
@@ -949,6 +953,47 @@ class MoodSocApp(tk.Tk):
         return [dict(f, operators=list(f.get("operators", [])))
                 for f in self.schedule.shifts[idx].facilities]
 
+    # ------------------------------------------------------------ 练度（精英化）
+    def _elite_badges(self) -> dict:
+        """`{干员: "E1"}`——取该干员在各班次里**最低**的精英化（只有非 E2 才进表）。
+
+        为什么取最低：同一个人在不同班次可以有不同练度（少见但合法），
+        用最低那档才不会漏掉"某一班他的技能其实没生效"。
+        """
+        out: dict = {}
+        if self.schedule is None:
+            return out
+        for shift in self.schedule.shifts:
+            for op in shift.world.all_operators():
+                badge = elite_badge(op)
+                if badge and badge < out.get(op.name, "E9"):
+                    out[op.name] = badge
+        return out
+
+    def _operator_obj(self, name: str):
+        """找这个干员的 `Operator`（优先当前班次，其次第一个有他的班次）。"""
+        if self.schedule is None or not name:
+            return None
+        idx = self._editing_shift_index()
+        for shift in [self.schedule.shifts[idx]] + list(self.schedule.shifts):
+            op = shift.world.get_operator(name)
+            if op is not None:
+                return op
+        return None
+
+    def _elite_text(self, name: str) -> str:
+        """练度摘要（对点查询用）：`练度 E1 · 已解锁 6 条心情技能；因未满练少 1 条（「手工艺品·β」）`。"""
+        op = self._operator_obj(name)
+        if op is None:
+            return ""
+        unlocked, locked = mood_skill_summary(op)
+        text = f"练度 E{op.elite}（等级 {op.level}）· 已解锁 {unlocked} 条心情技能"
+        if locked:
+            names = "、".join(f"「{n}」（E{e}）" for n, e, _lv in locked[:3])
+            more = f" 等 {len(locked)} 条" if len(locked) > 3 else ""
+            text += f"；⚠ 因未满练少 {len(locked)} 条：{names}{more}"
+        return text
+
     def _apply_facilities(self, idx: int, facs):
         """改完某个班次的布局 → 重建 Schedule → 重算。"""
         self.schedule = self.schedule.replaced_shift(idx, facs)
@@ -1024,6 +1069,9 @@ class MoodSocApp(tk.Tk):
         ]
         per = traj.min_mood_at_each_shift(name)
         lines.append("各班最低：" + "　".join(f"{l} {theme.fmt_mood(v)}" for l, v in per))
+        elite = self._elite_text(name)          # 练度：技能能不能生效就看它
+        if elite:
+            lines.append(elite)
         return "\n".join(lines)
 
     def _facility_at(self, t: Decimal) -> str:

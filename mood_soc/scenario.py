@@ -11,6 +11,9 @@ from .models import BaseLayout, Facility, Operator, build_entry_event_config
 from .models import build_idle_to_dorm_config
 from .skills import DEFAULT_OPERATORS, TRAITS
 
+# 干员等级默认值：满练口径（"等级 30 解锁"的技能才不会默认失效）
+DEFAULT_OPERATOR_LEVEL = 30
+
 
 def build_operator(spec) -> Operator:
     """由一条干员描述（dict）构建 Operator。"""
@@ -20,9 +23,12 @@ def build_operator(spec) -> Operator:
     skill_ids = list(spec.get("skill_ids") or DEFAULT_OPERATORS.get(name, []))
     trait = spec.get("trait", TRAITS.get(name))
     mood = to_decimal(spec.get("mood", MOOD_MAX))
-    # 精英化等级 / 干员等级：默认满练（elite=2）保证技能全解锁
+    # 精英化等级 / 干员等级：默认满练（elite=2）+ 等级 30
+    # ⚠️ 等级只在"等级 30 解锁"这一处被读（上游 `operators.txt` 的 `unlock` 列有 4 条），
+    #    默认给 30 才与"默认精英化二"的口径一致（30 = 三星机械满级）；
+    #    给 1 会让杜林/THRM-EX/Lancet-2 的那几条技能默认失效。
     elite = int(spec.get("elite", 2))
-    level = int(spec.get("level", 1))
+    level = int(spec.get("level", DEFAULT_OPERATOR_LEVEL))
     factions = spec.get("factions")
     return Operator(name=name, mood=mood, skill_ids=skill_ids, trait=trait,
                     elite=elite, level=level,
@@ -46,7 +52,7 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
      干员既可用名字字符串，也可用
      {"name", "mood", "skill_ids", "trait", "factions", "elite", "level"} 对象；
      factions 覆盖自动生成的阵营表（默认 None = 用上游生成值，见 skills.OPERATOR_FACTIONS）。
-     elite 为精英化等级（0/1/2，默认 2 满练），level 为干员等级（默认 1，用于"等级30解锁"）。
+     elite 为精英化等级（0/1/2，默认 2 满练），level 为干员等级（默认 30，用于"等级30解锁"）。
 
     设施字段（P1 新增，多房间布局必需）：
       - `name`      实例名（同类型多房间时便于区分，如"制造站#2"）；缺省用类型标签

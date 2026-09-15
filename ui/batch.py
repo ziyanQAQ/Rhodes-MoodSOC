@@ -85,6 +85,8 @@ class BatchDialog(tk.Toplevel):
             self._moods[n] = Decimal(str(v))
         self._fac_names: List[dict] = []
         self._level_vars: Dict[int, tk.StringVar] = {}   # 房间下标 → 等级下拉
+        self._elite: Dict[str, int] = {}                 # 干员 → 精英化（0/1/2），默认 2
+        self._elite_vars: Dict[str, tk.StringVar] = {}   # 干员 → 练度下拉
         self._draft: Dict[int, List[dict]] = {}      # 改过的班次：下标 → 工作副本
         self._rows: List[dict] = []                  # 行控件（结构没变时复用）
         self._mood_vars: Dict[str, tk.StringVar] = {}
@@ -248,6 +250,8 @@ class BatchDialog(tk.Toplevel):
         ttk.Button(row, text="批量粘贴名单…", command=self._paste_names).pack(side="left")
         ttk.Button(row, text="清空本班次", command=self._clear_shift).pack(side="left",
                                                                           padx=(6, 0))
+        ttk.Button(row, text="全部设为 E2", command=lambda: self._set_all_elite(2)).pack(
+            side="left", padx=(6, 0))
         self.show_empty = tk.BooleanVar(value=True)
         tk.Checkbutton(row, text="显示空位", variable=self.show_empty, bg=theme.BG,
                        activebackground=theme.BG, highlightthickness=0,
@@ -306,8 +310,26 @@ class BatchDialog(tk.Toplevel):
             self._fac_names = self._draft[idx]
             return
         shift = self._schedule.shifts[idx]
-        self._fac_names = [dict(f, operators=list(f.get("operators", [])))
-                           for f in shift.facilities]
+        self._fac_names = []
+        for f in shift.facilities:
+            fac = dict(f)
+            # 干员可能是字符串，也可能是带练度的对象 `{"name": ..., "elite": ...}`
+            # （上一轮改过练度就是这样存的）→ 这里统一成"名字列表 + self._elite"
+            specs = list(f.get("operators", []))
+            names = []
+            for spec in specs:
+                if isinstance(spec, dict):
+                    name = str(spec.get("name", ""))
+                    if name:
+                        self._elite[name] = int(spec.get("elite", 2))
+                else:
+                    name = str(spec)
+                if name:
+                    names.append(name)
+            fac["operators"] = names
+            self._fac_names.append(fac)
+        for op in shift.world.all_operators():           # 练度预填（默认 E2 满练）
+            self._elite.setdefault(op.name, int(op.elite))
 
     def _mark_dirty(self) -> None:
         """记下"这一班的干员被改过"，并把工作副本留给切班次后复用。"""
@@ -341,6 +363,49 @@ class BatchDialog(tk.Toplevel):
                 first = False
         return plan
 
+    def _op_text(self, name: str) -> str:
+        """表格里的干员名（非精英化二时带练度角标，与看板一致）。"""
+        if not name:
+            return "（空位 · 点这里选人）"
+        elite = self._elite.get(name, 2)
+        return f"{name} E{elite}" if elite < 2 else name
+
+    def _on_elite_change(self, name: str) -> None:
+        """改某个干员的精英化（决定他的心情技能能不能生效）。"""
+        var = self._elite_vars.get(name)
+        if var is None:
+            return
+        text = var.get().strip()          # "E0"/"E1"/"E2"
+        self._elite[name] = int(text[1:]) if len(text) == 2 and text[1:].isdigit() else 2
+        self._mark_dirty()                # 练度也要写回布局（否则这一班不会被提交）
+        for r in self._rows:
+            if r["op"].cget("text").startswith(name):
+                r["op"].configure(text=self._op_text(name))
+                break
+
+    def _set_all_elite(self, elite: int) -> None:
+        """一键把当前班次所有干员设为该精英化（默认口径就是 E2 满练）。"""
+        for fac in self._fac_names:
+            for n in fac.get("operators", []):
+                if n:
+                    self._elite[n] = int(elite)
+        self._mark_dirty()
+        self._refresh_elite_cells()
+        self.err.configure(text=f"已把本班次全部干员设为 E{elite}（点「应用」才生效）")
+
+    def _refresh_elite_cells(self) -> None:
+        for name, var in self._elite_vars.items():
+            var.set(f"E{self._elite.get(name, 2)}")
+        for r in self._rows:
+            op = r["op"].cget("text").split(" ")[0]
+            if op in self._elite:
+                r["op"].configure(text=self._op_text(op))
+
+    def _op_spec(self, name: str):
+        """写回场景的干员写法：只有**非 E2** 才写成对象（保持 JSON 简洁）。"""
+        elite = self._elite.get(name, 2)
+        return {"name": name, "elite": elite} if elite != 2 else name
+
     def _rebuild_rows(self) -> None:
         """按计划画表格；**结构没变就只换内容**（切班次/换人是最常见的路径，
         重建 50 行要 ~290ms，复用只要几毫秒——与看板 `_structure_signature` 同一套思路）。
@@ -363,10 +428,13 @@ class BatchDialog(tk.Toplevel):
             op = self._op_label(row, fi, si, name)
             op.pack(side="left", fill="x", expand=True)
             entry = ttk.Entry(row, width=6)
+            elite = ttk.Combobox(row, state="readonly", width=3,
+                                 values=[f"E{i}" for i in range(3)])
+            elite.bind("<<ComboboxSelected>>", lambda _e, n=name: self._on_elite_change(n))
             dash = tk.Label(row, text="—", bg=theme.PANEL, fg=theme.MUTED, width=8,
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
             self._rows.append({"key": (fi, si), "room": room_lbl, "op": op,
-                               "entry": entry, "dash": dash})
+                               "entry": entry, "elite": elite, "dash": dash})
             self._join_table_tag(row)
         if not plan:
             tk.Label(self.inner, text="（这一班没有位置）", bg=theme.PANEL, fg=theme.MUTED,
@@ -377,10 +445,12 @@ class BatchDialog(tk.Toplevel):
     def _fill_rows(self, plan) -> None:
         """把计划写进行控件（心情输入框按干员名重新绑定，空位显示 —）。"""
         self._mood_vars.clear()
+        self._elite_vars.clear()
         self._cells = [(fi, si) for fi, si, _n, _r in plan]
         for r, (fi, si, name, room) in zip(self._rows, plan):
             r["room"].configure(text=room)
-            r["op"].configure(text=(name or "（空位 · 点这里选人）"),
+            elite = self._elite.get(name, 2) if name else 2
+            r["op"].configure(text=self._op_text(name),
                               fg=(theme.TEXT if name else theme.MUTED))
             if name:
                 var = tk.StringVar(value=theme.fmt_mood(self._moods.get(name, MOOD_MAX)))
@@ -390,9 +460,16 @@ class BatchDialog(tk.Toplevel):
                     r["entry"].pack(side="left", padx=(6, 4))
                 if r["dash"].winfo_manager():
                     r["dash"].pack_forget()
+                ev = tk.StringVar(value=f"E{elite}")            # 练度：决定技能能不能生效
+                self._elite_vars[name] = ev
+                r["elite"].configure(textvariable=ev)
+                if not r["elite"].winfo_manager():
+                    r["elite"].pack(side="left", padx=(0, 4))
             else:
                 if r["entry"].winfo_manager():
                     r["entry"].pack_forget()
+                if r["elite"].winfo_manager():
+                    r["elite"].pack_forget()
                 if not r["dash"].winfo_manager():
                     r["dash"].pack(side="left", padx=(6, 4))
 
@@ -522,7 +599,7 @@ class BatchDialog(tk.Toplevel):
             return
         self._collect_moods()
         # 干员改动：所有被改过的班次（下标 → 布局），调用方逐班 `replaced_shift`
-        changes = {i: [dict(f, operators=[n for n in f.get("operators", []) if n])
+        changes = {i: [dict(f, operators=[self._op_spec(n) for n in f.get("operators", []) if n])
                        for f in facs] for i, facs in self._draft.items()}
         moods = {n: v for n, v in self._moods.items()
                  if Decimal(str(self._imported.get(n, MOOD_MAX))) != v}

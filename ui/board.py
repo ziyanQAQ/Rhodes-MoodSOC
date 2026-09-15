@@ -69,6 +69,16 @@ def facility_tag(facility, ordinal: int = 0) -> str:
     return f"{abbr}{ordinal}" if ordinal else abbr
 
 
+def elite_badge(op) -> str:
+    """非精英化二的干员 → 名字后的小角标（`E0`/`E1`）；精英化二返回空串。
+
+    练度决定技能能不能生效（上游 `operators.txt` 的 `unlock` 列：291 条里有 92 条要精英 2），
+    所以"谁没满练"要一眼看得见，不然算出来的速率会让人以为算错了。
+    """
+    elite = getattr(op, "elite", 2) if op is not None else 2
+    return "" if elite >= 2 else f"E{elite}"
+
+
 class SlotView:
     """一个位置（房间 × 座位）：持有它的芯片与元数据。"""
 
@@ -257,11 +267,12 @@ class BaseBoard(tk.Frame):
         self.chip_by_operator.clear()
         for i, f in enumerate(shift.world.facilities):
             for si in range(self._slots_of(f)):
-                occupant = f.operators[si].name if si < len(f.operators) else None
+                op = f.operators[si] if si < len(f.operators) else None
+                occupant = op.name if op is not None else None
                 chip = self._chips.get((i, si))
                 if chip is None:
                     return self.set_layout(shift, sub_title)   # 兜底：结构其实变了
-                chip.set(occupant)
+                chip.set(occupant, badge=elite_badge(op))      # 非精英化二 → 名字后带 E0/E1
                 view = SlotView(i, si, occupant, chip)
                 self.slots.append(view)
                 if occupant:

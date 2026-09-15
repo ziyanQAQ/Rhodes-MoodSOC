@@ -217,6 +217,49 @@ class Test批量设置(unittest.TestCase):
         self.assertEqual(self._ops_of(changes), [])
         self.assertEqual(app.schedule.shifts[0].world.facilities[0].operators, [])
 
+    # ------------------------------------------------------------- 练度（精英化）
+    def test_练度列写回与回读(self):
+        """练度列：只有**非 E2** 才写成对象 `{"name":…, "elite":…}`，其余保持字符串；
+        再打开时能读回、`全部设为 E2` 能把对象写法收干净。"""
+        app = self.app
+        dlg = self._open(0)
+        self.assertEqual(dlg._elite_vars["卡夫卡"].get(), "E2")      # 缺省口径＝满练
+        dlg._elite_vars["卡夫卡"].set("E1")
+        dlg._on_elite_change("卡夫卡")
+        self.assertEqual(dlg._op_text("卡夫卡"), "卡夫卡 E1")        # 表格里立刻带角标
+        changes, _moods = self._apply(dlg)
+        self.assertEqual([n for f in changes[0] for n in f["operators"] if isinstance(n, dict)],
+                         [{"name": "卡夫卡", "elite": 1}])
+        self.assertEqual(app.schedule.shifts[0].world.get_operator("卡夫卡").elite, 1)
+
+        # 再打开：读回 E1（对象写法不能把表格搞崩）
+        again = self._open(0)
+        self.assertEqual(again._elite["卡夫卡"], 1)
+        self.assertEqual(again._elite_vars["卡夫卡"].get(), "E1")
+        again._set_all_elite(2)
+        changes, _moods = self._apply(again)
+        self.assertEqual([n for f in changes[0] for n in f["operators"] if isinstance(n, dict)], [])
+        self.assertEqual(app.schedule.shifts[0].world.get_operator("卡夫卡").elite, 2)
+
+    def test_练度不足会少算技能(self):
+        """同一个人 E2 / E1 两档：卡片的技能条数不同，心情速率也随之不同。"""
+        from mood_soc.rules import mood_skill_summary
+
+        app = self.app
+        self.assertEqual(mood_skill_summary(
+            app.schedule.shifts[0].world.get_operator("卡夫卡"))[1], [])
+        dlg = self._open(0)
+        dlg._elite_vars["卡夫卡"].set("E1")
+        dlg._on_elite_change("卡夫卡")
+        self._apply(dlg)
+        op = app.schedule.shifts[0].world.get_operator("卡夫卡")
+        self.assertEqual(op.elite, 1)
+        unlocked, locked = mood_skill_summary(op)
+        self.assertTrue(locked, "E1 的卡夫卡应当少一条心情技能（「手工艺品·β」要 E2）")
+        self.assertIn("手工艺品·β", [n for n, _e, _lv in locked])
+        app.initial_moods.clear()
+        app.recompute()
+
     # ------------------------------------------------------------- 班次隔离
     def test_班次之间互不串改(self):
         """干员改动只作用于被改过的那一班；没碰的班次一个位置都不变。"""

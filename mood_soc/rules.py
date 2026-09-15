@@ -1063,6 +1063,32 @@ def _leave_previous_facility(world: BaseLayout, name: str) -> None:
                 return
 
 
+def mood_skill_summary(op: Operator):
+    """该干员的**心情技能练度摘要** → `(已解锁数, [(技能名, 需要精英, 需要等级), ...])`。
+
+    数据来源：`skills.SKILL_EQUIPS`（键 = `(干员名, skill_id#clause)`，由上游 `operators.txt` 的
+    `unlock`/`elite`/`level` 三列派生）+ `skills.SKILLS`（本项目建模的 250 条 clause）。
+    同一技能多个分句只算一次（取要求最高的那次）；只统计**心情类**技能（在 `SKILLS` 里的）。
+
+    用途：界面上解释"为什么这个人的速率和满练不一样"——例如
+    `练度 E1 · 已解锁 6 条；因未满练少 2 条（「手工艺品·β」需要精英 2）`。
+    """
+    unlocked = 0
+    locked: dict = {}
+    for (name, key), eq in SKILL_EQUIPS.items():
+        if name != op.name or key not in SKILLS:
+            continue                        # 只统计本项目建模的心情技能
+        if op.elite >= eq.unlock_elite and op.level >= eq.unlock_level:
+            unlocked += 1
+            continue
+        sid = key.split("#")[0]
+        cand = (SKILLS[key].name, eq.unlock_elite, eq.unlock_level)
+        prev = locked.get(sid)
+        if prev is None or (cand[1], cand[2]) > (prev[1], prev[2]):
+            locked[sid] = cand
+    return unlocked, sorted(locked.values(), key=lambda row: (row[1], row[2], row[0]))
+
+
 def entry_event_holders(world: BaseLayout):
     """列出**可能**触发进驻事件（M15a）的干员 → `[(干员名, 所在房间名), ...]`。
 

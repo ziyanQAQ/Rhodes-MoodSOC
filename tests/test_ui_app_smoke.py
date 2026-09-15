@@ -1067,6 +1067,40 @@ class Test新增交互(unittest.TestCase):
         self.assertIn(0, changes)
         self.assertEqual(changes[0][1]["level"], 2)
 
+    def test_精英化角标与练度摘要(self):
+        """练度（精英化）要"看得见"：看板 / 全员一览的芯片带 `E1` 角标，
+        对点查询说明"少算了哪条技能、为什么"。"""
+        app = self.app
+        app.set_time(Decimal("0"))
+        self.assertEqual(app._elite_badges(), {})          # 缺省口径＝E2 满练 → 无角标
+        # 把卡夫卡（「手工艺品·β」要 E2）降成 E1
+        facs = app._facilities_of(0)
+        for f in facs:
+            f["operators"] = [({"name": n, "elite": 1} if n == "卡夫卡" else n)
+                              for n in f.get("operators", [])]
+        app._apply_facilities(0, facs)
+        app.update()
+        self.assertEqual(app._elite_badges().get("卡夫卡"), "E1")
+        board_chip = next(s for s in app.board.slots if s.operator == "卡夫卡")
+        self.assertIn("E1", board_chip.chip.name.cget("text"))
+        self.assertIn("E1", app.roster.by_name["卡夫卡"].name.cget("text"))
+        # 对点查询的练度摘要：要说清"少了几条、缺在哪一档"
+        app.on_roster_pick("卡夫卡")
+        text = app.stats.cget("text")
+        self.assertIn("练度 E1", text)
+        self.assertIn("已解锁", text)
+        self.assertIn("手工艺品·β", text)
+        self.assertIn("E2", text)
+        # 改回满练 → 角标消失、摘要不再告警
+        facs = app._facilities_of(0)
+        for f in facs:
+            f["operators"] = [n.get("name", "") if isinstance(n, dict) else n
+                              for n in f.get("operators", [])]
+        app._apply_facilities(0, facs)
+        app.update()
+        self.assertEqual(app._elite_badges(), {})
+        self.assertNotIn("因未满练少", app.stats.cget("text"))
+
     def test_时间滑块两侧按钮与步长提示(self):
         """滑块两侧改成纯箭头（原来写 "◀ 15min" 容易被误读成"15 分钟前/时长"），
         步长与快捷键改用右侧一句人话提示。"""

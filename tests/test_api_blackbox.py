@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from mood_soc import (INF, apply_entry_events, apply_idle_to_dorm, build_base_layout,
                       entry_target_kind, evaluate, evaluate_base, find_entry_target,
-                      simulate, time_to_mood)
+                      mood_skill_summary, simulate, time_to_mood)
 from mood_soc.models import (IdleToDormEntry, build_entry_shift_overrides,
                              build_idle_to_dorm_config, resolve_entry_config)
 from mood_soc.config import (FacilityType, WORK_FACILITIES, facility_max_count,
@@ -1651,6 +1651,54 @@ class Test布局约束与等级(unittest.TestCase):
         self.assertEqual(min_level_for_slots(cc, 5), 5)
         dorm = parse_facility_type("宿舍")
         self.assertEqual(min_level_for_slots(dorm, 5), 1)     # 宿舍各级都是 5 个位置
+
+
+class Test精英化与练度(unittest.TestCase):
+    """精英化（0/1/2，**默认 2**）与等级（**默认 30**）决定心情技能能不能生效。
+
+    数据：`skills.SKILL_EQUIPS`（上游 `operators.txt` 的 `unlock`/`elite`/`level` 三列派生物）
+    —— 291 条里有 **92 条要精英 2**、33 条要精英 1、**4 条要等级 30**。
+    """
+
+    @staticmethod
+    def _dorm(members):
+        return build_base_layout(scenario(
+            {"type": "宿舍", "level": 5,
+             "operators": [{"name": n, **spec} for n, spec in members]}))
+
+    def test_默认满练(self):
+        """不写 elite/level 时按满练：E2 + 等级 30（否则 4 条"等级 30 解锁"的会默认失效）。"""
+        world = self._dorm([("杜林", {})])
+        op = world.get_operator("杜林")
+        self.assertEqual(op.elite, 2)
+        self.assertEqual(op.level, 30)
+
+    def test_等级30解锁的技能默认生效(self):
+        """杜林「宿舍全体回复（含自身）」要等级 30：默认应当生效（同宿舍的人回复更快）。"""
+        fast = self._dorm([("杜林", {}), ("陪练", {})])
+        slow = self._dorm([("杜林", {"level": 1}), ("陪练", {})])
+        self.assertLess(compute_net_rate(fast, "陪练"), compute_net_rate(slow, "陪练"))
+
+    def test_精英化不足会少算技能(self):
+        """卡夫卡「手工艺品·β」要精英 2：E1 时不该生效，E2 时生效。"""
+        unlocked_e1, locked_e1 = mood_skill_summary(self._dorm([("卡夫卡", {"elite": 1})])
+                                                    .get_operator("卡夫卡"))
+        unlocked_e2, locked_e2 = mood_skill_summary(self._dorm([("卡夫卡", {"elite": 2})])
+                                                    .get_operator("卡夫卡"))
+        self.assertEqual(locked_e2, [])
+        self.assertEqual([row[0] for row in locked_e1], ["手工艺品·β"])
+        self.assertEqual(locked_e1[0][1], 2)                 # 需要精英 2
+        self.assertLess(unlocked_e1, unlocked_e2)
+
+    def test_练度摘要能解释差异(self):
+        """吽「坚毅随和」（要精英 2，控制中枢）→ E2 生效后净速率不一样。"""
+        def rate(elite):
+            world = build_base_layout(scenario(
+                {"type": "控制中枢", "level": 5,
+                 "operators": [{"name": "吽", "elite": elite}, "陪练1", "陪练2"]}))
+            return compute_net_rate(world, "吽")
+
+        self.assertNotEqual(rate(1), rate(2))
 
 
 if __name__ == "__main__":

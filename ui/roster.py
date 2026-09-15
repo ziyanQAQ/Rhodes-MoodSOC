@@ -62,6 +62,12 @@ class RosterStrip(tk.Frame):
         self._columns = self._columns_for_width(self.winfo_width())
         self._rebuild()
 
+    def set_badges(self, badges: Dict[str, str]) -> None:
+        """练度角标：`{干员: "E1"}`（只给非精英化二的；取各周期里**最低**的那档）。"""
+        for v in self.chips:
+            if v.operator:
+                v.set_badge(badges.get(v.operator, ""))
+
     def _columns_for_width(self, width: int) -> int:
         if width < 200:                       # 还没真正布局，保持上次/兜底列数
             return self._columns or COLUMNS_MAX
