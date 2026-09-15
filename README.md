@@ -479,10 +479,12 @@ Rhodes-MoodSOC/
 │   ├── test_cli_blackbox.py        命令行黑盒：subprocess 调 main.py → stdout JSON / 退出码 / 结果文件
 │   ├── test_ui_schedule_blackbox.py 图形界面的计算核心黑盒（含"不拉起 tkinter"的结构断言）
 │   ├── test_ui_app_smoke.py        界面端到端冒烟（真建窗口；无图形环境自动跳过）
-│   └── test_ui_batch_blackbox.py   「批量设置」对话框黑盒（真建窗口；无图形环境自动跳过）
+│   ├── test_ui_batch_blackbox.py   「批量设置」对话框黑盒（真建窗口；无图形环境自动跳过）
+│   └── test_skill_coverage.py      技能全量核对三层断言（模板级 / 250 条 clause / 上游描述对照）
 ├── scripts/
 │   ├── maa_to_scenario.py      把 MAA 排班 JSON 转成本工具的场景 JSON（解析在 mood_soc/maa.py）
 │   ├── classify_skills.py      给每个 clause 挂六轴模板 + 生成 755 行覆盖台账 + 零遗漏校验
+│   ├── verify_skills.py        **技能全量核对**（三层）+ 生成核对报告（只读，不改数据）
 │   ├── generate_factions.py    从上游 termDescriptionDict 生成干员↔阵营/标签表
 │   └── generate_skills_data.py 把 resources 两份 txt 生成为 mood_soc/skills_data.py（技能数据管道）
 ├── scenarios/             demo.json + maa_shift1/2/3.json（示例场景）
@@ -490,6 +492,7 @@ Rhodes-MoodSOC/
 │   ├── 心情消耗回复和工休时间.docx        需求文档（心情消耗/回复/工休的**计算规则**）
 │   ├── moods_skills.txt / operators.txt   技能库 + 干员↔技能映射（含 template_id/params）
 │   ├── skills_registry.txt                上游 755 条 buff 的覆盖台账
+│   ├── skill_verify_report.md             技能核对报告（**生成物**，勿手改）
 │   ├── factions.txt / factions_supplement.txt  阵营/标签表（上游生成）
 │   ├── variable_producers.txt             变量产出者表（人间烟火/热情值/无声共鸣）
 │   └── arknights-infra-schedule-maa.json  MAA 排班样例（转换脚本的输入）
@@ -813,7 +816,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 ## 六、测试（黑盒）
 
 测试为**黑盒测试**：只通过「命令行」「公开 API」与「图形界面的计算核心」断言
-**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **219 个用例全绿**。
+**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **246 个用例全绿**。
 
 ```bash
 # 运行全部测试
@@ -822,10 +825,23 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 # 只跑某个文件
 .venv/Scripts/python.exe -m unittest tests.test_api_blackbox -v          # 公开 API 黑盒
 .venv/Scripts/python.exe -m unittest tests.test_cli_blackbox -v          # 命令行黑盒
+.venv/Scripts/python.exe -m unittest tests.test_skill_coverage -v        # 技能全量核对（三层）
 .venv/Scripts/python.exe -m unittest tests.test_ui_schedule_blackbox -v  # 图形界面的计算核心
 .venv/Scripts/python.exe -m unittest tests.test_ui_app_smoke -v          # 界面冒烟（无图形环境自动跳过）
 .venv/Scripts/python.exe -m unittest tests.test_ui_batch_blackbox -v     # 「批量设置」对话框黑盒
 ```
+
+技能侧另有一道"体检"（与测试同源，可独立跑、可出报告）：
+
+```bash
+.venv/Scripts/python.exe scripts/verify_skills.py --check    # 通过=退出码 0
+.venv/Scripts/python.exe scripts/verify_skills.py --report   # 重写 resources/skill_verify_report.md
+```
+
+它把上游 **755** 条 buff / 本仓库 **250** 条心情 clause 全部过一遍：
+模板级自洽、逐条 clause 造场景核对（数值 / 桶 / **作用范围**）、上游描述数字与方向对照。
+结论：250 条全部有结论（242 条生效核对 + 8 条按性质归类），描述对照 245 条一致 +
+1 条已登记差异（夕「不以物喜」，见 `documents/05-技能分类大纲.md` §5.11 与报告第五节）。
 
 覆盖的代表性输入 → 输出：
 

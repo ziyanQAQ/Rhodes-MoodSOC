@@ -1,0 +1,93 @@
+92 special clauses
+control_allCost_condChar_000#1 | 浮生得闲 | cc_recover | 0.25 | M03 | control_center | partial=hold
+control_dorm_rec2_000#2 | 羁绊相生 | cc_recover | 0.1 | M01 | dormitory | partial=hold
+control_dorm_rec_tag_001#1 | 无言的慈爱 | cc_recover | 0.1 | M01 | dormitory | count_faction=精英干员
+control_facCostReset_000#1 | 杯莫停 | eliminate_self | 0 | M13 | control_center | target_faction=岁;partial=hold
+control_meeting&mp_cost_000#1 | 英雄的骄傲·α | self_consume | 0.02 | M07a | control_center | partial=hold
+control_meeting&mp_cost_100#1 | 英雄的骄傲·β | self_consume | 0.02 | M07a | control_center | partial=hold
+control_mp&meet_spd_000#1 | 成效优先 | self_consume | 0.05 | M07a | control_center | partial=hold
+control_mp_aegir1_000#1 | 潮汐守望 | self_consume | 0.5 | M07a | control_center | basis=abyssal_non_dorm;partial=apply
+control_mp_aegir1_000#2 | 潮汐守望 | dorm_self | 0.5 | M07b | - | partial=apply
+control_mp_aegir1_000#3 | 潮汐守望 | dorm_self | 0.5 | M07b | - | partial=apply
+control_mp_bd&trade_000#1 | 演技的怪物 | self_consume | 0.01 | M07a | control_center | var=热情值 per=8 min=None;partial=apply
+control_mp_bd_cost_expand_000#1 | 孤光共照 | cc_recover | 0.05 | M02b | power,manufacturing,trading,office,reception | max_group=room2_recover
+control_mp_bd_cost_expand_000#2 | 孤光共照 | cc_recover | 0.05 | M02b | power,manufacturing,trading,office,reception | var=人间烟火 per=20 min=None;max_group=room2_recover;partial=apply
+control_mp_cost&bd3_000#1 | 生活的重压 | self_consume | 0.05 | M07a | control_center | var=热情值 per=None min=40;partial=apply
+control_mp_cost&faction2_000#1 | 坚毅随和 | cc_recover | 0.2 | M03 | control_center | count_faction=鲤氏侦探事务所
+control_mp_cost&faction_000#1 | 德才兼备 | cc_recover | 0.05 | M03 | control_center | count_faction=龙门近卫局
+control_mp_cost&faction_020#1 | 学生会会长 | cc_recover | 0.05 | M03 | control_center | count_faction=乌萨斯学生自治团
+control_mp_cost&faction_030#1 | 幕后指挥 | cc_recover | 0.05 | M03 | control_center | count_faction=谢拉格
+control_mp_cost&faction_900#1 | 异格者 | cc_recover | 0.05 | M03 | control_center | count_faction=异格者
+control_mp_cost&faction_990#1 | 彩虹小队 | cc_recover | 0.05 | M03 | control_center | count_faction=彩虹小队
+control_mp_cost_double_000#1 | 魔王传承 | cc_recover | 0.05 | M04 | control_center | partial=hold
+control_mp_cost_double_001#1 | “未完的故事” | cc_recover | 0.1 | M04 | control_center | partial=hold
+control_mp_cost_reset_000#1 | 互为半身 | eliminate_self | 0 | M13 | control_center | partial=apply;self_only
+control_mp_expand_double_000#1 | 巴别塔之帜 | cc_recover | 0.1 | M02b | power,manufacturing,trading,office,reception | max_group=room2_recover
+control_mp_expand_double_000#2 | 巴别塔之帜 | cc_recover | 0.1 | M02b | power,manufacturing,trading,office,reception | max_group=room2_recover;partial=hold
+control_mp_lonely_000#1 | 公事公办 | cc_recover | 0.1 | M02c | power,office,reception | max_group=room2_recover;spread
+dorm_exchangeAp_000#1 | 患难之交 | dorm_targeted | 0 | M15a | - | partial=apply
+dorm_hireToRecAll_000#2 | 寻同路人 | dorm_group | 0.05 | M08 | - | basis=recruit_slot;partial=apply
+dorm_hireToRecAll_001#2 | 无瑕心·α | dorm_group | 0.05 | M08 | - | basis=recruit_slot;partial=apply
+dorm_hireToRecAll_021#2 | 无瑕心·β | dorm_group | 0.1 | M08 | - | basis=recruit_slot;partial=apply
+dorm_powToRecAll_000#2 | 柔和微光·α | dorm_group | 0.05 | M08 | - | basis=power_count;partial=apply
+dorm_powToRecAll_010#2 | 柔和微光·β | dorm_group | 0.05 | M08 | - | basis=power_count;partial=apply
+dorm_recExcludeOther_000#1 | 自律 | dorm_self | 2 | M14 | - | exclusive
+dorm_rec_all&bd_000#2 | 无词颂歌 | dorm_group | 0.01 | M08 | - | var=无声共鸣 per=5 min=None;partial=apply
+dorm_rec_all&lv_100#2 | 死前必做清单 | dorm_group | 0.02 | M08 | - | basis=dorm_level;partial=apply
+dorm_rec_all&single_000#1 | 小酌怡情 | dorm_group | 0.8 | M11 | - | pool;partial=apply
+dorm_rec_all&tag_000#2 | 资深料理人 | dorm_group | 0.15 | M08 | - | partial=apply
+dorm_rec_all&tired_000#2 | 芬芳疗养·β | dorm_targeted | 0.1 | M12 | - | partial=hold
+dorm_rec_all&unfull_001#2 | 倾谈者 | dorm_group | 0.01 | M08 | - | basis=dorm_unfull;partial=apply
+dorm_rec_bd_n1_n3_000#1 | 慢板行歌 | dorm_single | 0.65 | M09 | - | partial=apply
+dorm_rec_oneself2_000#2 | “独处” | dorm_self | 0.05 | M10 | - | basis=dorm_others;partial=apply
+dorm_rec_oneself2_001#2 | 赋格融汇 | dorm_self | 0.05 | M10 | - | basis=dorm_others;partial=apply
+dorm_rec_single&oneself_000#1 | 活泼 | dorm_single | 0.2 | M09 | - | partial=apply
+dorm_rec_single&oneself_001#1 | 探险家的热情 | dorm_single | 0.25 | M09 | - | partial=apply
+dorm_rec_single&oneself_010#1 | 烘焙 | dorm_single | 0.3 | M09 | - | partial=apply
+dorm_rec_single&oneself_011#1 | 烹饪 | dorm_single | 0.35 | M09 | - | partial=apply
+dorm_rec_single&oneself_012#1 | Give me five | dorm_single | 0.35 | M09 | - | partial=apply
+dorm_rec_single&oneself_020#1 | 和谐 | dorm_single | 0.4 | M09 | - | partial=apply
+dorm_rec_single&oneself_021#1 | 喀兰圣女 | dorm_single | 0.5 | M09 | - | partial=apply
+dorm_rec_single&oneself_030#1 | 使徒 | dorm_single | 0.5 | M09 | - | partial=apply
+dorm_rec_single&oneself_040#1 | 甜甜圈派对 | dorm_single | 0.4 | M09 | - | partial=apply
+dorm_rec_single&tag_000#1 | 狩猎好帮手 | dorm_single | 0.55 | M09 | - | partial=apply
+dorm_rec_single&tag_000#2 | 狩猎好帮手 | dorm_single | 0.45 | M09 | - | partial=apply
+dorm_rec_single_000#1 | 医疗服务 | dorm_single | 0.65 | M09 | - | partial=apply
+dorm_rec_single_001#1 | 疗养 | dorm_single | 0.65 | M09 | - | partial=apply
+dorm_rec_single_010#1 | 善解人意 | dorm_single | 0.55 | M09 | - | partial=apply
+dorm_rec_single_020#1 | 慈悲 | dorm_single | 0.75 | M09 | - | partial=apply
+dorm_rec_single_030#1 | 天启 | dorm_single | 0.7 | M09 | - | partial=apply
+dorm_rec_single_031#1 | 维多利亚文学 | dorm_single | 0.7 | M09 | - | partial=apply
+dorm_rec_single_032#1 | 心理疏导 | dorm_single | 0.7 | M09 | - | partial=apply
+dorm_rec_single_033#1 | 恩典颂歌 | dorm_single | 0.7 | M09 | - | partial=apply
+dorm_rec_single_1010#1 | 善解人意 | dorm_single | 0.55 | M09 | - | partial=apply
+dorm_rec_single_P_000#1 | 沏茶 | dorm_single | 0.55 | M09 | - | partial=apply
+dorm_rec_single_P_000#2 | 沏茶 | dorm_single | 0.45 | M09 | - | partial=apply
+dorm_rec_single_P_001#1 | 烤肉大师 | dorm_single | 0.55 | M09 | - | partial=apply
+dorm_rec_single_P_001#2 | 烤肉大师 | dorm_single | 0.45 | M09 | - | partial=apply
+dorm_rec_single_P_002#1 | 毒剂师之友 | dorm_single | 0.55 | M09 | - | partial=apply
+dorm_rec_single_P_002#2 | 毒剂师之友 | dorm_single | 0.45 | M09 | - | partial=apply
+dorm_rec_single_power_000#1 | 降生于冰寒 | dorm_single | 0.55 | M09 | - | partial=apply
+dorm_rec_single_power_000#2 | 降生于冰寒 | dorm_single | 0.45 | M09 | - | partial=apply
+dorm_rec_single_power_001#1 | 圣城趣事通 | dorm_single | 0.55 | M09 | - | partial=apply
+dorm_rec_single_power_001#2 | 圣城趣事通 | dorm_single | 0.45 | M09 | - | partial=apply
+dorm_rec_single_power_100#1 | 天生乐天派 | dorm_single | 0.55 | M09 | - | partial=apply
+dorm_rec_toone_000#1 | 头号陪练 | dorm_meta | 0.3 | M17 | - | boost=推进之王/dorm_group;partial=apply
+hire_spd_cost&clue_000#1 | 救援队·保证体力 | self_consume | -0.1 | M07a | office | basis=recruit_slot;partial=apply
+manu_cost_all_000#1 | 团队精神 | eliminate_self | 0 | M13 | manufacturing | partial=hold
+manu_formula_spd&cost_bd_000#1 | 挑大梁 | self_consume | -0.15 | M07a | manufacturing | partial=apply
+meet_spd&cost_condChar_000#1 | 双面间谍 | self_consume | 2 | M07a | reception | partial=apply
+meet_spd&cost_condChar_001#1 | “职业操守”·α | self_consume | 1 | M07a | reception | partial=apply
+meet_spd&cost_condChar_002#1 | 我自己的愿望 | self_consume | 2 | M07a | reception | partial=apply
+meet_spd&cost_condChar_011#1 | “职业操守”·β | self_consume | 1 | M07a | reception | partial=apply
+meet_spd&cost_condChar_020#1 | 专业经理·α | self_consume | 1 | M07a | reception | partial=apply
+meet_spd&cost_condChar_021#1 | 专业经理·β | self_consume | 1 | M07a | reception | partial=apply
+trade_cost&bd2_000#2 | 跋山涉水 | facility_consume | -0.01 | M05 | trading | var=人间烟火 per=10 min=None;partial=apply
+trade_cost&bd2_001#2 | 万里传书 | facility_consume | -0.02 | M05 | trading | var=人间烟火 per=10 min=None;partial=apply
+trade_ord_limit&cost_P_000#1 | 醉翁之意·α | self_consume | -0.1 | M07a | trading | partial=hold
+trade_ord_limit&cost_P_001#1 | 醉翁之意·β | self_consume | -0.1 | M07a | trading | partial=hold
+trade_ord_limit&cost_P_010#1 | 默契 | self_consume | -0.3 | M07a | trading | partial=hold
+trade_ord_limit&cost_P_020#1 | 未偿还的债务 | self_consume | -0.1 | M07a | trading | partial=hold
+trade_ord_long_000#1 | 投资·α | self_consume | -0.25 | M07a | trading | partial=apply
+trade_ord_long_010#1 | 投资·β | self_consume | -0.25 | M07a | trading | partial=apply
+trade_ord_spd&cost_P_000#1 | 恩怨 | self_consume | 0.3 | M07a | trading | partial=hold

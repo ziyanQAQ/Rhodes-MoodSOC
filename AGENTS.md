@@ -94,8 +94,11 @@ documents/
    `skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `resources/*.txt` → 重跑生成脚本。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 219 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 246 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
+12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（250 条 clause 逐条造场景
+    核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `resources/skill_verify_report.md`。
+    详见 `documents/05-技能分类大纲.md` §5.11）。
 
 ---
 
@@ -119,6 +122,10 @@ python main.py --mode base --demo --period 12          # 先推进 12h 再评估
 python scripts/classify_skills.py --agd <ArknightsGameData>   # 挂模板 + 生成 755 行台账
 python scripts/generate_skills_data.py                        # 生成 mood_soc/skills_data.py
 python scripts/classify_skills.py --check                     # 零遗漏校验（CI 用，不需要仓库）
+
+# 技能全量核对（模板级 / clause 级 / 上游描述对照；只读，不改数据）
+python scripts/verify_skills.py --check                       # 有硬伤 → 退出码 1
+python scripts/verify_skills.py --report                      # 重写 resources/skill_verify_report.md
 
 # 测试
 .venv/Scripts/python.exe -m unittest discover -s tests -v
