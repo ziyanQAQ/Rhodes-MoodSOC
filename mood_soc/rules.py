@@ -815,6 +815,25 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
     return events
 
 
+def reset_entry_events(world: BaseLayout) -> int:
+    """把"这一份布局快照已结算过进驻事件"的标记**归位**（返回归位的干员数）。
+
+    为什么需要它：`apply_entry_events` 用 `Operator.entry_swapped` 保证**同一份快照只结算一次**
+    （重复调用幂等）。而"**再次进驻**"是另一回事——同一个布局副本被**跨班次 / 跨周期复用**时
+    （`ui.schedule.simulate_schedule` 就是复用每个班次的副本），每一个班次开始都是一次**新的
+    进驻瞬间**，必须重新判定。所以那个入口在每次"进驻那一刻"之前调用本函数。
+
+    语义边界（免得被误用）：它**不改心情、不改位置**，只清标记；一次性结算（`main.py --entry-events`
+    那样只跑一次的场景）不需要它，也就保持了"重复调用不出二次效果"的原有保证。
+    """
+    n = 0
+    for op in world.all_operators():
+        if getattr(op, "entry_swapped", False):
+            op.entry_swapped = False
+            n += 1
+    return n
+
+
 def entry_event_holders(world: BaseLayout):
     """列出**可能**触发进驻事件（M15a）的干员 → `[(干员名, 所在房间名), ...]`。
 

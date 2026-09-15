@@ -35,6 +35,7 @@ from .rules import (
     recovery_ledger,
     remaining_mood_after,
     remaining_work_hours,
+    reset_entry_events,
     time_to_mood,
     work_rest_ratio,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "recovery_ledger",
     "remaining_mood_after",
     "remaining_work_hours",
+    "reset_entry_events",
     "simulate",
     "time_to_mood",
     "work_rest_ratio",

@@ -444,6 +444,28 @@ class Test进驻事件与口径(MoodAssertMixin, unittest.TestCase):
         swaps = self._swaps(traj)
         self.assertLessEqual(abs(swaps[0].t - D("0")), D("0.01"))
 
+    def test_多周期里每周期都结算(self):
+        """**跨周期同样每班结算一次**（回归：副本复用导致第 2 周期起一次都不换）。"""
+        sch = self._three_shifts({"enabled": True, "scope": "anywhere", "swap_with": "巫恋"})
+        one = self._swaps(simulate_schedule(sch, cycles=1, entry_events=True))
+        self.assertEqual([float(m.t) for m in one], [0.0, 12.0, 18.0])   # 各班开始时各一次
+
+        two = self._swaps(simulate_schedule(sch, cycles=2, entry_events=True))
+        self.assertEqual([float(m.t) for m in two],
+                         [0.0, 12.0, 18.0, 24.0, 36.0, 42.0], [m.label for m in two])
+        three = self._swaps(simulate_schedule(sch, cycles=3, entry_events=True))
+        self.assertEqual([float(m.t) for m in three],
+                         [0.0, 12.0, 18.0, 24.0, 36.0, 42.0, 48.0, 60.0, 66.0])
+
+    def test_多周期与单周期第一段一致(self):
+        """周期数只影响"跑到第几周"，不影响已经跑过的那一段（回归：别把单周期算歪）。"""
+        sch = self._three_shifts({"enabled": True, "scope": "anywhere", "swap_with": "巫恋"})
+        one = simulate_schedule(sch, cycles=1, entry_events=True)
+        two = simulate_schedule(sch, cycles=2, entry_events=True)
+        for name in one.names:
+            self.assertEqual(one.mood_at(name, 6), two.mood_at(name, 6), name)
+            self.assertEqual(one.mood_at(name, 20), two.mood_at(name, 20), name)
+
     def test_按班次写法与继承(self):
         """按序号 / 按班次名定位；显式 null 清空对象；没写的字段继承全局。"""
         sch = self._three_shifts({"enabled": True, "scope": "anywhere", "swap_with": "巫恋",

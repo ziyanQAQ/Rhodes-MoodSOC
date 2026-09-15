@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from mood_soc import (apply_entry_events, build_base_layout, compute_net_rate,
-                      entry_event_holders)
+                      entry_event_holders, reset_entry_events)
 from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import MOOD_MAX, MOOD_MIN
 from mood_soc.maa import read_maa
@@ -590,6 +590,11 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         # 总开关（entry_events）打开时，逐班看这次要不要做（per_shift 里写 "enabled": false 就不做）。
         if entry_events and eff.enabled is not False:
             _sync_moods(world, moods)
+            # ⚠️ 班次开始 = 一次**新的进驻瞬间**：同一个副本会被**跨周期复用**
+            #    （`worlds[idx]` 只建一次，第 2 周期起还是它），而 `apply_entry_events`
+            #    用 `Operator.entry_swapped` 保证"同一份快照只结算一次"——不归位的话
+            #    第 2 个周期开始就被标记挡住、换心情一次都不触发（多周期漏算的老 bug）。
+            reset_entry_events(world)
             events = apply_entry_events(world, enabled=True)
             # ⚠️ 事件里可能只有"未执行"的说明（如配了 force 但她此刻没满心情）——
             # 那种情况既不算换成功、也不能拦住"等她回满"的等待逻辑。
