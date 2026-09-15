@@ -989,6 +989,26 @@ class Test新增交互(unittest.TestCase):
                  if chart.type(i) == "text"]
         self.assertTrue(hover and any("速率" in t for t in hover), hover)
 
+    def test_速率读数随时间实时更新(self):
+        """拖滑块换时刻 → 图下的「此刻速率 / 本班平均（班次名）」跟着变（曾经是死的）。
+
+        回归：stats 只在"换干员 / 重算"时才更新，所以拖滑块时那两行一直停在旧值上，
+        连"本班平均（Shift N）"都不会跟着班次走。
+        """
+        app = self.app
+        app.set_time(Decimal("3"))
+        app.update()
+        first = app.stats.cget("text").split("\n")[0]
+        app.set_time(Decimal("13"))                    # 跨到第 2 班
+        app.update()
+        second = app.stats.cget("text").split("\n")[0]
+        self.assertIn("此刻", first)
+        self.assertIn("/时", first)
+        self.assertNotEqual(first, second, "换时刻后「此刻 / 本班平均」应当跟着变")
+        self.assertIn(app.schedule.shifts[1].label, second, "班次名也要跟上")
+        app.set_time(Decimal("0"))
+        app.update()
+
     def test_时间滑块两侧按钮与步长提示(self):
         """滑块两侧改成纯箭头（原来写 "◀ 15min" 容易被误读成"15 分钟前/时长"），
         步长与快捷键改用右侧一句人话提示。"""

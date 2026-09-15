@@ -456,6 +456,10 @@ class MoodSocApp(tk.Tk):
         self.chart.set_cursor(self.current_t)
         self.time_label.configure(text=theme.fmt_clock(self.current_t, self.schedule.cycle_hours))
         self._highlight_shift_button()
+        # 「此刻速率 / 本班平均」也随时间走（实测 `_stats_text` 只要 0.04ms，相对滑块那次
+        # 21ms 的刷新可以忽略）——否则拖滑块时图下那两行一直是旧值（曾经就是这个问题）。
+        if self.curve_operator:
+            self.stats.configure(text=self._stats_text(self.curve_operator))
 
     def _on_scale(self, value):
         """滑块回调：只记录目标时刻，刷新做"前沿 + 尾部"节流（拖动时约 30fps）。
