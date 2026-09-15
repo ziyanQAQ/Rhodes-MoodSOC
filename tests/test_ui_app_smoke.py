@@ -344,6 +344,7 @@ class Test新增交互(unittest.TestCase):
 
         背景：工具栏原来放着一个 `Checkbutton`，而框里又有一个 ①，两处写同一个变量；
         虽然状态永远一致（同一个 `BooleanVar`），但"同一个开关出现两次"看上去像两个打架的设置。
+        现在工具栏那颗按钮只负责**打开设置框**，右边的文字只报**当前状态**。
         这条测试盯着它别再回来。
         """
         from tkinter import ttk
@@ -351,43 +352,48 @@ class Test新增交互(unittest.TestCase):
         app = self.app
         bar = app.entry_detail.master
         boxes = []
+        buttons = []
 
         def walk(w):
             for c in w.winfo_children():
                 if isinstance(c, ttk.Checkbutton):
                     boxes.append(str(c))
+                elif isinstance(c, ttk.Button):
+                    buttons.append(str(c.cget("text")))
                 walk(c)
 
         walk(bar)
         self.assertEqual(boxes, [], "工具栏不该再有换心情开关（唯一入口＝设置框里的 ①）")
-        # 关着时工具栏留空；开没开由状态栏说明
+        self.assertIn("换心情设置", buttons, "入口按钮要在工具栏上（点开设置框）")
+        # 右边界面的状态：关着也写"未开启"，开着写"已开启 · 换谁 [· 等她满]"
         app.entry_events.set(False)
         app._sync_entry_label()
-        self.assertEqual(app.entry_detail.cget("text"), "")
-        self.assertIn("换心情：关", app._entry_status())
+        self.assertEqual(app.entry_detail.cget("text"), "未开启")
+        self.assertIn("换心情：未开启", app._entry_status())
         app.entry_events.set(True)
         app.entry_swap_with, app.entry_scope, app.entry_when = None, "dorm", "full"
-        self.assertIn("换心情：与同宿舍前一位进驻者互换·没满就不换", app._entry_status())
         app._sync_entry_label()
+        self.assertEqual(app.entry_detail.cget("text"), "已开启 · 换前一位进驻")
+        self.assertIn("换心情：与同宿舍前一位进驻者互换·没满就不换", app._entry_status())
         app.entry_events.set(False)
         app._sync_entry_label()
 
     def test_进驻事件开关有说明且状态可见(self):
-        """工具栏那串摘要只写「换谁 + 要不要等她满」；关着时留空（三个设置的紧凑版）。"""
+        """工具栏右侧那串只报"当前状态"：开没开 + 换谁 + 要不要等她满。"""
         app = self.app
         app.entry_events.set(False)
         app._sync_entry_label()
-        self.assertEqual(app.entry_detail.cget("text"), "")
+        self.assertEqual(app.entry_detail.cget("text"), "未开启")
         app.entry_events.set(True)
         app.entry_swap_with, app.entry_scope, app.entry_when = None, "dorm", "full"
         app._sync_entry_label()
-        self.assertEqual(app.entry_detail.cget("text"), "（前一位）")
+        self.assertEqual(app.entry_detail.cget("text"), "已开启 · 换前一位进驻")
         app.entry_swap_with = "塞雷娅"
         app._sync_entry_label()
-        self.assertEqual(app.entry_detail.cget("text"), "（「塞雷娅」）")
+        self.assertEqual(app.entry_detail.cget("text"), "已开启 · 换塞雷娅")
         app.entry_swap_with, app.entry_scope, app.entry_when = "any", "anywhere", "wait"
         app._sync_entry_label()
-        self.assertEqual(app.entry_detail.cget("text"), "（最累的·等她满）")
+        self.assertEqual(app.entry_detail.cget("text"), "已开启 · 换最累的 · 等她满")
         # 状态栏那一句话要说全：谁 / 在哪 / 只换心情 / 两种强制口径
         summary = app._entry_summary()
         for token in ("全基建最累的那位", "基建任意位置", "只换心情、位置不动", "等她回满"):
@@ -662,7 +668,7 @@ class Test新增交互(unittest.TestCase):
         app.entry_per_shift = list(dlg.result[5])
         app._sync_entry_label()
         app.recompute()
-        self.assertEqual(app.entry_detail.cget("text"), "（按班次）")   # 工具栏只留短标记
+        self.assertEqual(app.entry_detail.cget("text"), "已开启 · 按班次")   # 工具栏只报状态
         summary = app._entry_summary()
         self.assertIn("按班次覆盖", summary)
         self.assertIn("3不用", summary)            # 明细在状态栏：第 3 班不用

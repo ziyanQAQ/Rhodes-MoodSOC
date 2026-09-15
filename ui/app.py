@@ -141,16 +141,13 @@ class MoodSocApp(tk.Tk):
         cb.pack(side="left")
         cb.bind("<<ComboboxSelected>>", lambda _e: self._on_cycles())
 
-        # 换心情**没有**工具栏开关：唯一入口是「设置…」里的「① 开启心情交换」。
-        # 这里只放"名字 + 摘要"，关着时摘要是空的（开没开由状态栏说明），
-        # 免得同一个开关出现在两处、旁注还要在"开不开"与"换给谁"之间换轨。
-        tk.Label(bar, text="菲亚梅塔换心情", bg=theme.BG, fg=theme.MUTED,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(16, 4))
+        # 换心情**没有**工具栏开关：入口就是这颗按钮，右边跟着"当前状态"。
+        # 开关只有设置框里那一个（免得同一个开关出现在两处），所以"开没开"要在这里写出来。
+        ttk.Button(bar, text="换心情设置", command=self.edit_entry_events).pack(
+            side="left", padx=(16, 4))
         self.entry_detail = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
                                      font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        self.entry_detail.pack(side="left", padx=(0, 4))
-        ttk.Button(bar, text="设置…", command=self.edit_entry_events).pack(
-            side="left", padx=(0, 0))
+        self.entry_detail.pack(side="left", padx=(0, 0))
 
         play = tk.Frame(bar, bg=theme.BG)
         play.pack(side="left", padx=(16, 0))
@@ -596,28 +593,36 @@ class MoodSocApp(tk.Tk):
         return "等她满" if when == "wait" else ""
 
     def _sync_entry_label(self):
-        """工具栏那串摘要（只有"换谁·要不要等她满"；**关着时留空**，开没开由状态栏说）。
+        """工具栏右侧的**当前状态**：`未开启` / `已开启 · 换塞雷娅 · 等她满`。
 
-        开关本身只有设置框里那一个入口，所以这里不再出现「（不结算）」这类"开不开"的字眼，
-        免得同一位置一会儿说开不开、一会儿说换给谁。
+        开关本身只有设置框里那一个（工具栏不再放第二个），所以"开没开"必须在这里写出来
+        —— 关着时也写「未开启」，而不是留空。
+
+        | 状态 | 文字 |
+        |---|---|
+        | 关 | `未开启` |
+        | 开·默认口径 | `已开启 · 换前一位进驻` |
+        | 开·自动挑 | `已开启 · 换最累的` |
+        | 开·指定干员 | `已开启 · 换塞雷娅`（后面再跟 ` · 等她满`，勾了强制切换时） |
+        | 开·按班次 | `已开启 · 按班次` |
         """
         if not self.entry_events.get():
-            self.entry_detail.configure(text="")
+            self.entry_detail.configure(text="未开启", fg=theme.MUTED)
             return
+        self.entry_detail.configure(fg=theme.TEXT)
         if self.entry_per_shift:
-            self.entry_detail.configure(text="（按班次）")
+            self.entry_detail.configure(text="已开启 · 按班次")
             return
         kind = entry_target_kind(self.entry_swap_with, self.entry_scope)
-        target = {"auto": "最累的", "named": f"「{self.entry_swap_with}」",
-                  "default": "前一位"}[kind]
+        who = {"auto": "换最累的", "named": f"换{self.entry_swap_with}",
+               "default": "换前一位进驻"}[kind]
         token = self._when_token(self.entry_when)
-        self.entry_detail.configure(text=f"（{target}·{token}）" if token
-                                    else f"（{target}）")
+        self.entry_detail.configure(text=f"已开启 · {who}" + (f" · {token}" if token else ""))
 
     def _entry_status(self) -> str:
-        """状态栏里的换心情状态（工具栏不再显示"开没开"，所以这里要写清楚）。"""
+        """状态栏里的换心情状态（工具栏那串是紧凑状态，这里给完整口径）。"""
         if not self.entry_events.get():
-            return "换心情：关（按你写的初始心情开始；点「设置…」打开）"
+            return "换心情：未开启（按你写的初始心情开始；点工具栏「换心情设置」打开）"
         if self.entry_per_shift:
             return "换心情：按班次"
         kind = entry_target_kind(self.entry_swap_with, self.entry_scope)
@@ -663,7 +668,7 @@ class MoodSocApp(tk.Tk):
         return text
 
     def edit_entry_events(self):
-        """「设置…」：菲亚梅塔换心情的三个设置（开启 / 换谁 / 强制切换）。"""
+        """工具栏「换心情设置」：菲亚梅塔换心情的三个设置（开启 / 换谁 / 强制切换）。"""
         holders, mates = self._entry_candidates()
         picked = ask_entry_event(self, self.entry_events.get(), self.entry_swap_with,
                                  mates, holders, scope=self.entry_scope,
