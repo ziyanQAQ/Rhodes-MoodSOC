@@ -297,55 +297,6 @@ class TimelinePanel(tk.Frame):
         return hours
 
 
-class ShiftSettingsDialog(tk.Toplevel):
-    """班次设置：周期时长 + 每班时长（薄壳：时间轴面板 + 取消/应用）。"""
-
-    def __init__(self, parent, labels: Sequence[str], hours: Sequence, cycle: Decimal):
-        super().__init__(parent, bg=theme.BG)
-        self.title("班次设置")
-        self.resizable(False, False)
-        self.result: Optional[List[Decimal]] = None
-
-        self.panel = TimelinePanel(self, labels, hours, cycle)
-        self.panel.pack(fill="x", padx=theme.PAD, pady=(theme.PAD, 0))
-        # 兼容旧调用：面板上的控件名直接挂在对话框上（msg / rows / cycle_var）
-        self.cycle_var, self.rows, self.msg = (self.panel.cycle_var, self.panel.rows,
-                                              self.panel.msg)
-
-        btns = tk.Frame(self, bg=theme.BG)
-        btns.pack(fill="x", padx=theme.PAD, pady=theme.PAD)
-        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
-        self.ok = ttk.Button(btns, text="应用", style="Accent.TButton", command=self._ok)
-        self.ok.pack(side="right", padx=(0, 6))
-        # 校验结果 → 「应用」的可用性（面板只报"合不合法"，按钮归宿主管）
-        self.panel.on_validity = self._on_validity
-        self._on_validity(self.panel.valid)
-        self.bind("<Escape>", lambda _e: self.destroy())
-        _modal(self, parent)
-
-    def _on_validity(self, valid: bool) -> None:
-        self.ok.state(["!disabled"] if valid else ["disabled"])
-
-    def _even(self) -> None:
-        self.panel._even()
-
-    def _parse(self):
-        return self.panel._parse()
-
-    def _ok(self) -> None:
-        hours = self.panel.value()
-        if hours is None:
-            return
-        self.result = hours
-        self.destroy()
-
-
-def ask_shift_hours(parent, labels: Sequence[str], hours: Sequence, cycle: Decimal):
-    dlg = ShiftSettingsDialog(parent, labels, hours, cycle)
-    parent.wait_window(dlg)
-    return dlg.result
-
-
 class EntryEventMixin:
     """**进驻事件**（M15a 患难之交）设置 —— **一张表说尽"每个班次怎么换"**。
 
@@ -577,35 +528,8 @@ class EntryEventMixin:
                 "wait" if base_force else "full", per_shift)
 
 
-class EntryEventDialog(tk.Toplevel, EntryEventMixin):
-    """「换心情」设置的**独立对话框**（薄壳：标题 + 说明面板 + 取消/应用）。"""
-
-    def __init__(self, parent, enabled: bool, swap_with, candidates: Sequence[str],
-                 current_holders: Sequence[str] = (), scope: str = "dorm",
-                 restore_back: bool = True, when: str = "immediate",
-                 shift_labels: Sequence[str] = (), per_shift: Sequence = ()):
-        super().__init__(parent, bg=theme.BG)
-        self.title(self.TITLE)
-        self.resizable(False, False)
-        self.result = None      # (enabled, swap_with, scope, restore_back, when, per_shift)
-        self._init_entry_body(parent, enabled, swap_with, candidates, current_holders,
-                              scope=scope, restore_back=restore_back, when=when,
-                              shift_labels=shift_labels, per_shift=per_shift)
-        btns = tk.Frame(self, bg=theme.BG)
-        btns.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, theme.PAD))
-        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
-        ttk.Button(btns, text="应用", style="Accent.TButton",
-                   command=self._ok).pack(side="right", padx=(0, 6))
-        self.bind("<Escape>", lambda _e: self.destroy())
-        _modal(self, parent)
-
-    def _ok(self) -> None:
-        self.result = self.value()
-        self.destroy()
-
-
 class EntryEventPanel(tk.Frame, EntryEventMixin):
-    """「换心情」设置**内容本体**（嵌进设置中心用；改动经 `on_change` 立即生效）。"""
+    """「换心情」设置**内容本体**（设置中心「换心情」分区；改动经 `on_change` 立即生效）。"""
 
     def __init__(self, master, enabled: bool, swap_with, candidates: Sequence[str],
                  current_holders: Sequence[str] = (), scope: str = "dorm",
@@ -622,23 +546,6 @@ class EntryEventPanel(tk.Frame, EntryEventMixin):
 def messagebox_showinfo_safe(parent, text: str) -> None:
     from tkinter import messagebox
     messagebox.showinfo("提示", text, parent=parent)
-
-
-def ask_entry_event(parent, enabled: bool, swap_with, candidates: Sequence[str],
-                    current_holders: Sequence[str] = (), scope: str = "dorm",
-                    restore_back: bool = True, when: str = "immediate",
-                    shift_labels: Sequence[str] = (), per_shift: Sequence = ()):
-    """返回 `(enabled, swap_with, scope, restore_back, when, per_shift)`；取消返回 None。
-
-    `candidates`＝「换谁」下拉里直接列的干员（排班里的那些人）。
-    返回的 `swap_with`/`scope`/`when` 取自"第 1 个勾着「用」的班次那一行"，`per_shift` 只含
-    与它不同的班次。
-    """
-    dlg = EntryEventDialog(parent, enabled, swap_with, candidates, current_holders,
-                           scope=scope, restore_back=restore_back, when=when,
-                           shift_labels=shift_labels, per_shift=per_shift)
-    parent.wait_window(dlg)
-    return dlg.result
 
 
 class LevelDialog(tk.Toplevel):
@@ -904,43 +811,11 @@ class IdleToDormMixin:
         return (bool(self.enabled.get()), dict(self.state))
 
 
-class IdleToDormDialog(tk.Toplevel, IdleToDormMixin):
-    """「闲置入宿」设置的**独立对话框**（薄壳：底部「取消（回滚）/ 应用」）。"""
-
-    def __init__(self, parent, enabled: bool, groups: Sequence,
-                 on_change=None, note: str = ""):
-        super().__init__(parent, bg=theme.BG)
-        self.title(self.TITLE)
-        self.resizable(False, False)
-        self._init_idle_body(parent, enabled, groups, on_change=on_change, note=note)
-        btns = tk.Frame(self, bg=theme.BG)
-        btns.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, theme.PAD))
-        ttk.Button(btns, text="取消（回滚）", command=self._cancel).pack(side="right")
-        ttk.Button(btns, text="应用", style="Accent.TButton", command=self._ok).pack(
-            side="right", padx=(0, 6))
-        self.bind("<Escape>", lambda _e: self._cancel())
-        _modal(self, parent)
-
-    def destroy(self) -> None:
-        """关窗时把还没跑的重建任务取消。"""
-        self._cancel_job()
-        super().destroy()
-
-    def _cancel(self) -> None:
-        """取消：调用方负责回滚（`ui.app` 会恢复打开对话框前的那份设置）。"""
-        self.result = None
-        self.destroy()
-
-    def _ok(self) -> None:
-        self.result = self.value()
-        self.destroy()
-
-
 class IdleToDormPanel(tk.Frame, IdleToDormMixin):
-    """「闲置入宿」设置**内容本体**（嵌进设置中心用）。
+    """「闲置入宿」设置**内容本体**（设置中心「闲置入宿」分区）。
 
-    改动经 `on_change` **实时生效**（防抖 250ms）——与独立对话框同一份逻辑；
-    面板不需要"应用"（关掉设置中心即接受），也不需要"取消回滚"。
+    改动经 `on_change` **实时生效**（防抖 250ms）；面板不需要"应用"
+    （关掉设置中心即接受），也没有"取消回滚"。
     """
 
     def __init__(self, master, enabled: bool, groups: Sequence,
@@ -952,13 +827,3 @@ class IdleToDormPanel(tk.Frame, IdleToDormMixin):
         """销毁时取消还没跑的重建任务（否则会对着已销毁的控件报 invalid command name）。"""
         self._cancel_job()
         tk.Frame.destroy(self)
-
-
-def ask_idle_to_dorm(parent, enabled: bool, groups: Sequence, on_change=None, note: str = ""):
-    """返回 `(enabled, {(周期, 班次, 干员): (参与, 换谁)})`；取消返回 None。
-
-    `on_change(enabled, state)`：改动时回调，返回**新的分组表**（用于实时刷新）。
-    """
-    dlg = IdleToDormDialog(parent, enabled, groups, on_change=on_change, note=note)
-    parent.wait_window(dlg)
-    return dlg.result

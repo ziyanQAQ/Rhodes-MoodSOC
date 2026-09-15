@@ -30,11 +30,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ui import theme  # noqa: E402
-from ui.batch import ask_batch  # noqa: E402
 from ui.board import BaseBoard, elite_badge, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
-from ui.dialogs import (ask_entry_event, ask_idle_to_dorm, ask_level, ask_mood,  # noqa: E402
-                        ask_operator, ask_shift_hours)
+from ui.dialogs import ask_operator, ask_level, ask_mood  # noqa: E402
 from ui.roster import RosterStrip  # noqa: E402
 from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
                          default_initial_moods, load_schedule, simulate_schedule)
@@ -89,6 +87,10 @@ class MoodSocApp(tk.Tk):
         self.traj: Trajectory | None = None
         self.initial_moods: dict = {}          # 手动设过的心情（覆盖布局里的值）
         self.cycles = 1
+        # 周期数是**设置中心**里的一个控件；变量挂在 app 上（唯一真源），
+        # 设置窗口只是把它接到下拉框上——工具栏时代它挂在工具栏里。
+        self.cycles_var = tk.StringVar(value="1")
+        self.settings_dlg = None               # 「设置」中心的窗口（唯一设置入口）
         self.entry_events = tk.BooleanVar(value=False)
         self.entry_swap_with: Optional[str] = None     # None = 默认「前一位进驻」；"any" = 自动挑最累的
         self.entry_scope = "dorm"                      # "dorm" 仅同宿舍 / "anywhere" 基建任意位置
@@ -146,38 +148,36 @@ class MoodSocApp(tk.Tk):
 
     # ================================================================== 工具栏
     def _build_toolbar(self):
+        """工具栏＝**4 组**：导入 / 设置（按钮 + 一行状态）/ 播放 / 回到起点。
+
+        设置入口只有一颗「设置…」（`ui/settings.py`）：班次与周期数、房间等级与干员、
+        换心情、闲置入宿全在里面，**改动立即生效**。这里不再并列那 5 个入口——
+        重复的（重置心情＝批量表里的"恢复导入值"）与只增加步骤的一律去掉。
+        """
         bar = tk.Frame(self, bg=theme.BG)
         bar.pack(fill="x", padx=theme.PAD, pady=(theme.PAD, theme.GAP))
+        self.toolbar = bar
 
         ttk.Button(bar, text="导入排班…", style="Accent.TButton",
                    command=self.import_files).pack(side="left")
-        ttk.Button(bar, text="班次设置…", command=self.edit_shifts).pack(side="left",
-                                                                        padx=(6, 0))
-        ttk.Button(bar, text="重置心情", command=self.reset_moods).pack(side="left", padx=(6, 0))
-        ttk.Button(bar, text="批量设置…", command=self.batch_edit).pack(side="left", padx=(6, 0))
 
-        tk.Label(bar, text="周期数", bg=theme.BG, fg=theme.MUTED,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(16, 4))
-        self.cycles_var = tk.StringVar(value="1")
-        cb = ttk.Combobox(bar, textvariable=self.cycles_var, width=3, state="readonly",
-                          values=("1", "2", "3"))
-        cb.pack(side="left")
-        cb.bind("<<ComboboxSelected>>", lambda _e: self._on_cycles())
-
-        # 换心情**没有**工具栏开关：入口就是这颗按钮，右边跟着"当前状态"。
-        # 开关只有设置框里那一个（免得同一个开关出现在两处），所以"开没开"要在这里写出来。
-        ttk.Button(bar, text="换心情设置", command=self.edit_entry_events).pack(
-            side="left", padx=(16, 4))
+        ttk.Button(bar, text="设置…", command=self.open_settings).pack(side="left",
+                                                                       padx=(6, 6))
+        # 状态摘要＝原来的两行状态合成一句（点它也能开设置）。
+        # ⚠️ 两个 `_detail` 标签的名字与文案保持原样：`_sync_entry_label` / `_sync_idle_label`
+        #    是它们的唯一写入点，测试也按这两句话断言。
         self.entry_detail = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
+                                     cursor="hand2",
                                      font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        self.entry_detail.pack(side="left", padx=(0, 0))
-
-        # 闲置入宿：同样只有设置框里那一个开关，工具栏只放"按钮 + 当前状态"
-        ttk.Button(bar, text="闲置入宿设置", command=self.edit_idle_to_dorm).pack(
-            side="left", padx=(16, 4))
+        self.entry_detail.pack(side="left")
+        tk.Label(bar, text=" · ", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
         self.idle_detail = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
+                                    cursor="hand2",
                                     font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        self.idle_detail.pack(side="left", padx=(0, 0))
+        self.idle_detail.pack(side="left")
+        for w in (self.entry_detail, self.idle_detail):
+            w.bind("<Button-1>", lambda _e: self.open_settings())
 
         play = tk.Frame(bar, bg=theme.BG)
         play.pack(side="left", padx=(16, 0))
@@ -203,6 +203,43 @@ class MoodSocApp(tk.Tk):
                     child.configure(takefocus=False)
         self._on_speed()
         self._sync_entry_label()
+        self._sync_idle_label()
+
+    # ================================================================== 设置中心
+    def open_settings(self, page: Optional[str] = None):
+        """打开「设置」中心（唯一设置入口；已开着就切到指定分区并提到前面）。"""
+        if self.schedule is None:
+            self.status.configure(text="先导入一份排班，再来改设置")
+            return None
+        from .settings import SettingsDialog
+        if self.settings_dlg is not None and self.settings_dlg.winfo_exists():
+            if page:
+                self.settings_dlg.open_page(page)
+            self.settings_dlg.deiconify()
+            self.settings_dlg.lift()
+            return self.settings_dlg
+        self.settings_dlg = SettingsDialog(self, self, page=page)
+        return self.settings_dlg
+
+    # —— 设置中心用的只读口子（窗口里不出现引擎细节，一律经这里取值）——
+    def editing_shift_index(self) -> int:
+        return self._editing_shift_index()
+
+    def imported_moods(self) -> dict:
+        return default_initial_moods(self.schedule) if self.schedule else {}
+
+    def moods_now(self) -> dict:
+        return self.moods_at_now()
+
+    def entry_candidates(self):
+        return self._entry_candidates()
+
+    def idle_groups(self, cycles: Optional[int] = None):
+        return self._idle_groups(cycles=cycles)
+
+    def on_cycles_changed(self) -> None:
+        """设置中心里改「周期数」→ 与工具栏时代同一个函数。"""
+        self._on_cycles()
     # ================================================================== 主体
     def _build_body(self):
         body = tk.Frame(self, bg=theme.BG)
@@ -626,10 +663,9 @@ class MoodSocApp(tk.Tk):
                     return op.mood
         return Decimal("24")
 
-    def reset_moods(self):
-        self.initial_moods.clear()
-        if self.schedule:
-            self.recompute()
+    def moods_at_now(self) -> dict:
+        """滑块所在时刻的实际心情（设置中心用它做「按当前时刻回填」）。"""
+        return self.traj.moods_at(self.current_t) if self.traj is not None else {}
 
     # ------------------------------------------------------------ 闲置入宿
     def _idle_entry_list(self):
@@ -739,55 +775,32 @@ class MoodSocApp(tk.Tk):
                 f"没空位就与宿舍里心情满的那位互换）")
 
     def edit_idle_to_dorm(self):
-        """工具栏「闲置入宿设置」：总开关 + 一张按时间排的逐次表（改动**实时**生效）。
+        """（旧入口，现等价于）打开设置中心的「闲置入宿」分区。"""
+        return self.open_settings("idle")
 
-        实时性：对话框每次改动都会回调 `_idle_live` —— 它把当前（还没点应用的）设置套进
-        模拟重算一遍，主界面看板/曲线与对话框里的表**一起**刷新（因为改动会影响后面每一次的候选）。
-        取消时回滚到打开对话框前的那份设置。
+    def apply_idle_to_dorm(self, enabled: bool, entries: dict):
+        """「闲置入宿」设置落地（设置中心里**每次改动**都会调它）。
+
+        返回**新的分组表**：改动会影响后面每一次的候选，所以面板要按新表重建。
         """
-        if self.schedule is None:
-            return
-        snapshot = (self.idle_to_dorm.get(), dict(self.idle_entries), list(self.idle_entries))
-
-        def live(enabled, entries):
-            """对话框的当前状态 → 立刻生效并返回新的分组表。"""
-            self.idle_to_dorm.set(bool(enabled))
-            self.idle_entries = dict(entries)
-            self.recompute()                       # 看板/曲线跟着刷新
-            return self._idle_groups()
-
-        picked = ask_idle_to_dorm(self, self.idle_to_dorm.get(), self._idle_groups(),
-                                  on_change=live)
-        if picked is None:                          # 取消 → 回滚
-            self.idle_to_dorm.set(snapshot[0])
-            self.idle_entries = snapshot[1]
-            self.recompute()
-            return
-        enabled, entries = picked                   # 应用（live 已经把它算进去了）
         self.idle_to_dorm.set(bool(enabled))
         self.idle_entries = dict(entries)
-        self.recompute()
-        self.status.configure(text=self._idle_status())
+        self.recompute()                           # 看板/曲线跟着刷新
+        self._sync_idle_label()
+        return self._idle_groups()
 
     # ------------------------------------------------------------ 批量设置
     def batch_edit(self):
-        """「批量设置…」：当前布局的**所有干员 + 心情**摊成一张表，一次改完。
+        """（旧入口，现等价于）打开设置中心的「干员与心情」分区。"""
+        return self.open_settings("batch")
 
-        干员改动按"改过哪几班"返回（对话框里可切班次，未应用的改动不会丢）；
-        心情是**周期起点**（全排班共用），对话框只返回"与导入值不同的那些"，
+    def apply_batch(self, changes: dict, moods: dict) -> None:
+        """「干员与心情」落地：干员改动按班次写回布局，心情整份替换周期起点。
+
+        干员改动按"改过哪几班"返回（面板里可切班次，未改的不会丢）；
+        心情是**周期起点**（全排班共用），面板只给"与导入值不同的那些"，
         所以这里整份替换 `initial_moods`（`恢复导入值` ⇒ 空差集 ⇒ 手动心情清空）。
         """
-        if self.schedule is None:
-            return
-        idx = self._editing_shift_index()
-        now = self.traj.moods_at(self.current_t) if self.traj is not None else {}
-        picked = ask_batch(self, self.schedule, shift_index=idx,
-                           initial_moods=self.initial_moods,
-                           imported_moods=default_initial_moods(self.schedule),
-                           moods_now=now, current_t=self.current_t)
-        if picked is None:
-            return
-        changes, moods = picked
         n_ops = 0
         for i in sorted(changes):
             facs = changes[i]
@@ -799,7 +812,7 @@ class MoodSocApp(tk.Tk):
         which = ("第 " + "、".join(str(i + 1) for i in sorted(changes)) + " 班"
                  if changes else "未改动布局")
         self.status.configure(
-            text=f"批量设置已应用：{which}"
+            text=f"设置已生效：{which}"
                  + (f"（{n_ops} 个位置）" if changes else "")
                  + f"　｜　手动起点心情 {len(moods)} 名，其余用导入值")
 
@@ -913,16 +926,16 @@ class MoodSocApp(tk.Tk):
         return text
 
     def edit_entry_events(self):
-        """工具栏「换心情设置」：菲亚梅塔换心情的三个设置（开启 / 换谁 / 强制切换）。"""
-        holders, mates = self._entry_candidates()
-        picked = ask_entry_event(self, self.entry_events.get(), self.entry_swap_with,
-                                 mates, holders, scope=self.entry_scope,
-                                 restore_back=self.entry_restore_back, when=self.entry_when,
-                                 shift_labels=(self.schedule.shift_labels() if self.schedule else ()),
-                                 per_shift=self.entry_per_shift)
+        """（旧入口，现等价于）打开设置中心的「换心情」分区。"""
+        return self.open_settings("entry")
+
+    def apply_entry_event(self, picked) -> None:
+        """「换心情」落地（设置中心里**每次改动**都会调它）。
+
+        `picked` 是面板给的 6 元组 `(enabled, swap_with, scope, restore_back, when, per_shift)`。
+        """
         if picked is None:
             return
-        # 对话框返回 6 元组；只给前几项时其余沿用当前值
         enabled, swap_with = picked[0], picked[1]
         scope = picked[2] if len(picked) > 2 else self.entry_scope
         restore_back = picked[3] if len(picked) > 3 else self.entry_restore_back
@@ -936,7 +949,7 @@ class MoodSocApp(tk.Tk):
         self.entry_per_shift = list(per_shift or [])
         self._sync_entry_label()
         self.recompute()                      # 先重算（recompute 会写状态栏）
-        if not holders:
+        if not self._entry_candidates()[0]:
             self.status.configure(text="本排班里没有能触发进驻事件的干员（如菲亚梅塔），"
                                         "这个开关暂时不会有任何效果")
         else:
@@ -1001,13 +1014,12 @@ class MoodSocApp(tk.Tk):
         self.recompute()
 
     def edit_shifts(self):
-        """班次设置：周期 / 每班时长（各班长之和必须等于周期）。"""
-        if self.schedule is None:
-            return
-        hours = ask_shift_hours(self, [s.label for s in self.schedule.shifts],
-                                [s.hours for s in self.schedule.shifts],
-                                self.schedule.cycle_hours)
-        if not hours:
+        """（旧入口，现等价于）打开设置中心的「时间轴」分区。"""
+        return self.open_settings("timeline")
+
+    def apply_shift_hours(self, hours) -> None:
+        """「时间轴」落地：改各班时长（面板已保证"各班长之和 == 周期"）。"""
+        if self.schedule is None or not hours:
             return
         self.schedule = self.schedule.with_hours(hours)
         self._build_shift_buttons()

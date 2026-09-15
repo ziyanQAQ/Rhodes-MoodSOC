@@ -188,23 +188,30 @@ class Test界面冒烟(unittest.TestCase):
         self.assertNotEqual(app.chart.name, target)
 
     def test_班次设置改时长(self):
-        """需求①：自设每班时长（打桩返回 8/8/8）→ 周期仍 24h。"""
-        from ui import app as app_mod
+        """需求①：在设置中心「时间轴」改每班时长 → 立即生效（不等"应用"）。"""
         app = self.app
-        orig = app_mod.ask_shift_hours
-        try:
-            app_mod.ask_shift_hours = lambda *a, **k: [Decimal("8"), Decimal("8"), Decimal("8")]
-            app.edit_shifts()
-        finally:
-            app_mod.ask_shift_hours = orig
+        dlg = app.open_settings("timeline")
+        app.update()
+        panel = dlg.timeline
+        for i, v in enumerate(("8", "8", "8")):
+            panel.rows[i].set(v)
+        app.update()
+        # 改动即时生效（每改一个输入框都会校验并回调）
         self.assertEqual([s.hours for s in app.schedule.shifts], [Decimal("8")] * 3)
         self.assertEqual(app.schedule.cycle_hours, Decimal("24"))
+        # 合计不等于周期 → 不生效（面板报错、保留上一次的合法值）
+        panel.rows[0].set("10")
+        app.update()
+        self.assertFalse(panel.valid)
+        self.assertIn("≠ 周期", panel.msg.cget("text"))
+        self.assertEqual([s.hours for s in app.schedule.shifts], [Decimal("8")] * 3)
         # 复原成 12/6/6，避免影响其它用例
-        app_mod.ask_shift_hours = lambda *a, **k: [Decimal("12"), Decimal("6"), Decimal("6")]
-        try:
-            app.edit_shifts()
-        finally:
-            app_mod.ask_shift_hours = orig
+        for i, v in enumerate(("12", "6", "6")):
+            panel.rows[i].set(v)
+        app.update()
+        self.assertEqual([s.hours for s in app.schedule.shifts],
+                         [Decimal("12"), Decimal("6"), Decimal("6")])
+        dlg.destroy()
 
     def test_全员一览覆盖所有干员(self):
         """需求：**直观看到所有干员**——整个周期出现过的干员都要在「全员一览」里，
@@ -339,20 +346,21 @@ class Test新增交互(unittest.TestCase):
             app.update()
 
     # ------------------------------------------------------- 进驻事件（换心情）
-    def test_工具栏不再有换心情开关(self):
-        """开关只有**一个**入口（设置框里的「① 开启心情交换」）——工具栏不能再冒出第二个。
+    def test_工具栏只有一个设置入口(self):
+        """工具栏只留 4 组：导入 / 设置（按钮 + 状态）/ 播放 / 回到起点。
 
-        背景：工具栏原来放着一个 `Checkbutton`，而框里又有一个 ①，两处写同一个变量；
-        虽然状态永远一致（同一个 `BooleanVar`），但"同一个开关出现两次"看上去像两个打架的设置。
-        现在工具栏那颗按钮只负责**打开设置框**，右边的文字只报**当前状态**。
-        这条测试盯着它别再回来。
+        背景：合并前工具栏并列 8 个控件（班次设置… / 重置心情 / 批量设置… / 周期数 /
+        换心情设置 / 闲置入宿设置…），其中"重置心情"与批量表里的「恢复导入值」重复、
+        "周期数"与"班次设置"说的都是时间轴，而且每个设置都是"点开→改→应用"三步。
+        现在唯一入口是「设置…」（`ui/settings.py`），那里**改动立即生效**。
         """
         from tkinter import ttk
 
         app = self.app
-        bar = app.entry_detail.master
+        bar = app.toolbar
         boxes = []
         buttons = []
+        combos = []
 
         def walk(w):
             for c in w.winfo_children():
@@ -360,12 +368,18 @@ class Test新增交互(unittest.TestCase):
                     boxes.append(str(c))
                 elif isinstance(c, ttk.Button):
                     buttons.append(str(c.cget("text")))
+                elif isinstance(c, ttk.Combobox):
+                    combos.append(c)
                 walk(c)
 
         walk(bar)
-        self.assertEqual(boxes, [], "工具栏不该再有换心情开关（唯一入口＝设置框里的 ①）")
-        self.assertIn("换心情设置", buttons, "入口按钮要在工具栏上（点开设置框）")
-        # 右边界面的状态：关着也写"未开启"，开着写"已开启 · 换谁 [· 等她满]"
+        self.assertEqual(boxes, [], "工具栏不该有任何开关（开关都在设置中心里）")
+        self.assertEqual(buttons, ["导入排班…", "设置…", "▶ 播放", "回到起点"])
+        # 工具栏只剩「播放速度」一个下拉；周期数已经搬进设置中心的「时间轴」分区
+        self.assertEqual([str(c.cget("textvariable")) for c in combos],
+                         [str(app.speed_var)], "工具栏不该再有设置类下拉（周期数已进设置中心）")
+        self.assertNotIn("cycles_var", str(combos))
+        # 右侧那串状态只报**当前状态**（点它也能开设置）
         app.entry_events.set(False)
         app._sync_entry_label()
         self.assertEqual(app.entry_detail.cget("text"), "未开启")
@@ -409,76 +423,79 @@ class Test新增交互(unittest.TestCase):
         import tkinter as tk
 
         from mood_soc.models import EntryShiftOverride
-        from ui.dialogs import EntryEventDialog
+        from ui.dialogs import EntryEventPanel
 
         app = self.app
         holders, cands = app._entry_candidates()
         labels = app.schedule.shift_labels()
-        dlg = EntryEventDialog(app, True, None, cands, holders, shift_labels=labels)
-        try:
+
+        def panel(**kw):
+            """「换心情」面板 + 一个测试用宿主窗口（面板本体是 Frame）。"""
+            top = tk.Toplevel(app)
+            top.withdraw()
+            p = EntryEventPanel(top, kw.pop("enabled", True), kw.pop("swap_with", None),
+                                cands, holders, **kw)
+            p.pack(fill="both", expand=True)
             app.update()
+            p._host = top
+            return p
+
+        dlg = panel(shift_labels=labels)
+        try:
             self.assertTrue(dlg.enabled.get())
             self.assertEqual(len(dlg.shift_use), len(labels))
             # 每行预填＝当前全局配置；默认每班都"用"
             self.assertEqual([v.get() for v in dlg.shift_use], [True] * len(labels))
-            self.assertEqual([v.get() for v in dlg.shift_who], [EntryEventDialog.PREV] * len(labels))
+            self.assertEqual([v.get() for v in dlg.shift_who], [EntryEventPanel.PREV] * len(labels))
             self.assertEqual([v.get() for v in dlg.shift_force], [False] * len(labels))
-            self.assertNotIn("位置也一起互换", str(dlg.result))
+            self.assertNotIn("位置也一起互换", str(dlg.value()))
             # 三班完全相同 ⇒ 不产生任何覆盖项（与"没有这张表"逐位相同）
-            dlg._ok()
-            self.assertEqual(dlg.result[:5], (True, None, "dorm", True, "full"))
-            self.assertEqual(dlg.result[5], [])
+            self.assertEqual(dlg.value()[:5], (True, None, "dorm", True, "full"))
+            self.assertEqual(dlg.value()[5], [])
         finally:
-            dlg.destroy()
+            dlg._host.destroy()
         # 全选 / 全不选
-        dlg2 = EntryEventDialog(app, True, None, cands, holders, shift_labels=labels)
+        dlg2 = panel(shift_labels=labels)
         try:
-            app.update()
             dlg2._set_all_shifts(False)
             self.assertEqual([v.get() for v in dlg2.shift_use], [False] * len(labels))
             dlg2._set_all_shifts(True)
             self.assertEqual([v.get() for v in dlg2.shift_use], [True] * len(labels))
         finally:
-            dlg2.destroy()
+            dlg2._host.destroy()
         # 逐班不同：第 1 班换塞雷娅+等她满、第 2 班用默认口径、第 3 班不用
-        dlg3 = EntryEventDialog(app, True, None, cands, holders, shift_labels=labels)
+        dlg3 = panel(shift_labels=labels)
         try:
-            app.update()
             dlg3.shift_who[0].set("塞雷娅")
             dlg3.shift_force[0].set(True)
             dlg3.shift_use[2].set(False)
-            dlg3._ok()
-            self.assertEqual(dlg3.result[:5], (True, "塞雷娅", "anywhere", True, "wait"))
+            self.assertEqual(dlg3.value()[:5], (True, "塞雷娅", "anywhere", True, "wait"))
             self.assertEqual([(o.key, o.enabled, o.swap_with, o.scope, o.when)
-                              for o in dlg3.result[5]],
+                              for o in dlg3.value()[5]],
                              [(2, True, "", "dorm", "full"),      # 与第 1 班不同 → 写一条
                               (3, False, "", "dorm", "full")])    # 第 3 班不用
         finally:
-            dlg3.destroy()
+            dlg3._host.destroy()
         # 载入已有逐班配置 → 逐行预填
-        dlg4 = EntryEventDialog(app, True, None, cands, holders, shift_labels=labels,
-                                per_shift=[EntryShiftOverride(key=1, swap_with="巫恋", when="wait"),
-                                           EntryShiftOverride(key=3, enabled=False)])
+        dlg4 = panel(shift_labels=labels,
+                     per_shift=[EntryShiftOverride(key=1, swap_with="巫恋", when="wait"),
+                                EntryShiftOverride(key=3, enabled=False)])
         try:
-            app.update()
             self.assertEqual([v.get() for v in dlg4.shift_who],
-                             ["巫恋", EntryEventDialog.PREV, EntryEventDialog.PREV])
+                             ["巫恋", EntryEventPanel.PREV, EntryEventPanel.PREV])
             self.assertEqual([v.get() for v in dlg4.shift_force], [True, False, False])
             self.assertEqual([v.get() for v in dlg4.shift_use], [True, True, False])
         finally:
-            dlg4.destroy()
+            dlg4._host.destroy()
         # 旧配置「立刻换」不再提供：那一行显示为"不勾强制切换"
-        dlg6 = EntryEventDialog(app, True, None, cands, holders, when="immediate",
-                                shift_labels=labels)
+        dlg6 = panel(when="immediate", shift_labels=labels)
         try:
-            app.update()
             self.assertEqual([v.get() for v in dlg6.shift_force], [False, False, False])
         finally:
-            dlg6.destroy()
+            dlg6._host.destroy()
         # ① 关掉 → 整张表置灰
-        dlg5 = EntryEventDialog(app, True, None, cands, holders, shift_labels=labels)
+        dlg5 = panel(shift_labels=labels)
         try:
-            app.update()
             dlg5.enabled.set(False)
             dlg5._sync()
             ttk_widgets = [w for w in dlg5._shift_widgets if hasattr(w, "instate")]
@@ -487,14 +504,14 @@ class Test新增交互(unittest.TestCase):
             self.assertTrue(all(w.instate(["disabled"]) for w in ttk_widgets))
             self.assertTrue(all(w.cget("state") == "disabled" for w in tk_chips))
         finally:
-            dlg5.destroy()
+            dlg5._host.destroy()
 
     def test_进驻事件换心情端到端(self):
         """设定「菲亚梅塔 24 / 塞雷娅 6」后：开启并指定对象 → 真的互换。"""
         from ui import app as app_mod
         app = self.app
         preset = {"菲亚梅塔": Decimal("24"), "塞雷娅": Decimal("6")}
-        orig_mood, orig_dlg = app_mod.ask_mood, app_mod.ask_entry_event
+        orig_mood = app_mod.ask_mood
         try:
             app_mod.ask_mood = lambda parent, who, cur, note="": preset.get(who)
             for who in preset:
@@ -509,11 +526,8 @@ class Test新增交互(unittest.TestCase):
         self.assertEqual(app.traj.mood_at("塞雷娅", 0), Decimal("6"))
 
         # ② 开启 + 指定「塞雷娅」+ 不勾强制切换（她满 24 → 判定时照换）
-        try:
-            app_mod.ask_entry_event = lambda *a, **k: (True, "塞雷娅", "anywhere", True, "full")
-            app.edit_entry_events()
-        finally:
-            app_mod.ask_entry_event = orig_dlg
+        #    走的正是设置中心「换心情」面板回调的那条落地函数
+        app.apply_entry_event((True, "塞雷娅", "anywhere", True, "full"))
         self.assertTrue(app.entry_events.get())
         self.assertEqual(app.entry_swap_with, "塞雷娅")
         self.assertEqual(app.entry_scope, "anywhere")
@@ -553,15 +567,14 @@ class Test新增交互(unittest.TestCase):
         from ui import app as app_mod
         app = self.app
         preset = {"菲亚梅塔": Decimal("24"), "巫恋": Decimal("1")}
-        orig_mood, orig_dlg = app_mod.ask_mood, app_mod.ask_entry_event
+        orig_mood = app_mod.ask_mood
         try:
             app_mod.ask_mood = lambda parent, who, cur, note="": preset.get(who)
             for who in preset:
                 app._ask_and_set_mood(who)
-            app_mod.ask_entry_event = lambda *a, **k: (True, "any", "anywhere", True, "wait")
-            app.edit_entry_events()
         finally:
-            app_mod.ask_mood, app_mod.ask_entry_event = orig_mood, orig_dlg
+            app_mod.ask_mood = orig_mood
+        app.apply_entry_event((True, "any", "anywhere", True, "wait"))
         self.assertEqual(app.entry_swap_with, "any")
         self.assertEqual(app.entry_scope, "anywhere")
         self.assertTrue(app.entry_restore_back)
@@ -680,22 +693,24 @@ class Test新增交互(unittest.TestCase):
     def test_按班次面板与逐班联动(self):
         """表格里改某一班 → 只有那一班写覆盖项，其余班跟随"默认口径"（第 1 个勾选的班）。"""
         from mood_soc.models import EntryShiftOverride
-        from ui.dialogs import EntryEventDialog
+        from ui.dialogs import EntryEventPanel
 
         app = self.app
         holders, cands = app._entry_candidates()
         labels = app.schedule.shift_labels()
         self.assertEqual(len(labels), 3)
-        dlg = EntryEventDialog(app, True, None, cands, holders, shift_labels=labels)
+        top = tk.Toplevel(app)
+        top.withdraw()
         try:
+            dlg = EntryEventPanel(top, True, None, cands, holders, shift_labels=labels)
+            dlg.pack(fill="both", expand=True)
             app.update()
             dlg.shift_who[1].set("巫恋")          # 只改第 2 班
-            dlg._ok()
-            self.assertEqual(dlg.result[:5], (True, None, "dorm", True, "full"))
-            self.assertEqual([(o.key, o.enabled, o.swap_with, o.when) for o in dlg.result[5]],
+            self.assertEqual(dlg.value()[:5], (True, None, "dorm", True, "full"))
+            self.assertEqual([(o.key, o.enabled, o.swap_with, o.when) for o in dlg.value()[5]],
                              [(2, True, "巫恋", "full")])
         finally:
-            dlg.destroy()
+            top.destroy()
         # 对照：磁盘上那份"第 1 班换巫恋 + 第 3 班不用"的配置能原样跑起来
         app.entry_events.set(True)
         app.entry_scope, app.entry_swap_with, app.entry_when = "anywhere", None, "full"
@@ -805,8 +820,8 @@ class Test新增交互(unittest.TestCase):
         app.update()
 
     def test_闲置入宿改动实时生效(self):
-        """对话框里改动 → 回调把设置套进模拟重算 → 表与主界面一起刷新；取消则回滚。"""
-        from ui.dialogs import IdleToDormDialog
+        """面板里改动 → 回调把设置套进模拟重算 → 表与主界面一起刷新。"""
+        from ui.dialogs import IdleToDormPanel
 
         app = self.app
         groups = app._idle_groups()
@@ -819,28 +834,27 @@ class Test新增交互(unittest.TestCase):
 
         def live(enabled, entries):
             seen.append((enabled, dict(entries)))
-            app.idle_to_dorm.set(bool(enabled))
-            app.idle_entries = dict(entries)
-            app.recompute()                       # 主界面（看板/曲线/状态栏）跟着刷新
-            return app._idle_groups()
+            return app.apply_idle_to_dorm(enabled, entries)   # 设置中心用的就是它
 
         snapshot = (app.idle_to_dorm.get(), dict(app.idle_entries))
-        dlg = IdleToDormDialog(app, False, groups, on_change=live)
+        top = tk.Toplevel(app)
+        top.withdraw()
         try:
+            panel = IdleToDormPanel(top, False, groups, on_change=live)
+            panel.pack(fill="both", expand=True)
             app.update()
-            self.assertEqual(len(dlg._rows), sum(len(g[2]) for g in groups))
-            dlg.enabled.set(True)
-            dlg._on_toggle()
-            dlg._rebuild()                        # 不等防抖，直接重建
+            self.assertEqual(len(panel._rows), sum(len(g[2]) for g in groups))
+            panel.enabled.set(True)
+            panel._on_toggle()
+            panel._rebuild()                      # 不等防抖，直接重建
             self.assertTrue(seen, "改动必须回调（实时重算）")
             self.assertTrue(app.idle_to_dorm.get())
             self.assertIn("闲置入宿：已开启", app._idle_status())
             self.assertTrue([m for m in app.traj.marks if m.kind == "idle"])
             self.assertGreater(app.traj.mood_at(name, 24), before)   # 入宿后心情变好
-            dlg._ok()                             # 「应用」：拿到逐次设置
-            enabled, entries = dlg.result
+            enabled, entries = panel.value()
         finally:
-            dlg.destroy()
+            top.destroy()
         self.assertTrue(enabled)
         self.assertTrue(entries, "应当有设置项")
         self.assertTrue(all(len(k) == 3 for k in entries), "键是 (周期, 班次, 干员)")
@@ -897,11 +911,12 @@ class Test新增交互(unittest.TestCase):
         背景：`ttk.Button` 自带 `<Key-space>` 类绑定＝"按下当前聚焦的按钮"，所以点过
         「换心情设置」之后按空格会再弹一次那个模态框；现在主窗口里的控件都挂了
         widget 级 `<space>`（播放/暂停 + `break`），而且工具栏按钮不参与 Tab 焦点。
+        （工具栏现在只剩「导入排班… / 设置… / ▶播放 / 回到起点」，这里用「设置…」验证。）
         """
         from tkinter import ttk
 
         app = self.app
-        bar = app.entry_detail.master
+        bar = app.toolbar
         btns = {}
 
         def walk(w):
@@ -911,7 +926,7 @@ class Test新增交互(unittest.TestCase):
                 walk(c)
 
         walk(bar)
-        self.assertIn("换心情设置", btns)
+        self.assertIn("设置…", btns)
         tabbable = [t for t, b in btns.items() if str(b.cget("takefocus")) not in ("0", "False")]
         self.assertEqual(tabbable, [], "工具栏按钮不该参与 Tab 焦点")
 
@@ -922,7 +937,7 @@ class Test新增交互(unittest.TestCase):
             for w in list(opened):
                 w.destroy()
 
-        btn = btns["换心情设置"]
+        btn = btns["设置…"]
         before = app._playing
         btn.focus_force()
         app.update()
@@ -1044,26 +1059,28 @@ class Test新增交互(unittest.TestCase):
         """批量设置的「房间等级」区：改等级 → 表格行数/容量按新等级算，应用后落到模型。"""
         import tkinter as tk
 
-        from ui.batch import BatchDialog
+        from ui.batch import BatchPanel
 
         app = self.app
-        dlg = BatchDialog(app, app.schedule, shift_index=0, initial_moods={},
-                          imported_moods={}, moods_now={})
+        top = tk.Toplevel(app)
+        top.withdraw()
         try:
+            panel = BatchPanel(top, app.schedule, shift_index=0, initial_moods={},
+                               imported_moods={}, moods_now={})
+            panel.pack(fill="both", expand=True)
             app.update()
-            self.assertEqual(len(dlg._level_vars), len(dlg._fac_names))
-            self.assertIn("9/9", dlg.level_note.cget("text"))     # 示例排班正好用满 9 个建造位
+            self.assertEqual(len(panel._level_vars), len(panel._fac_names))
+            self.assertIn("9/9", panel.level_note.cget("text"))   # 示例排班正好用满 9 个建造位
             ftype = app.schedule.shifts[0].world.facilities[1].ftype
             from mood_soc.config import facility_slots
-            dlg._level_vars[1].set("2")
-            dlg._on_level_change(1, dlg._level_vars[1])
+            panel._level_vars[1].set("2")
+            panel._on_level_change(1, panel._level_vars[1])
             app.update()
-            cap = dlg._slot_count(dlg._fac_names[1], 1)
+            cap = panel._slot_count(panel._fac_names[1], 1)
             self.assertGreaterEqual(cap, facility_slots(ftype, 2))
-            dlg._ok()
-            changes, _moods = dlg.result
+            changes, _moods = panel.value()
         finally:
-            dlg.destroy()
+            top.destroy()
         self.assertIn(0, changes)
         self.assertEqual(changes[0][1]["level"], 2)
 

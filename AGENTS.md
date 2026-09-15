@@ -94,7 +94,7 @@ documents/
    `skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `resources/*.txt` → 重跑生成脚本。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 246 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 248 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（250 条 clause 逐条造场景
     核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `resources/skill_verify_report.md`。
@@ -114,7 +114,7 @@ python main.py --demo --target 菲亚梅塔 --entry-events  # 先结算进驻事
 python main.py --mode base --demo                      # 整个布局还能维持多久
 python main.py --mode base --demo --period 12          # 先推进 12h 再评估
 
-# 图形界面（纯标准库 tkinter；导入多班排班 / 时间滑动 / 对点曲线 / 批量设置）
+# 图形界面（纯标准库 tkinter；导入多班排班 / 时间滑动 / 对点曲线 / 一个「设置」中心）
 .venv/Scripts/python.exe -m ui                          # 见 documents/10-图形界面.md
 .venv/Scripts/python.exe ui/__main__.py                 # 等价；IDE 里直接 Run 也行
 

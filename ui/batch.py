@@ -96,6 +96,7 @@ class BatchMixin:
         self._rows: List[dict] = []                  # 行控件（结构没变时复用）
         self._mood_vars: Dict[str, tk.StringVar] = {}
         self._cells: List[Tuple[int, int]] = []      # 表格里的 (设施下标, 位次)
+        self._notify_job = None                      # 心情输入的防抖任务（改动即时生效用）
 
         head = tk.Frame(self, bg=theme.BG)
         head.pack(fill="x", pady=(0, 2))
@@ -123,11 +124,36 @@ class BatchMixin:
 
     def _notify(self) -> None:
         """改动 → 通知宿主（设置中心＝立即生效；独立对话框没有回调）。"""
+        if self._notify_job is not None:
+            try:
+                self.after_cancel(self._notify_job)
+            except tk.TclError:
+                pass
+            self._notify_job = None
         if self._on_change is None:
             return
         res = self.value()
         if res is not None:
             self._on_change(*res)
+
+    def _notify_later(self) -> None:
+        """心情输入框的防抖：连续敲键盘只落地一次（每次落地都要重算整周期）。"""
+        if self._on_change is None:
+            return
+        if self._notify_job is not None:
+            try:
+                self.after_cancel(self._notify_job)
+            except tk.TclError:
+                pass
+        self._notify_job = self.after(250, self._notify)
+
+    def _cancel_notify(self) -> None:
+        if self._notify_job is not None:
+            try:
+                self.after_cancel(self._notify_job)
+            except tk.TclError:
+                pass
+            self._notify_job = None
 
     # ================================================================ 房间等级区
     def _build_level_bar(self) -> None:
@@ -462,6 +488,7 @@ class BatchMixin:
             if name:
                 var = tk.StringVar(value=theme.fmt_mood(self._moods.get(name, MOOD_MAX)))
                 self._mood_vars[name] = var
+                var.trace_add("write", lambda *_a: self._notify_later())   # 改动即时生效
                 r["entry"].configure(textvariable=var)
                 if not r["entry"].winfo_manager():
                     r["entry"].pack(side="left", padx=(6, 4))
@@ -632,40 +659,8 @@ class BatchMixin:
         self.focus_set()
 
 
-class BatchDialog(tk.Toplevel, BatchMixin):
-    """「批量设置」的**独立对话框**（薄壳：标题 + 取消/应用）。返回 `(changes, moods)`。"""
-
-    def __init__(self, parent, schedule, shift_index: int = 0,
-                 initial_moods: Optional[Dict[str, Decimal]] = None,
-                 imported_moods: Optional[Dict[str, Decimal]] = None,
-                 moods_now: Optional[Dict[str, Decimal]] = None,
-                 current_t=Decimal("0")):
-        super().__init__(parent, bg=theme.BG)
-        self.title("批量设置 · 当前布局的干员与心情")
-        self.result = None
-        self._init_batch_body(parent, schedule, shift_index=shift_index,
-                              initial_moods=initial_moods, imported_moods=imported_moods,
-                              moods_now=moods_now, current_t=current_t)
-
-        btns = tk.Frame(self, bg=theme.BG)
-        btns.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, theme.PAD))
-        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
-        ttk.Button(btns, text="应用", style="Accent.TButton",
-                   command=self._ok).pack(side="right", padx=(0, 6))
-        self.bind("<Escape>", lambda _e: self.destroy())
-        self._center(parent)
-        self._modal(parent)
-
-    def _ok(self) -> None:
-        res = self.value()
-        if res is None:
-            return
-        self.result = res
-        self.destroy()
-
-
 class BatchPanel(tk.Frame, BatchMixin):
-    """「批量设置」内容本体（嵌进设置中心用；`value()` 收结果、`on_change` 即时生效）。"""
+    """「批量设置」内容本体（设置中心「干员与心情」分区；`value()` 收结果、`on_change` 即时生效）。"""
 
     def __init__(self, master, schedule, shift_index: int = 0,
                  initial_moods: Optional[Dict[str, Decimal]] = None,
@@ -676,6 +671,11 @@ class BatchPanel(tk.Frame, BatchMixin):
         self._init_batch_body(master, schedule, shift_index=shift_index,
                               initial_moods=initial_moods, imported_moods=imported_moods,
                               moods_now=moods_now, current_t=current_t, on_change=on_change)
+
+    def destroy(self) -> None:
+        """销毁时取消还没落地的防抖任务（否则会对着已销毁的控件报 invalid command name）。"""
+        self._cancel_notify()
+        tk.Frame.destroy(self)
 
 
 class PasteDialog(tk.Toplevel):
@@ -723,13 +723,4 @@ class PasteDialog(tk.Toplevel):
         self.destroy()
 
 
-def ask_batch(parent, schedule, shift_index: int = 0, initial_moods=None,
-              imported_moods=None, moods_now=None, current_t=Decimal("0")):
-    """返回 `(changes, moods)`（取消返回 `None`）：改过的班次布局 + 与导入值不同的心情。"""
-    dlg = BatchDialog(parent, schedule, shift_index=shift_index, initial_moods=initial_moods,
-                      imported_moods=imported_moods, moods_now=moods_now, current_t=current_t)
-    parent.wait_window(dlg)
-    return dlg.result
-
-
-__all__ = ["BatchDialog", "PasteDialog", "ask_batch", "split_names"]
+__all__ = ["BatchPanel", "BatchMixin", "PasteDialog", "split_names"]

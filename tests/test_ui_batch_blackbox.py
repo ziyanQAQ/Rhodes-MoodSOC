@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import time
 import tkinter as tk
 import unittest
 from decimal import Decimal
@@ -68,27 +69,34 @@ class Test批量设置(unittest.TestCase):
         app.load_paths([SAMPLE])
         for _ in range(2):
             app.update()
-        self.dlg = None
+        self.top = None
 
     def tearDown(self):
-        if self.dlg is not None and self.dlg.winfo_exists():
-            self.dlg.destroy()
+        if self.top is not None and self.top.winfo_exists():
+            self.top.destroy()
 
     # ------------------------------------------------------------- 工具
     def _open(self, shift_index: int = 0, moods=None, moods_now=None):
-        from ui.batch import BatchDialog
+        """建一个「批量设置」面板并挂到测试用的窗口上。
+
+        （面板＝设置中心「干员与心情」分区的内容本体；它自己是 Frame，
+        所以这里给它一个 Toplevel 当宿主。）
+        """
+        from ui.batch import BatchPanel
         from ui.schedule import default_initial_moods
 
         app = self.app
-        dlg = BatchDialog(app, app.schedule, shift_index=shift_index,
-                          initial_moods=(moods or {}),
-                          imported_moods=default_initial_moods(app.schedule),
-                          moods_now=(moods_now if moods_now is not None
-                                     else app.traj.moods_at(Decimal("0"))),
-                          current_t=app.current_t)
+        self.top = tk.Toplevel(app)
+        self.top.withdraw()
+        panel = BatchPanel(self.top, app.schedule, shift_index=shift_index,
+                           initial_moods=(moods or {}),
+                           imported_moods=default_initial_moods(app.schedule),
+                           moods_now=(moods_now if moods_now is not None
+                                      else app.traj.moods_at(Decimal("0"))),
+                           current_t=app.current_t)
+        panel.pack(fill="both", expand=True)
         app.update()
-        self.dlg = dlg
-        return dlg
+        return panel
 
     def _ops_of(self, changes):
         """把 `{班次下标: 布局}` 里所有干员按班次顺序摊平。"""
@@ -172,12 +180,11 @@ class Test批量设置(unittest.TestCase):
         self.assertEqual(moods, {})              # 全部回到导入值 → 差集为空
 
     def test_心情越界被拒(self):
-        dlg = self._open(0)
-        dlg._mood_vars["温蒂"].set("99")
-        dlg._ok()
-        self.assertIsNone(dlg.result)
-        self.assertIn("0 ~ 24", dlg.err.cget("text"))
-        self.assertTrue(dlg.winfo_exists(), "报错时对话框不该关掉")
+        panel = self._open(0)
+        panel._mood_vars["温蒂"].set("99")
+        self.assertIsNone(panel.value())          # 越界 → 收不出结果
+        self.assertIn("0 ~ 24", panel.err.cget("text"))
+        self.assertTrue(panel.winfo_exists(), "报错时面板不该被销毁（提示要留在屏幕上）")
 
     # ------------------------------------------------------------- 干员批量
     def test_粘贴名单按房间顺序填入(self):
@@ -281,54 +288,77 @@ class Test批量设置(unittest.TestCase):
                           app.schedule.shifts[1].world.facilities], shift2_ops)
 
     # ------------------------------------------------------------- 端到端
-    def test_batch_edit端到端(self):
-        """`app.batch_edit()`：对话框打桩 → 布局与起点心情一起落地、状态栏给回执。"""
-        from ui import app as app_mod
-        app = self.app
-        dlg = self._open(0)
-        dlg._apply_names(["泡泡", "慕斯"], clear_first=True)
-        dlg._mood_vars["泡泡"].set("8")
-        dlg._ok()
-        result = dlg.result
-        if result is None:
-            self.fail(f"应用失败：{dlg.err.cget('text')}")
-        self.dlg = None
-        dlg.destroy()
+    def test_设置中心里改干员与心情立即生效(self):
+        """`app.open_settings("batch")`：面板里一改，布局与起点心情**立刻**落地、状态栏给回执。
 
-        orig = app_mod.ask_batch
+        合并前这里是"对话框打桩 → `app.batch_edit()` 收结果"；现在设置中心是唯一入口，
+        面板通过 `on_change` 直接调 `app.apply_batch`，不再有"应用"这一步。
+        """
+        app = self.app
+        dlg = app.open_settings("batch")
+        app.update()
         try:
-            app_mod.ask_batch = lambda *a, **k: result
-            app.batch_edit()
+            panel = dlg.panel
+            panel._apply_names(["泡泡", "慕斯"], clear_first=True)
+            panel._mood_vars["泡泡"].set("8")
+            self._pump(app)                       # 心情输入走 250ms 防抖
+            self.assertEqual(app.initial_moods.get("泡泡"), Decimal("8"))
+            self.assertEqual(app.traj.mood_at("泡泡", 0), Decimal("8"))
+            self.assertEqual(app.schedule.shifts[0].world.facilities[0].operators[0].name, "泡泡")
+            self.assertIn("设置已生效", app.status.cget("text"))
+            # 越界的心情不会落地（面板显示错误、排班保持上一次的合法状态）
+            panel._mood_vars["泡泡"].set("99")
+            self._pump(app)
+            self.assertEqual(app.initial_moods.get("泡泡"), Decimal("8"))
+            self.assertIn("0 ~ 24", panel.err.cget("text"))
         finally:
-            app_mod.ask_batch = orig
-        self.assertEqual(app.initial_moods.get("泡泡"), Decimal("8"))
-        self.assertEqual(app.traj.mood_at("泡泡", 0), Decimal("8"))
-        self.assertEqual(app.schedule.shifts[0].world.facilities[0].operators[0].name, "泡泡")
-        self.assertIn("批量设置已应用", app.status.cget("text"))
-        # 取消（返回 None）→ 什么都不变
-        before = list(app.schedule.shifts[0].operators)
-        try:
-            app_mod.ask_batch = lambda *a, **k: None
-            app.batch_edit()
-        finally:
-            app_mod.ask_batch = orig
-        self.assertEqual(list(app.schedule.shifts[0].operators), before)
+            dlg.destroy()
         app.initial_moods.clear()
         app.recompute()
 
-    # ------------------------------------------------------------- 小工具
-    def _apply(self, dlg):
-        """按「应用」并把结果真正落到排班上（等价于 `app.batch_edit` 的后半段）。"""
-        dlg._ok()
-        if dlg.result is None:                   # 报错时对话框还在，能读到提示
-            self.fail(f"应用失败：{dlg.err.cget('text')}")
-        changes, moods = dlg.result
+    def test_设置中心四个分区都能开(self):
+        """左导航的 4 个分区都能打开，且各自挂到正确的面板上。"""
+        from ui.batch import BatchPanel
+        from ui.dialogs import EntryEventPanel, IdleToDormPanel
+        from ui.settings import PAGES
+
         app = self.app
-        for i in sorted(changes):
-            app.schedule = app.schedule.replaced_shift(i, changes[i])
-        app.initial_moods = dict(moods)
-        app._layout_sig = None
-        app.recompute()
+        dlg = app.open_settings()
+        app.update()
+        try:
+            self.assertEqual([k for k, _t, _d in PAGES],
+                             ["timeline", "batch", "entry", "idle"])
+            for key in ("timeline", "batch", "entry", "idle"):
+                dlg.open_page(key)
+                app.update()
+                self.assertTrue(dlg.panel.winfo_exists(), f"{key} 分区应当建出内容")
+            self.assertIsInstance(dlg.panel, IdleToDormPanel)
+            dlg.open_page("batch")
+            app.update()
+            self.assertIsInstance(dlg.panel, BatchPanel)
+            dlg.open_page("entry")
+            app.update()
+            self.assertIsInstance(dlg.panel, EntryEventPanel)
+            self.assertEqual(len(dlg.panel.shift_use), len(app.schedule.shifts))
+        finally:
+            dlg.destroy()
+
+    # ------------------------------------------------------------- 小工具
+    def _pump(self, app, seconds: float = 0.4):
+        """空转事件循环若干秒（等防抖定时器到点）。"""
+        t0 = time.perf_counter()
+        while time.perf_counter() - t0 < seconds:
+            app.update()
+            time.sleep(0.01)
+
+    def _apply(self, panel):
+        """把面板收出来的结果真正落到排班上（等价于 `app.apply_batch`）。"""
+        res = panel.value()
+        if res is None:                          # 报错时面板还在，能读到提示
+            self.fail(f"收结果失败：{panel.err.cget('text')}")
+        changes, moods = res
+        app = self.app
+        app.apply_batch(changes, moods)
         return changes, moods
 
 
