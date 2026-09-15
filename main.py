@@ -28,7 +28,8 @@ import sys
 from datetime import datetime
 from decimal import Decimal
 
-from mood_soc import apply_entry_events, build_base_layout, evaluate, evaluate_base
+from mood_soc import (apply_entry_events, apply_idle_to_dorm, build_base_layout, evaluate,
+                      evaluate_base)
 from mood_soc.battery import to_decimal
 from mood_soc.output import base_result_to_dict, dump_json, mood_result_to_dict, to_json_string
 
@@ -86,6 +87,11 @@ def main() -> int:
                              "与同宿舍某人互换心情）后再测算；不指定则按布局给出的心情原样测算。"
                              "场景 JSON 顶层也可写 \"entry_events\": {\"enabled\": true, "
                              "\"swap_with\": \"某人\"} 来开启并指定与谁互换")
+    parser.add_argument("--idle-to-dorm", action="store_true", default=False,
+                        help="结算闲置入宿：把「没在上班、也不在宿舍、心情还没满」的干员"
+                             "安排进宿舍（有空位就放进去，没空位就与宿舍里心情已满的那位"
+                             "互换）；场景 JSON 顶层也可写 \"idle_to_dorm\": {\"enabled\": true, "
+                             "\"per_operator\": {\"某人\": \"换谁\"}}")
     args = parser.parse_args()
 
     # 1) 场景来源
@@ -106,6 +112,14 @@ def main() -> int:
     if args.entry_events or world.entry_events.enabled:
         for ev in apply_entry_events(world, enabled=True):
             print(f"[进驻事件] {ev.source()}　{ev.detail}", file=sys.stderr)
+
+    # 1.6) 闲置入宿（可选）：把"没在上班、也不在宿舍、心情还没满"的干员安排进宿舍——
+    #      宿舍有空位就直接放进去，没空位就与宿舍里心情已满的那位互换（那位换出来闲置）。
+    #      开关来源：命令行 `--idle-to-dorm` 或 JSON 顶层的 "idle_to_dorm": {"enabled": true}。
+    #      ⚠️ 这里只在"当前这一份布局"上结算一次（多班轮换要逐班结算，见 ui.schedule）。
+    if args.idle_to_dorm or getattr(world.idle_to_dorm, "enabled", False):
+        for ev in apply_idle_to_dorm(world, enabled=True):
+            print(f"[闲置入宿] {ev.source()}　{ev.detail}", file=sys.stderr)
 
     # 2) 按模式测算并组装 JSON
     if args.mode == "base":

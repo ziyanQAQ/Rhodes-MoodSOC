@@ -592,6 +592,64 @@ class Test副本状态时效性(MoodAssertMixin, unittest.TestCase):
         self.assertMood(traj.mood_at("巫恋", D("6")), D("20.1"))
 
 
+class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
+    """`simulate_schedule(..., idle_to_dorm=True)`：每班开始时把未满的闲置干员安排进宿舍。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sch = load_schedule([SAMPLE_MAA])
+
+    def test_开启后未满的闲置干员会回满(self):
+        """示例排班里"未排班且未满"的人会被安排进宿舍恢复。
+
+        注意挑人：地灵/梅 整个周期都没排班 ⇒ 入宿后能一路回到 24；
+        虎狼丸只在**第 2 班**闲置（第 3 班又在会客室上班）⇒ 只看第 2 班末回到 24。
+        """
+        off = simulate_schedule(self.sch, cycles=1)
+        on = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True)
+        for name in ("地灵", "梅"):
+            self.assertLess(off.mood_at(name, 24), D("24"))
+            self.assertMood(on.mood_at(name, 24), D("24"), f"{name} 入宿后应当回满")
+        self.assertLess(off.mood_at("虎狼丸", 18), D("24"))
+        self.assertMood(on.mood_at("虎狼丸", 18), D("24"), "虎狼丸 第 2 班入宿后应当回满")
+        self.assertGreater(on.mood_at("虎狼丸", 24), off.mood_at("虎狼丸", 24))
+        # 事件流水账：真的记了"谁进宿舍 / 与谁互换"
+        idle = [m for m in on.marks if m.kind == "idle"]
+        self.assertTrue(idle)
+        self.assertTrue(any("进宿舍" in m.label or "互换" in m.label for m in idle))
+
+    def test_默认关闭时一切照旧(self):
+        """不传 idle_to_dorm（默认 False）→ 轨迹与"没有这个功能"时逐位相同。"""
+        a = simulate_schedule(self.sch, cycles=1)
+        b = simulate_schedule(self.sch, cycles=1, idle_to_dorm=False)
+        for name in a.names:
+            self.assertEqual(a.mood_at(name, 24), b.mood_at(name, 24), name)
+        self.assertFalse([m for m in b.marks if m.kind == "idle"])
+
+    def test_逐人设置_不参与与指定(self):
+        """`idle_entries`：`enabled=False` 的人不动；`swap_with` 指定与谁互换。"""
+        from mood_soc.models import IdleToDormEntry
+
+        skip = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True,
+                                 idle_entries=[IdleToDormEntry(name="地灵", enabled=False)])
+        self.assertFalse([m for m in skip.marks
+                          if m.kind == "idle" and "地灵" in m.label])
+        self.assertLess(skip.mood_at("地灵", 24), D("24"))       # 没被安排 → 还是没满
+        pick = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True,
+                                 idle_entries=[IdleToDormEntry(name="地灵", swap_with="塞雷娅")])
+        evs = [m for m in pick.marks if m.kind == "idle" and "地灵" in m.label]
+        self.assertEqual(len(evs), 1)
+        self.assertIn("塞雷娅", evs[0].label)
+
+    def test_跨周期每班都结算(self):
+        """多周期：每个周期的每一班都要结算（复用同一套时效性机制）。"""
+        one = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True)
+        two = simulate_schedule(self.sch, cycles=2, idle_to_dorm=True)
+        n1 = len([m for m in one.marks if m.kind == "idle"])
+        n2 = len([m for m in two.marks if m.kind == "idle"])
+        self.assertGreater(n2, n1, "第 2 个周期也应当有闲置入宿事件")
+
+
 class Test引擎不依赖GUI(unittest.TestCase):
     def test_导入schedule不加载tkinter(self):
         """结构性不变式：计算核心必须能在无显示器环境导入（tkinter 只在 app 层）。"""

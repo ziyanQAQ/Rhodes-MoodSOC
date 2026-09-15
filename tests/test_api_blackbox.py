@@ -11,9 +11,11 @@ from __future__ import annotations
 import unittest
 from decimal import Decimal
 
-from mood_soc import (INF, apply_entry_events, build_base_layout, entry_target_kind, evaluate,
-                       evaluate_base, find_entry_target, simulate, time_to_mood)
-from mood_soc.models import build_entry_shift_overrides, resolve_entry_config
+from mood_soc import (INF, apply_entry_events, apply_idle_to_dorm, build_base_layout,
+                      entry_target_kind, evaluate, evaluate_base, find_entry_target,
+                      simulate, time_to_mood)
+from mood_soc.models import (IdleToDormEntry, build_entry_shift_overrides,
+                             build_idle_to_dorm_config, resolve_entry_config)
 from mood_soc.config import (FacilityType, WORK_FACILITIES, facility_max_count,
                              facility_slots)
 from mood_soc.output import base_result_to_dict, mood_result_to_dict
@@ -1399,6 +1401,113 @@ class Test挂件位(unittest.TestCase):
         self.assertIn("挂在加工站", names)
         self.assertNotIn("火神", names)          # 副手
         self.assertNotIn("在活动室", names)      # 活动室使用者
+
+
+class Test闲置入宿(unittest.TestCase):
+    """`apply_idle_to_dorm`（闲置入宿）的黑盒：只断言"布局输入 → 布局输出 + 事件流水账"。
+
+    规则：把"没在上班、也不在宿舍、心情还没满"的干员安排进宿舍——
+    宿舍有空位就放进去（氛围高的优先），没空位就与宿舍里心情已满的那位互换（那位换出来闲置）。
+    """
+
+    @staticmethod
+    def _layout(dorm_level=1, dorm_slots=None, dorm=(), others=()):
+        facs = [{"type": "宿舍", "level": dorm_level,
+                 "operators": [{"name": n, "mood": m} for n, m in dorm]}]
+        if dorm_slots is not None:
+            facs[0]["slots"] = dorm_slots
+        for ftype, ops in others:
+            facs.append({"type": ftype, "level": 3,
+                         "operators": [{"name": n, "mood": m} for n, m in ops]})
+        return build_base_layout(scenario(*facs))
+
+    @staticmethod
+    def _where(world, name):
+        fac = world.facility_of(name)
+        return fac.display_name if fac else "未排班"
+
+    def test_开关默认关(self):
+        """JSON 里没配、也不显式开 → 一动不动（默认不改布局）。"""
+        world = self._layout(dorm=[("甲", "24")], others=[("加工站", [("丙", "6")])])
+        self.assertEqual(apply_idle_to_dorm(world), [])
+        self.assertEqual(self._where(world, "丙"), "加工站")
+
+    def test_空位优先(self):
+        """宿舍有空位：直接放进去（不动宿舍里的人）。"""
+        world = self._layout(dorm=[("甲", "24"), ("乙", "10")],
+                             others=[("加工站", [("丙", "6")])])
+        events = apply_idle_to_dorm(world, enabled=True)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].group, "idle_to_dorm")
+        self.assertEqual(self._where(world, "丙"), "宿舍")
+        self.assertEqual(self._where(world, "甲"), "宿舍")     # 没被换出去
+        self.assertEqual(world.get_operator("丙").mood, Decimal("6"))   # 心情照旧，进去慢慢回
+
+    def test_满员时与满心情者互换_被换出的那位闲置(self):
+        """没空位 → 与宿舍里心情已满的那位互换；那位换出来**闲置**（不占任何位置）。"""
+        world = self._layout(dorm=[("甲", "24")], dorm_slots=1,
+                             others=[("加工站", [("丙", "6")])])
+        events = apply_idle_to_dorm(world, enabled=True)
+        self.assertEqual(len(events), 1)
+        self.assertIn("互换", events[0].detail)
+        self.assertEqual(self._where(world, "丙"), "宿舍")
+        self.assertEqual(self._where(world, "甲"), "未排班")    # 已是满心情，闲置不掉心情
+        self.assertEqual(self._where(world, "加工站" if False else "丙"), "宿舍")
+
+    def test_没有满心情者可换则不动(self):
+        """宿舍既满员、又没有满心情的人 → 这一位不动，并记一条说明。"""
+        world = self._layout(dorm=[("甲", "12")], dorm_slots=1,
+                             others=[("加工站", [("丙", "6")])])
+        events = apply_idle_to_dorm(world, enabled=True)
+        self.assertEqual([e.group for e in events], ["idle_to_dorm_skipped"])
+        self.assertEqual(self._where(world, "丙"), "加工站")
+        self.assertEqual(self._where(world, "甲"), "宿舍")
+
+    def test_未排班的人也能进宿舍(self):
+        """不在布局里的干员（本班未排班）——心情由调用方传入，也能被安排进宿舍。"""
+        world = self._layout(dorm=[("甲", "24")])          # 宿舍 5 个位置，空着
+        events = apply_idle_to_dorm(world, enabled=True, idle={"丁": "8"})
+        self.assertEqual(len(events), 1)
+        self.assertEqual(self._where(world, "丁"), "宿舍")
+        self.assertEqual(world.get_operator("丁").mood, Decimal("8"))
+
+    def test_指定对象不满足就跳过这一位(self):
+        """严格按指定：那一班他不在宿舍 / 心情不满 → 跳过（不退回自动）。"""
+        world = self._layout(dorm=[("甲", "24"), ("乙", "10")], dorm_slots=2,
+                             others=[("加工站", [("丙", "6")])])
+        events = apply_idle_to_dorm(world, enabled=True, swap_with={"丙": "乙"})
+        self.assertEqual([e.group for e in events], ["idle_to_dorm_skipped"])
+        self.assertEqual(self._where(world, "丙"), "加工站")
+        # 指定一个"在宿舍且满心情"的 → 正常互换
+        world2 = self._layout(dorm=[("甲", "24")], dorm_slots=1,
+                              others=[("加工站", [("丙", "6")])])
+        events2 = apply_idle_to_dorm(world2, enabled=True, swap_with={"丙": "甲"})
+        self.assertEqual([e.group for e in events2], ["idle_to_dorm"])
+        self.assertEqual(self._where(world2, "丙"), "宿舍")
+        self.assertEqual(self._where(world2, "甲"), "未排班")
+
+    def test_在上班与心情满的人不动(self):
+        """正在消耗心情的设施里的人不动（换走会打乱排班）；心情满的人也不用动。"""
+        world = self._layout(dorm=[("甲", "24")],
+                             others=[("制造站", [("上班中", "3")]), ("加工站", [("满了", "24")])])
+        self.assertEqual(apply_idle_to_dorm(world, enabled=True), [])
+        self.assertEqual(self._where(world, "上班中"), "制造站")
+        self.assertEqual(self._where(world, "满了"), "加工站")
+
+    def test_逐人设置_不参与与指定(self):
+        """JSON 的 per_operator：`false` = 不参与；写人名 = 指定与谁互换。"""
+        world = self._layout(dorm=[("甲", "24"), ("乙", "24")], dorm_slots=2,
+                             others=[("加工站", [("丙", "6")])])
+        world.idle_to_dorm = build_idle_to_dorm_config({"enabled": True})
+        world.idle_to_dorm.per_operator.append(
+            IdleToDormEntry(name="丙", enabled=False))
+        self.assertEqual(apply_idle_to_dorm(world, enabled=True), [])
+        self.assertEqual(self._where(world, "丙"), "加工站")
+        # 改成"指定与乙互换" → 有效（乙是满心情）
+        world.idle_to_dorm.per_operator = [IdleToDormEntry(name="丙", swap_with="乙")]
+        events = apply_idle_to_dorm(world, enabled=True)
+        self.assertEqual([e.group for e in events], ["idle_to_dorm"])
+        self.assertIn("乙", events[0].detail)
 
 
 if __name__ == "__main__":

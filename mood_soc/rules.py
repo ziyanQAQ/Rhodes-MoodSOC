@@ -834,6 +834,196 @@ def reset_entry_events(world: BaseLayout) -> int:
     return n
 
 
+def _idle_candidates(world: BaseLayout, idle=None, only=None):
+    """「闲置入宿」的候选 → `[(Operator | 名字, 心情, 原位置)]`，按心情从低到高。
+
+    候选 = **不在宿舍** 且 **不消耗心情** 且 **心情没满**：
+
+    | 原位置 | 是否算候选 |
+    |---|---|
+    | 宿舍 | ✗（已经在恢复） |
+    | 消耗心情的工作设施（制造/贸易/发电/中枢/会客/办公） | ✗（正在上班，不动） |
+    | **挂件位**（加工站 / 训练室） | ✓（不消耗也不回复，心情一直卡着） |
+    | **本班未排班**（不在布局里，心情由 `idle` 传入） | ✓ |
+
+    `idle`：`{干员名: 心情}`——本班次**没排进布局**的干员（他们的心情在布局里看不到，
+    只能由调用方给）。`only`：只处理这些人（界面勾了"参与"的），`None` = 全都算。
+    """
+    from .config import FacilityType as _FT
+
+    out: list = []
+    for op in world.all_operators():
+        fac = world.facility_of(op.name)
+        if fac is not None and fac.ftype == _FT.DORMITORY:
+            continue                                     # 已经在宿舍
+        if fac is not None and fac.ftype not in (_FT.WORKSHOP, _FT.TRAINING):
+            continue                                     # 正在上班（会消耗心情）
+        if op.mood >= MOOD_MAX:
+            continue                                     # 满心情，不需要恢复
+        if only is not None and op.name not in only:
+            continue
+        out.append((op, op.name, op.mood, fac.display_name if fac else "未排班"))
+    for name, mood in (idle or {}).items():
+        if world.get_operator(name) is not None:
+            continue                                     # 已经在布局里（上面处理过了）
+        mood = to_decimal(mood)
+        if mood >= MOOD_MAX:
+            continue
+        if only is not None and name not in only:
+            continue
+        out.append((None, name, mood, "未排班"))
+    out.sort(key=lambda row: (row[2], row[1]))            # 心情最低的先安排
+    return out
+
+
+def _dorm_with_free_slot(world: BaseLayout):
+    """有空位的宿舍（氛围高的优先——进去恢复更快）。"""
+    from .config import FacilityType as _FT
+
+    dorms = [f for f in world.facilities
+             if f.ftype == _FT.DORMITORY and f.enabled and len(f.operators) < f.capacity]
+    if not dorms:
+        return None
+    dorms.sort(key=lambda f: (-float(f.atmosphere if f.atmosphere is not None else 0),
+                              world.facilities.index(f)))
+    return dorms[0]
+
+
+def _full_dorm_mate(world: BaseLayout, exclude: Optional[set] = None):
+    """挑一个「宿舍里心情已满」的干员来互换 → `(宿舍, 干员)`；没有就返回 `(None, None)`。
+
+    规则：氛围最高的宿舍优先，同一宿舍里取**排位最靠后**的那位（简单、可预期）。
+    `exclude`：已经被换出去的人不再参与（同一班次内不会来回换）。
+    """
+    from .config import FacilityType as _FT
+
+    dorms = [f for f in world.facilities if f.ftype == _FT.DORMITORY and f.enabled]
+    dorms.sort(key=lambda f: (-float(f.atmosphere if f.atmosphere is not None else 0),
+                              world.facilities.index(f)))
+    for dorm in dorms:
+        for op in reversed([o for o in dorm.operators
+                            if o.mood >= MOOD_MAX and o.name not in (exclude or set())]):
+            return dorm, op
+    return None, None
+
+
+def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
+                       swap_with=None) -> List[Contribution]:
+    """**把"未满心情的闲置干员"安排进宿舍**（班次开始时的布局事件；就地修改 `world`）。
+
+    与 `apply_entry_events` 同一层：它改的是**布局**（谁在哪个房间），不是每小时速率，
+    所以同样不进 `consume_ledger` / `recovery_ledger`，由调用方在"班次开始"显式结算
+    （CLI `--idle-to-dorm`、界面上的开关、或 `ui.schedule.simulate_schedule`）。
+
+    规则（用户口径）：
+
+    1. **只动"没在上班、也不在宿舍、心情还没满"的人**——挂件位（加工站/训练室）与本班未排班
+       都算；正在上班的人不动（他们本来就在消耗，换走会打乱排班）。心情满的人也不用动。
+    2. 按**心情从低到高**依次安排（最需要恢复的先来）。
+    3. 每人：**先看宿舍有没有空位** → 有就直接放进去（氛围最高的宿舍优先）；
+       没有空位才**与宿舍里心情已满的那位互换**（她去宿舍，那位换出来**变成未排班/闲置**——
+       他已是满心情，闲置不会掉心情）。
+    4. 宿舍全满、且里面一个满心情的都没有 → 这一人不动，记一条说明
+       （group=`idle_to_dorm_skipped`）。
+    5. **指定了交换对象**（`swap_with[name]`）时严格按指定：那一班若他不在宿舍 / 心情不是满的，
+       就**跳过这一位**（不退回自动）。
+
+    参数：
+        enabled  三态；`None` = 用 `world.idle_to_dorm.enabled`，都没有则**默认不结算**
+                 （它会动布局，不做成默认行为）
+        idle     本班未排班的干员 → 心情：`{名字: 心情}`；给了才把他们当候选
+        only     只处理这些干员（界面勾了"参与"的人；`None` = 全部候选）
+        swap_with  指定交换对象：`{候选名: 目标名}`（`None`/`""` = 自动）
+
+    ⚠️ **会就地修改 `world`**（有人进宿舍、有人被换出）。返回事件流水账（`Bucket.EVENT`）。
+    """
+    cfg = getattr(world, "idle_to_dorm", None)
+    if enabled is None:
+        configured = getattr(cfg, "enabled", None)
+        enabled = bool(configured) if configured is not None else False
+    if not enabled:
+        return []
+
+    from .scenario import build_operator      # 局部导入：避免模块级循环依赖
+
+    events: List[Contribution] = []
+    swapped_out: set = set()
+    for op, name, mood, where in _idle_candidates(world, idle=idle, only=only):
+        # 界面"逐人设置"里的参与 / 指定对象
+        entry = cfg.entry_for(name) if cfg is not None else None
+        if entry is not None and not entry.enabled:
+            continue
+        want = None
+        if swap_with is not None:
+            want = (swap_with.get(name) or None) if isinstance(swap_with, dict) else None
+        if want is None and entry is not None:
+            want = entry.swap_with or None
+
+        dorm = _dorm_with_free_slot(world)
+        if dorm is not None:                              # ① 有空位：直接进
+            if op is None:
+                op = build_operator({"name": name, "mood": mood})
+            # ⚠️ 顺序要紧：**先离开原设施、再进宿舍**——反过来的话"离开"会把刚放进去的人删掉
+            _leave_previous_facility(world, name)
+            dorm.operators.append(op)
+            events.append(Contribution(
+                Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
+                owner=name, target=dorm.display_name, detail=(
+                    f"（{name} 心情 {mood} 没满且在闲置（{where}）→ 进 {dorm.display_name} "
+                    f"恢复；该宿舍还有空位）")))
+            continue
+
+        # ② 没有空位：挑一个"宿舍里心情已满"的与之互换
+        if want:
+            target_dorm = None
+            target_op = None
+            for f in world.facilities:
+                if f.ftype != FacilityType.DORMITORY:
+                    continue
+                for o in f.operators:
+                    if o.name == want:
+                        target_dorm, target_op = f, o
+            if target_op is None or target_op.mood < MOOD_MAX \
+                    or target_dorm is None or target_op.name in swapped_out:
+                # 严格按指定：不满足就跳过这一位（不退回自动）
+                events.append(Contribution(
+                    Bucket.EVENT, "闲置入宿未执行", ZERO, group="idle_to_dorm_skipped",
+                    owner=name, target=want, detail=(
+                        f"（指定的「{want}」这一班不在宿舍 / 心情不是满的 → 跳过这一位）")))
+                continue
+            dorm, mate = target_dorm, target_op
+        else:
+            dorm, mate = _full_dorm_mate(world, exclude=swapped_out)
+        if mate is None:
+            events.append(Contribution(
+                Bucket.EVENT, "闲置入宿未执行", ZERO, group="idle_to_dorm_skipped",
+                owner=name, target="", detail=(
+                    f"（{name} 心情 {mood} 想入宿，但宿舍没有空位、也没有心情已满的人可换 → 这一班不动）")))
+            continue
+
+        if op is None:
+            op = build_operator({"name": name, "mood": mood})
+        _leave_previous_facility(world, name)
+        mate_idx = dorm.operators.index(mate)
+        dorm.operators[mate_idx] = op                     # 她进宿舍
+        swapped_out.add(mate.name)                        # 满心情那位**换出来 → 闲置**（不占位）
+        events.append(Contribution(
+            Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
+            owner=name, target=mate.name, detail=(
+                f"（{name} 心情 {mood} 没满且在闲置（{where}）→ 与 {dorm.display_name} 里"
+                f"心情已满的 {mate.name} 互换：{name} 进宿舍恢复，{mate.name} 换出来闲置）")))
+    return events
+
+
+def _leave_previous_facility(world: BaseLayout, name: str) -> None:
+    """把该干员从原设施里摘掉（挂件位/宿舍都适用；不在任何设施里就什么都不做）。"""
+    for f in world.facilities:
+        for i, o in enumerate(list(f.operators)):
+            if o.name == name:
+                del f.operators[i]
+                return
+
+
 def entry_event_holders(world: BaseLayout):
     """列出**可能**触发进驻事件（M15a）的干员 → `[(干员名, 所在房间名), ...]`。
 

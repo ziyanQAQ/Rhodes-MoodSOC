@@ -539,3 +539,143 @@ def ask_entry_event(parent, enabled: bool, swap_with, candidates: Sequence[str],
                            shift_labels=shift_labels, per_shift=per_shift)
     parent.wait_window(dlg)
     return dlg.result
+
+
+class IdleToDormDialog(tk.Toplevel):
+    """**闲置入宿**设置 —— 一个总开关 + 一张"候选人一行"的表。
+
+    规则（框内也写给用户看）：把"**没在上班、也不在宿舍、心情还没满**"的干员安排进宿舍——
+    宿舍有空位就直接放进去（氛围高的优先）；没空位就**与宿舍里心情已满的那位互换**
+    （她进宿舍恢复，那位换出来闲置——他已是满心情，闲置不会掉心情）。
+
+    | 控件 | 落到引擎 |
+    |---|---|
+    | ① 启用闲置入宿 | `IdleToDormConfig.enabled` |
+    | 每行的「参与」 | `per_operator[name].enabled` |
+    | 每行的「换谁」 | `per_operator[name].swap_with`（自动 = `None`） |
+
+    「换谁」下拉里**只列真正可能满足条件的人**（当前轨迹下在宿舍且心情满的那些）；
+    万一运行时某班那位不满足（不在宿舍 / 心情不满），就**跳过这一位**（严格按指定，不退回自动）。
+    """
+
+    TITLE = "闲置入宿设置（未满的闲置干员进宿舍）"
+    AUTO = "自动（挑宿舍里满心情的一位）"
+
+    def __init__(self, parent, enabled: bool, rows: Sequence, targets: Sequence[str] = (),
+                 note: str = ""):
+        super().__init__(parent, bg=theme.BG)
+        self.title(self.TITLE)
+        self.resizable(False, False)
+        self.result = None            # (enabled, {干员名: (参与, 换谁 或 None)})
+        self._rows_in = list(rows)    # [(干员, 心情文字, "班次·位置", 参与, 换谁或 None)]
+
+        pad = dict(padx=theme.PAD)
+        tk.Label(self, text="闲置入宿 = 把没在上班、也不在宿舍、心情还没满的干员安排进宿舍恢复。",
+                 bg=theme.BG, fg=theme.TEXT, justify="left", wraplength=560,
+                 font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(anchor="w", **pad,
+                                                               pady=(theme.PAD, 2))
+        tk.Label(self,
+                 text="规则：先看宿舍有没有空位，有空位就直接放进去（氛围高的宿舍优先）；\n"
+                      "没空位就与宿舍里【心情已满】的那位互换——她进宿舍恢复，那位换出来闲置\n"
+                      "（他已经是满心情，闲置不会掉心情）。宿舍里连一个满心情的都没有时，"
+                      "这一班就不动。",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=560,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
+                                                                pady=(0, theme.GAP))
+
+        self.enabled = tk.BooleanVar(value=bool(enabled))
+        ttk.Checkbutton(self, text="① 启用闲置入宿（每班开始时结算一次）",
+                        variable=self.enabled, command=self._sync).pack(anchor="w", **pad)
+
+        box = tk.LabelFrame(self, text="② 参与的人（「心情 / 位置」取最需要入宿的那一班）",
+                            bg=theme.BG, fg=theme.TEXT,
+                            font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1, relief="groove",
+                            labelanchor="nw")
+        box.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, 4))
+        self.rows: list = []          # [(参与 BooleanVar, 换谁 StringVar, 控件...)]
+        self._widgets: list = []      # ① 关掉时要置灰的控件
+        if not self._rows_in:
+            tk.Label(box, text="（当前轨迹下没有「未满且在闲置」的干员）", bg=theme.BG,
+                     fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
+                     ).pack(anchor="w", padx=theme.GAP, pady=4)
+        else:
+            hdr = tk.Frame(box, bg=theme.BG)
+            hdr.pack(fill="x", padx=theme.GAP, pady=(4, 0))
+            for text, width in (("干员", 14), ("心情", 8), ("班次·位置", 18), ("参与", 6),
+                                ("换谁", 26)):
+                tk.Label(hdr, text=text, bg=theme.BG, fg=theme.MUTED, width=width, anchor="w",
+                         font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+            values = [self.AUTO] + [t for t in targets]
+            for name, mood_text, where, use_d, target_d in self._rows_in:
+                row = tk.Frame(box, bg=theme.BG)
+                row.pack(fill="x", padx=theme.GAP, pady=(2, 0))
+                tk.Label(row, text=name, bg=theme.BG, fg=theme.TEXT, width=14, anchor="w",
+                         font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+                tk.Label(row, text=mood_text, bg=theme.BG, fg=theme.MUTED, width=8, anchor="w",
+                         font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+                tk.Label(row, text=where, bg=theme.BG, fg=theme.MUTED, width=18, anchor="w",
+                         font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+                use = tk.BooleanVar(value=bool(use_d))
+                chk = tk.Checkbutton(row, text="", variable=use, bg=theme.BG,
+                                     activebackground=theme.BG, highlightthickness=0)
+                chk.pack(side="left", padx=(8, 0))
+                who = tk.StringVar(value=(target_d or self.AUTO))
+                cb = ttk.Combobox(row, textvariable=who, state="readonly", values=values,
+                                  width=22)
+                cb.pack(side="left", padx=(4, 0))
+                self.rows.append((use, who, chk, cb))
+                self._widgets.extend([chk, cb])
+            bar = tk.Frame(box, bg=theme.BG)
+            bar.pack(fill="x", padx=theme.GAP, pady=(4, 2))
+            for text, value in (("全选", True), ("全不选", False)):
+                btn = ttk.Button(bar, text=text, command=lambda v=value: self._set_all(v))
+                btn.pack(side="left", padx=(0, 6))
+                self._widgets.append(btn)
+            tk.Label(box, text="「换谁」只有自动与「当前在宿舍且心情满」的人；"
+                               "指定了但那一班他不满足时，这一位就跳过（不退回自动）。",
+                     bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=540,
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
+                                                                    pady=(0, 6))
+        if note:
+            tk.Label(self, text=note, bg=theme.BG, fg=theme.MUTED, justify="left",
+                     wraplength=560, font=(theme.FONT_FAMILY, theme.FS_SMALL)
+                     ).pack(anchor="w", **pad)
+
+        btns = tk.Frame(self, bg=theme.BG)
+        btns.pack(fill="x", **pad, pady=(theme.GAP, theme.PAD))
+        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
+        ttk.Button(btns, text="应用", style="Accent.TButton", command=self._ok).pack(
+            side="right", padx=(0, 6))
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self._sync()
+        _modal(self, parent)
+
+    def _set_all(self, value: bool) -> None:
+        for use, _who, _c, _b in self.rows:
+            use.set(bool(value))
+
+    def _sync(self) -> None:
+        """关掉总开关时把整张表置灰。"""
+        on = bool(self.enabled.get())
+        for w in self._widgets:
+            try:
+                w.state(["!disabled"] if on else ["disabled"])
+            except (tk.TclError, AttributeError):
+                w.configure(state="normal" if on else "disabled")
+
+    def _ok(self) -> None:
+        """收成 `(enabled, {干员名: (参与, 换谁 或 None)})`。"""
+        out = {}
+        for (name, _m, _w, _ud, _td), (use, who, _c, _b) in zip(self._rows_in, self.rows):
+            target = who.get().strip()
+            out[name] = (bool(use.get()), None if target in ("", self.AUTO) else target)
+        self.result = (bool(self.enabled.get()), out)
+        self.destroy()
+
+
+def ask_idle_to_dorm(parent, enabled: bool, rows: Sequence, targets: Sequence[str] = (),
+                     note: str = ""):
+    """返回 `(enabled, {干员名: (参与, 换谁)})`；取消返回 None。"""
+    dlg = IdleToDormDialog(parent, enabled, rows, targets=targets, note=note)
+    parent.wait_window(dlg)
+    return dlg.result

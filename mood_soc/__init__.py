@@ -36,6 +36,7 @@ from .rules import (
     remaining_mood_after,
     remaining_work_hours,
     reset_entry_events,
+    apply_idle_to_dorm,
     time_to_mood,
     work_rest_ratio,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "evaluate",
     "evaluate_base",
     "apply_entry_events",
+    "apply_idle_to_dorm",
     "entry_event_holders",
     "entry_target_kind",
     "find_entry_target",

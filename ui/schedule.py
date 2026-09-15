@@ -42,12 +42,13 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
-from mood_soc import (apply_entry_events, build_base_layout, compute_net_rate,
-                      entry_event_holders, reset_entry_events)
+from mood_soc import (apply_entry_events, apply_idle_to_dorm, build_base_layout,
+                      compute_net_rate, entry_event_holders, reset_entry_events)
 from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import MOOD_MAX, MOOD_MIN
 from mood_soc.maa import read_maa
 from mood_soc.models import (BaseLayout, EntryEventConfig, EntryShiftOverride,
+                             IdleToDormConfig, IdleToDormEntry,
                              build_entry_event_config, normalize_entry_when,
                              resolve_entry_config)
 from mood_soc.skills import DEFAULT_OPERATORS
@@ -504,6 +505,8 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       entry_force: Optional[bool] = None,
                       entry_when: Optional[str] = None,
                       entry_per_shift: Optional[List[EntryShiftOverride]] = None,
+                      idle_to_dorm: bool = False,
+                      idle_entries: Optional[Sequence["IdleToDormEntry"]] = None,
                       max_segment: Decimal = MAX_SEGMENT_HOURS) -> Trajectory:
     """把排班跑成"整周期心情轨迹"（事件驱动精确积分）。
 
@@ -522,6 +525,11 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         entry_per_shift  **按班次覆盖**（`[EntryShiftOverride, ...]`）——
                        3 班排班就可以"第 1 班换给巫恋、第 2 班自动挑最累的、第 3 班不用"；
                        `None` = 用场景 JSON 里的 `per_shift`
+        idle_to_dorm  **闲置入宿**：每班开始时把"没在上班、也不在宿舍、心情还没满"的干员
+                       安排进宿舍（有空位就放进去，没空位就与宿舍里心情已满的那位互换）
+        idle_entries  界面的逐人设置（`[IdleToDormEntry, ...]`，**只列改过默认的**：
+                       不参与的人、或指定了交换对象的人）。给了它就**盖过** JSON 里的
+                       `idle_to_dorm.per_operator`（界面口径优先）；`None` = 用 JSON。
         max_segment   单段最长时长（兜底安全上限）
 
     数值说明：单段内心情是精确的线性函数；误差只来自 Decimal 除法在 28 位有效数字处的
@@ -553,6 +561,13 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         when=(normalize_entry_when(when) or "immediate"),
     )
     worlds = [copy.deepcopy(s.world) for s in schedule.shifts]
+    # 闲置入宿：界面传了逐人设置就盖过 JSON 的（"界面口径优先"，与进驻事件同一约定）
+    if idle_to_dorm:
+        idle_cfg = (IdleToDormConfig(enabled=True, per_operator=list(idle_entries))
+                    if idle_entries is not None else None)
+        if idle_cfg is not None:
+            for w in worlds:
+                w.idle_to_dorm = idle_cfg
     # 每个班次解析一次"这一班的有效配置"，挂到该班次的副本上（按班次覆盖在这里生效）。
     # ⚠️ 覆盖列表要**显式传给 resolve_entry_config**：它默认读的是"第一个参数"的 per_shift，
     #    而这里的 base 是拼出来的（per_shift 为空），不显式传就会把按班次配置整段忽略。
@@ -614,6 +629,16 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                 # 「等她回满再换」：此刻她不满心情 → 登记，等她回满**那一刻**再换
                 pending = [h for h, _room in entry_event_holders(world)
                            if moods.get(h, MOOD_MAX) < MOOD_MAX]
+
+        # —— 闲置入宿（可选）：把"没在上班、也不在宿舍、心情还没满"的干员安排进宿舍 ——
+        # 顺序上**排在进驻事件之后**：换心情是"进驻那一刻"的游戏事件，闲置入宿是人工调度；
+        # 而且闲置入宿会把满心情的人换出宿舍，先换心情可以保住"前一位进驻"的判定基准。
+        # ⚠️ 本班未排班的干员不在 `world` 里（心情在 `moods` 字典里），所以要把他们的心情传进去。
+        if idle_to_dorm:
+            _sync_moods(world, moods)
+            idle_moods = {n: moods[n] for n in names if world.get_operator(n) is None}
+            for ev in apply_idle_to_dorm(world, enabled=True, idle=idle_moods):
+                marks.append(Mark(t0, "idle", ev.detail))
         groups = [[o.name for o in f.operators] for f in world.facilities]
 
         t = t0

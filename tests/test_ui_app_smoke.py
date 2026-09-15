@@ -771,6 +771,61 @@ class Test新增交互(unittest.TestCase):
             app.initial_moods.clear()
             app.recompute()
 
+    # ------------------------------------------------------- 闲置入宿
+    def test_闲置入宿表与联动(self):
+        """「闲置入宿设置」：表里是"未满且在闲置"的候选人，勾选/指定落进引擎并改变轨迹。"""
+        from ui.dialogs import IdleToDormDialog
+
+        app = self.app
+        rows, targets = app._idle_candidates()
+        self.assertTrue(rows, "示例排班第 2/3 班有未满的闲置干员才对")
+        names = [r[0] for r in rows]
+        self.assertIn("地灵", names)
+        self.assertTrue(targets, "「换谁」下拉要有在宿舍且满心情的人")
+        # 关闭状态：先记住"没开"时地灵的心情
+        app.idle_to_dorm.set(False)
+        app.recompute()
+        before = app.traj.mood_at("地灵", 24)
+        self.assertLess(before, Decimal("24"))
+
+        dlg = IdleToDormDialog(app, False, rows, targets=targets)
+        try:
+            app.update()
+            self.assertEqual(len(dlg.rows), len(rows))
+            self.assertFalse(dlg.enabled.get())
+            dlg.enabled.set(True)                       # 开总开关
+            dlg._set_all(False)                         # 全不选 → 只留地灵
+            target_row = next(i for i, r in enumerate(rows) if r[0] == "地灵")
+            dlg.rows[target_row][0].set(True)
+            dlg.rows[target_row][1].set("塞雷娅")        # 指定与塞雷娅互换
+            dlg._ok()
+            enabled, per_operator = dlg.result
+        finally:
+            dlg.destroy()
+        self.assertTrue(enabled)
+        self.assertFalse(per_operator["地灵"][0] is False)
+        self.assertEqual(per_operator["地灵"][1], "塞雷娅")
+        self.assertTrue(any(use is False for use, _t in per_operator.values()),
+                        "全不选后应当有一批人是不参与的")
+
+        # 直接照对话框的结果接线（等价于 edit_idle_to_dorm 的后半段）
+        app.idle_to_dorm.set(enabled)
+        app.idle_entries = dict(per_operator)
+        app._sync_idle_label()
+        app.recompute()
+        self.assertTrue(app.idle_detail.cget("text").startswith("已开启"))
+        self.assertIn("闲置入宿：已开启", app._idle_status())
+        idle_marks = [m for m in app.traj.marks if m.kind == "idle"]
+        self.assertEqual(len(idle_marks), 1)            # 只有地灵参与
+        self.assertIn("塞雷娅", idle_marks[0].label)
+        self.assertGreater(app.traj.mood_at("地灵", 24), before)
+        # 收尾：恢复默认
+        app.idle_to_dorm.set(False)
+        app.idle_entries = {}
+        app._sync_idle_label()
+        app.recompute()
+        self.assertEqual(app.idle_detail.cget("text"), "未开启")
+
     def test_时间滑块两侧按钮与步长提示(self):
         """滑块两侧改成纯箭头（原来写 "◀ 15min" 容易被误读成"15 分钟前/时长"），
         步长与快捷键改用右侧一句人话提示。"""

@@ -223,6 +223,112 @@ class EntryShiftOverride:
 
 
 @dataclass
+class IdleToDormEntry:
+    """**某个干员**在「闲置入宿」里的设置（只列"改过默认"的人：默认＝参与、自动挑目标）。
+
+    - `enabled`：这个干员参不参与（`False` = 永远不动他）。
+    - `swap_with`：宿舍满了时**与谁互换**（必须是宿舍里心情满的那位）。
+      `None`/`""` = **自动**（挑一个满心情的宿舍干员）。
+    """
+
+    name: str = ""
+    enabled: bool = True
+    swap_with: Optional[str] = None
+
+    def matches(self, name: str) -> bool:
+        return bool(self.name) and self.name == name
+
+
+@dataclass
+class IdleToDormConfig:
+    """**闲置入宿**配置 —— 来自场景 JSON 的顶层 `idle_to_dorm`。
+
+    ```json
+    {
+      "idle_to_dorm": {"enabled": true,
+                       "per_operator": [{"name": "虎狼丸", "swap_with": "甲"},
+                                        {"name": "跃跃", "enabled": false}]},
+      "facilities": [ ... ]
+    }
+    ```
+
+    它是一类**班次开始时的布局事件**（与 `entry_events` 同层，不改"每小时速率"公式）：
+    把"不在工作、也不在宿舍、心情还没满"的干员安排进宿舍恢复心情——
+    先看宿舍有没有**空位**，没有空位才**与宿舍里心情已满的那位互换**。
+
+    - `enabled`：三态。`None` = 没配置（`apply_idle_to_dorm` 直接调用时**默认不结算**，
+      因为它会动布局）；`True` = 默认结算；`False` = 这个布局不做这件事。
+      调用方显式开关（CLI `--idle-to-dorm` / 界面勾选）优先于它。
+    - `per_operator`：逐个干员的参与与交换对象（见 `IdleToDormEntry`）。
+    """
+
+    enabled: Optional[bool] = None
+    per_operator: List["IdleToDormEntry"] = field(default_factory=list)
+
+    def entry_for(self, name: str) -> Optional["IdleToDormEntry"]:
+        """这个干员的设置（没写过 = 参与、自动挑目标 → 返回 None）。"""
+        for e in self.per_operator:
+            if e.matches(name):
+                return e
+        return None
+
+
+def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
+    """解析 JSON 顶层的 `idle_to_dorm`（宽松写法：`true`/`false`/对象）。
+
+    ```json
+    "idle_to_dorm": true
+    "idle_to_dorm": {"enabled": true, "per_operator": {"虎狼丸": "甲", "跃跃": false}}
+    "idle_to_dorm": {"per_operator": [{"name": "虎狼丸", "swap_with": "甲"}]}
+    ```
+
+    `per_operator` 支持三种写法：`{"名字": "交换对象"}`、`{"名字": false}`（不参与）、
+    或数组 `[{"name": ..., "enabled": ..., "swap_with": ...}]`。
+    """
+    if raw is None:
+        return IdleToDormConfig()
+    if isinstance(raw, bool):
+        return IdleToDormConfig(enabled=raw)
+    if not isinstance(raw, dict):
+        raise ValueError(f"idle_to_dorm 应当是 true/false 或对象，收到 {raw!r}")
+
+    per_raw = raw.get("per_operator", raw.get("perOperator"))
+    items: List[tuple] = []
+    if isinstance(per_raw, dict):
+        items = list(per_raw.items())
+    elif isinstance(per_raw, list):
+        for item in per_raw:
+            if not isinstance(item, dict) or not item.get("name"):
+                raise ValueError(f"per_operator 数组里的每一项都要有 name：{item!r}")
+            items.append((item["name"], item))
+    elif per_raw is not None:
+        raise ValueError(f"idle_to_dorm.per_operator 应当是数组或对象，收到 {per_raw!r}")
+
+    entries: List[IdleToDormEntry] = []
+    for name, value in items:
+        if isinstance(value, bool):
+            entries.append(IdleToDormEntry(name=str(name), enabled=value))
+            continue
+        if isinstance(value, str):
+            entries.append(IdleToDormEntry(name=str(name), enabled=True,
+                                           swap_with=value.strip() or None))
+            continue
+        if value is None:
+            entries.append(IdleToDormEntry(name=str(name)))
+            continue
+        if not isinstance(value, dict):
+            raise ValueError(f"per_operator[{name!r}] 格式无法识别：{value!r}")
+        target = value.get("swap_with", value.get("swapWith"))
+        entries.append(IdleToDormEntry(
+            name=str(value.get("name", name)),
+            enabled=bool(value.get("enabled", True)),
+            swap_with=(str(target).strip() or None) if target is not None else None))
+    return IdleToDormConfig(
+        enabled=(None if raw.get("enabled") is None else bool(raw["enabled"])),
+        per_operator=entries)
+
+
+@dataclass
 class EntryEventConfig:
     """**进驻事件**（M15a 患难之交）的结算配置 —— 来自场景 JSON 的顶层 `entry_events`。
 
@@ -371,6 +477,8 @@ class BaseLayout:
     facilities: List[Facility] = field(default_factory=list)
     # 进驻事件（M15a）的默认配置；见 EntryEventConfig
     entry_events: EntryEventConfig = field(default_factory=EntryEventConfig)
+    # 闲置入宿（把未满的闲置干员安排进宿舍）的配置；见 IdleToDormConfig
+    idle_to_dorm: IdleToDormConfig = field(default_factory=IdleToDormConfig)
 
     # ================================================================ 单数查询
     def get_facility(self, ftype) -> Optional[Facility]:

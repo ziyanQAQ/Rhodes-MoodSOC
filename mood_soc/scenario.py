@@ -8,6 +8,7 @@ from __future__ import annotations
 from .battery import to_decimal
 from .config import parse_facility_type, MOOD_MAX
 from .models import BaseLayout, Facility, Operator, build_entry_event_config
+from .models import build_idle_to_dorm_config
 from .skills import DEFAULT_OPERATORS, TRAITS
 
 
@@ -88,6 +89,9 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
         # 顶层可选的进驻事件配置（M15a 换不换 / 换谁），见 models.EntryEventConfig：
         #   {"entry_events": {"enabled": true, "swap_with": "路人"}, "facilities": [...]}
         entry_events=build_entry_event_config(data.get("entry_events")),
+        # 顶层可选的「闲置入宿」配置（未满的闲置干员进宿舍恢复），见 models.IdleToDormConfig：
+        #   {"idle_to_dorm": {"enabled": true, "per_operator": {"虎狼丸": "甲"}}, "facilities": [...]}
+        idle_to_dorm=build_idle_to_dorm_config(data.get("idle_to_dorm")),
     )
     if validate:
         issues = world.validate()

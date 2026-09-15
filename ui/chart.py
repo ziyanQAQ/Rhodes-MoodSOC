@@ -158,6 +158,15 @@ class MoodChart(tk.Canvas):
             self.create_text(x, y0 - 4, text="⇄", fill=theme.ACCENT,
                              font=(theme.FONT_FAMILY, theme.FS_SMALL))
 
+        # —— 闲置入宿（未满的闲置干员进宿舍）时刻：短竖线 + 床标记 ——
+        for mark in traj.marks:
+            if mark.kind != "idle" or "未执行" in mark.label:
+                continue
+            x = self._tx(mark.t, x0, x1, total)
+            self.create_line(x, y0, x, y0 + 8, fill=theme.OK, width=2)
+            self.create_text(x, y0 + 14, text="宿", fill=theme.OK,
+                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
+
         self._draw_cursor()
 
     def _time_step(self, total: Decimal) -> Decimal:

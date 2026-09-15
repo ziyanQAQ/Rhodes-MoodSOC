@@ -33,13 +33,14 @@ from ui import theme  # noqa: E402
 from ui.batch import ask_batch  # noqa: E402
 from ui.board import BaseBoard, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
-from ui.dialogs import ask_entry_event, ask_mood, ask_operator, ask_shift_hours  # noqa: E402
+from ui.dialogs import (ask_entry_event, ask_idle_to_dorm, ask_mood, ask_operator,  # noqa: E402
+                        ask_shift_hours)
 from ui.roster import RosterStrip  # noqa: E402
 from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
                          default_initial_moods, load_schedule, simulate_schedule)
 from mood_soc import entry_event_holders, entry_target_kind  # noqa: E402
-from mood_soc.config import FacilityType  # noqa: E402
-from mood_soc.models import normalize_entry_when  # noqa: E402
+from mood_soc.config import MOOD_MAX, FacilityType  # noqa: E402
+from mood_soc.models import IdleToDormEntry, normalize_entry_when  # noqa: E402
 
 SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
@@ -77,6 +78,9 @@ class MoodSocApp(tk.Tk):
         self.entry_restore_back = True                 # 界面固定：只换心情、两人留原位
         self.entry_when = "full"                       # wait（勾了强制切换：等她满）/ full（没满就不换）
         self.entry_per_shift: list = []                # 按班次覆盖（EntryShiftOverride 列表）
+        # 闲置入宿（未满的闲置干员进宿舍）：总开关 + 逐人设置 {名字: (参与, 换谁 或 None)}
+        self.idle_to_dorm = tk.BooleanVar(value=False)
+        self.idle_entries: dict = {}
         self.play_speed = Decimal("1")
         self.current_t = Decimal("0")
         self.curve_operator = ""
@@ -148,6 +152,13 @@ class MoodSocApp(tk.Tk):
         self.entry_detail = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
                                      font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.entry_detail.pack(side="left", padx=(0, 0))
+
+        # 闲置入宿：同样只有设置框里那一个开关，工具栏只放"按钮 + 当前状态"
+        ttk.Button(bar, text="闲置入宿设置", command=self.edit_idle_to_dorm).pack(
+            side="left", padx=(16, 4))
+        self.idle_detail = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
+                                    font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.idle_detail.pack(side="left", padx=(0, 0))
 
         play = tk.Frame(bar, bg=theme.BG)
         play.pack(side="left", padx=(16, 0))
@@ -263,7 +274,7 @@ class MoodSocApp(tk.Tk):
                 self.load_paths([SAMPLE])
                 self.status.configure(
                     text=f"已载入示例排班：{SAMPLE.name}（可用「导入排班…」换成你的）"
-                         f"　｜　{self._entry_status()}")
+                         f"　｜　{self._entry_status()}　｜　{self._idle_status()}")
             except Exception as exc:                       # noqa: BLE001 —— 启动兜底
                 self.status.configure(text=f"示例排班载入失败：{exc}")
 
@@ -284,6 +295,13 @@ class MoodSocApp(tk.Tk):
         self.entry_when = normalize_entry_when(getattr(cfg, "when", None)) or "full"
         self.entry_per_shift = list(getattr(cfg, "per_shift", []) or [])
         self._sync_entry_label()
+        # 场景 JSON 顶层的 idle_to_dorm 也同步过来
+        idle_cfg = getattr(sch.shifts[0].world, "idle_to_dorm", None) if sch.shifts else None
+        self.idle_to_dorm.set(bool(getattr(idle_cfg, "enabled", False)))
+        self.idle_entries = {
+            e.name: (bool(e.enabled), e.swap_with or None)
+            for e in (getattr(idle_cfg, "per_operator", None) or [])}
+        self._sync_idle_label()
         self._build_shift_buttons()
         self._sync_operator_box()
         self.recompute(fit_slider=True)
@@ -316,7 +334,9 @@ class MoodSocApp(tk.Tk):
                                       entry_scope=self.entry_scope,
                                       entry_restore_back=self.entry_restore_back,
                                       entry_when=self.entry_when,
-                                      entry_per_shift=self.entry_per_shift or None)
+                                      entry_per_shift=self.entry_per_shift or None,
+                                      idle_to_dorm=self.idle_to_dorm.get(),
+                                      idle_entries=self._idle_entry_list())
         total = self._total_hours()
         if fit_slider or self.current_t > total:
             self.current_t = Decimal("0")
@@ -325,12 +345,13 @@ class MoodSocApp(tk.Tk):
         self._refresh_layout()
         self._sync_operator_box()
         self._sync_entry_label()
+        self._sync_idle_label()
         self.refresh_view()
         ms = (time.perf_counter() - t0) * 1000
         self.status.configure(
             text=f"{len(self.schedule.shifts)} 班 / 周期 {theme.fmt_hours(self.schedule.cycle_hours)}"
                  f"　干员 {len(self.traj.names)} 名　轨迹节点 {len(self.traj.times)}"
-                 f"　重算耗时 {ms:.0f} ms　｜　{self._entry_status()}")
+                 f"　重算耗时 {ms:.0f} ms　｜　{self._entry_status()}　｜　{self._idle_status()}")
 
     def _refresh_layout(self, quick: bool = False):
         """看板只在"当前时刻所在班次的布局"变化时刷新（房间结构没变则只换内容）。
@@ -523,6 +544,95 @@ class MoodSocApp(tk.Tk):
         self.initial_moods.clear()
         if self.schedule:
             self.recompute()
+
+    # ------------------------------------------------------------ 闲置入宿
+    def _idle_entry_list(self):
+        """把界面的逐人设置转成 `[IdleToDormEntry, ...]`——**只列改过默认的**
+        （勾掉不参与的、或指定了交换对象的人）；没人改过就返回 `None`（＝全都参与、全自动）。
+        """
+        out = [IdleToDormEntry(name=n, enabled=use, swap_with=target)
+               for n, (use, target) in self.idle_entries.items()
+               if (not use) or target]
+        return out or None
+
+    def _idle_candidates(self):
+        """给设置框算候选表 → `(rows, targets)`。
+
+        `rows`：`[(干员, 心情文字, "班次·位置", 参与, 换谁)]`，取**最需要入宿的那一班**
+        （心情最低的那次）。`targets`：「换谁」下拉能选的人——当前轨迹下**在宿舍且心情满**
+        的那些（界面上就不会给出不满足条件的人）。
+        """
+        rows: dict = {}
+        targets: list = []
+        if self.schedule is None or self.traj is None:
+            return [], []
+        for i, shift in enumerate(self.schedule.shifts):
+            t0 = self.schedule.starts[i]
+            for name in self.traj.names:
+                mood = self.traj.mood_at(name, t0)
+                fac = shift.world.facility_of(name)
+                if fac is not None and fac.ftype == FacilityType.DORMITORY:
+                    if mood >= MOOD_MAX and name not in targets:
+                        targets.append(name)          # 可以作为"被换出"的对象
+                    continue
+                if fac is not None and fac.ftype not in (FacilityType.WORKSHOP,
+                                                         FacilityType.TRAINING):
+                    continue                          # 在上班，不是候选
+                if mood >= MOOD_MAX:
+                    continue
+                where = f"第{i + 1}班 · {fac.display_name if fac else '未排班'}"
+                if name not in rows or mood < rows[name][0]:
+                    rows[name] = (mood, where)
+        out = []
+        for name, (mood, where) in sorted(rows.items(), key=lambda kv: kv[1][0]):
+            use, target = self.idle_entries.get(name, (True, None))
+            out.append((name, theme.fmt_mood(mood), where, use, target))
+        return out, targets
+
+    def _idle_participant_count(self) -> int:
+        """当前轨迹下会有多少人参与（表里的候选减去被勾掉的）。"""
+        rows, _targets = self._idle_candidates()
+        n = 0
+        for name, _m, _w, use_default, _t in rows:
+            use, _target = self.idle_entries.get(name, (use_default, None))
+            n += 1 if use else 0
+        return n
+
+    def _sync_idle_label(self):
+        """工具栏右侧的当前状态：`未开启` / `已开启 · 5 人（自动）`。"""
+        if not self.idle_to_dorm.get():
+            self.idle_detail.configure(text="未开启", fg=theme.MUTED)
+            return
+        self.idle_detail.configure(fg=theme.TEXT)
+        has_target = any(t for _u, t in self.idle_entries.values())
+        self.idle_detail.configure(
+            text=f"已开启 · {self._idle_participant_count()} 人"
+                 + ("（含指定）" if has_target else "（自动）"))
+
+    def _idle_status(self) -> str:
+        """状态栏那一句口径。"""
+        if not self.idle_to_dorm.get():
+            return "闲置入宿：未开启"
+        return (f"闲置入宿：已开启（每班开始时把未满的闲置干员安排进宿舍："
+                f"{self._idle_participant_count()} 人参与；空位优先，"
+                f"没空位就与宿舍里心情满的那位互换）")
+
+    def edit_idle_to_dorm(self):
+        """工具栏「闲置入宿设置」：总开关 + 一张候选人的表。"""
+        if self.schedule is None:
+            return
+        rows, targets = self._idle_candidates()
+        picked = ask_idle_to_dorm(self, self.idle_to_dorm.get(), rows, targets=targets,
+                                  note="「心情 / 位置」取最需要入宿的那一班；"
+                                       "勾选与「换谁」对每个班次都生效。")
+        if picked is None:
+            return
+        enabled, per_operator = picked
+        self.idle_to_dorm.set(enabled)
+        self.idle_entries = dict(per_operator)
+        self._sync_idle_label()
+        self.recompute()
+        self.status.configure(text=self._idle_status())
 
     # ------------------------------------------------------------ 批量设置
     def batch_edit(self):
