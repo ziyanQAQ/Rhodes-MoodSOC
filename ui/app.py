@@ -45,6 +45,21 @@ from mood_soc.models import IdleToDormEntry, normalize_entry_when  # noqa: E402
 SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
 
+
+def _dorm_index_of(label) -> Optional[int]:
+    """「宿舍01」→ `1`；不是这种标签（人名 / 空）就返回 `None`。"""
+    text = (label or "").strip()
+    if text.startswith("宿舍") and text[2:].isdigit():
+        return int(text[2:])
+    return None
+
+
+def _idle_label_of(entry) -> Optional[str]:
+    """`IdleToDormEntry` → 下拉里的标签（`宿舍01` 或 人名；都没有 = 自动）。"""
+    if getattr(entry, "dorm", None) is not None:
+        return f"宿舍{entry.dorm:02d}"
+    return (getattr(entry, "swap_with", None) or None)
+
 # 播放速度：单位是 **模拟秒 / 真实秒（s/s）** —— `1x` 就是实时（1 秒推进 1 模拟秒）。
 # 24h 周期在 1x 下要放 24 小时，所以档位往上给到"4 小时/秒"（＝14400x）。
 PLAY_SPEEDS = ("1x", "60x", "600x", "3600x", "14400x")
@@ -80,7 +95,8 @@ class MoodSocApp(tk.Tk):
         self.entry_per_shift: list = []                # 按班次覆盖（EntryShiftOverride 列表）
         # 闲置入宿（未满的闲置干员进宿舍）：总开关 + 逐人设置 {名字: (参与, 换谁 或 None)}
         self.idle_to_dorm = tk.BooleanVar(value=False)
-        self.idle_entries: dict = {}
+        self.idle_entries: dict = {}      # {(周期, 班次, 干员): (参与, 目标标签)}
+        self.idle_globals: dict = {}      # {干员: (参与, 目标标签)} 不限班次/周期（来自 JSON）
         self.play_speed = Decimal("1")
         self.current_t = Decimal("0")
         self.curve_operator = ""
@@ -298,9 +314,14 @@ class MoodSocApp(tk.Tk):
         # 场景 JSON 顶层的 idle_to_dorm 也同步过来
         idle_cfg = getattr(sch.shifts[0].world, "idle_to_dorm", None) if sch.shifts else None
         self.idle_to_dorm.set(bool(getattr(idle_cfg, "enabled", False)))
-        self.idle_entries = {
-            e.name: (bool(e.enabled), e.swap_with or None)
-            for e in (getattr(idle_cfg, "per_operator", None) or [])}
+        self.idle_entries = {}
+        self.idle_globals = {}
+        for e in (getattr(idle_cfg, "per_operator", None) or []):
+            label = _idle_label_of(e)
+            if e.cycle is None and e.shift is None:
+                self.idle_globals[e.name] = (bool(e.enabled), label)   # 不限班次/周期
+            else:
+                self.idle_entries[(e.cycle or 1, e.shift or 1, e.name)] = (bool(e.enabled), label)
         self._sync_idle_label()
         self._build_shift_buttons()
         self._sync_operator_box()
@@ -548,11 +569,26 @@ class MoodSocApp(tk.Tk):
     # ------------------------------------------------------------ 闲置入宿
     def _idle_entry_list(self):
         """把界面的逐次设置转成 `[IdleToDormEntry, ...]`——**只列改过默认的**
-        （勾掉不参与的、或指定了交换对象的人）；没人改过就返回 `None`（＝全都参与、全自动）。
+        （勾掉不参与的、或指定了目标的人）；没人改过就返回 `None`（＝全都参与、全自动）。
+
+        目标有两类，界面用同一个下拉表达：
+        - `宿舍01`/`宿舍02`…（**放进那间宿舍的空位**，不动任何人）→ `dorm=序号`
+        - 干员名（**与这位满心情的宿舍干员互换**，他换出来闲置）→ `swap_with=名字`
         """
-        out = [IdleToDormEntry(name=n, enabled=use, swap_with=target, cycle=cyc, shift=shf)
-               for (cyc, shf, n), (use, target) in self.idle_entries.items()
-               if (not use) or target]
+        out = []
+        for name, (use, target) in self.idle_globals.items():          # 不限班次/周期的
+            if use and not target:
+                continue
+            dorm = _dorm_index_of(target)
+            out.append(IdleToDormEntry(name=name, enabled=use, dorm=dorm,
+                                       swap_with=(None if dorm else target) or None))
+        for (cyc, shf, n), (use, target) in self.idle_entries.items():
+            if use and not target:
+                continue
+            dorm = _dorm_index_of(target)
+            out.append(IdleToDormEntry(name=n, enabled=use, cycle=cyc, shift=shf,
+                                       dorm=dorm,
+                                       swap_with=(None if dorm else target) or None))
         return out or None
 
     def _idle_groups(self, cycles: Optional[int] = None, entries: Optional[dict] = None,
@@ -572,16 +608,24 @@ class MoodSocApp(tk.Tk):
             return []
         groups = []
         n_shifts = len(self.schedule.shifts)
+        dorms = [f for f in (self.schedule.shifts[0].world.facilities if n_shifts else [])
+                 if f.ftype == FacilityType.DORMITORY]
         for k in range(max(1, cycles)):
             for i, shift in enumerate(self.schedule.shifts):
                 t0 = self.schedule.cycle_hours * k + self.schedule.starts[i]
                 cands, targets = [], []
+                # 空位选项：按"第几间宿舍"编号（01 起），只列**那一刻还有空位**的
+                shift_dorms = [f for f in shift.world.facilities
+                               if f.ftype == FacilityType.DORMITORY]
+                for di, dorm in enumerate(shift_dorms, 1):
+                    if len(dorm.operators) < dorm.capacity:
+                        targets.append(f"宿舍{di:02d}")
                 for name in traj.names:
                     mood = traj.mood_at(name, t0)
                     fac = shift.world.facility_of(name)
                     if fac is not None and fac.ftype == FacilityType.DORMITORY:
-                        if mood >= MOOD_MAX and name not in targets:
-                            targets.append(name)
+                        if mood >= MOOD_MAX:
+                            targets.append(name)     # 可以作为"被换出"的对象
                         continue
                     if fac is not None and fac.ftype not in (FacilityType.WORKSHOP,
                                                              FacilityType.TRAINING):
@@ -594,7 +638,8 @@ class MoodSocApp(tk.Tk):
                 cands.sort(key=lambda row: (row[0], row[1]))
                 rows = []
                 for mood, name, where in cands:
-                    use, target = entries.get((k + 1, i + 1, name), (True, None))
+                    use, target = entries.get((k + 1, i + 1, name)) \
+                        or self.idle_globals.get(name) or (True, None)
                     rows.append((name, theme.fmt_mood(mood), where, use, target,
                                  [t for t in targets if t != name]))
                 end = t0 + shift.hours

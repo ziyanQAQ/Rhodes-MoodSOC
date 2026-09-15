@@ -851,6 +851,46 @@ class Test新增交互(unittest.TestCase):
         app.recompute()
         self.assertEqual(app.idle_detail.cget("text"), "未开启")
 
+    def test_闲置入宿可选空位(self):
+        """「去哪／与谁换」里同时有空位（宿舍01、宿舍02…）与满心情的人；选空位就进那间。"""
+        app = self.app
+        app.cycles_var.set("2")
+        app._on_cycles()
+        app.idle_to_dorm.set(True)
+        app.recompute()
+        app.update()
+        groups = app._idle_groups()
+        # 至少有一组同时给出"空位"与"人"两类选项，且空位标签是「宿舍NN」
+        slot_rows = [r for _t, _s, rows in groups for r in rows
+                     if any(o.startswith("宿舍") for o in r[5])]
+        self.assertTrue(slot_rows, "有空位的时刻应当给出宿舍空位选项")
+        labels = [o for o in slot_rows[0][5] if o.startswith("宿舍")]
+        self.assertTrue(all(len(x) == 4 and x[2:].isdigit() for x in labels), labels)
+        name = slot_rows[0][0]
+        scope = next(s for t, s, rows in groups if any(r[0] == name and r[5] == slot_rows[0][5]
+                                                       for r in rows))
+        # 关掉总开关 → 没有空位选项可谈（表还在，但引擎不结算）
+        app.idle_to_dorm.set(False)
+        app.recompute()
+        self.assertFalse([m for m in app.traj.marks if m.kind == "idle"])
+        # 选一个空位 → 那一位真的按指定的宿舍进
+        app.idle_to_dorm.set(True)
+        app.idle_entries = {(scope[0], scope[1], name): (True, labels[0])}
+        app.recompute()
+        evs = [m for m in app.traj.marks if m.kind == "idle" and name in m.label]
+        self.assertTrue(evs)
+        self.assertTrue(any(labels[0] in m.label for m in evs), [m.label for m in evs])
+        from ui.app import _dorm_index_of
+        self.assertEqual(_dorm_index_of(labels[0]), int(labels[0][2:]))
+        entries = app._idle_entry_list()
+        self.assertTrue(any(e.dorm == int(labels[0][2:]) for e in entries))
+        # 收尾：恢复默认
+        app.idle_to_dorm.set(False)
+        app.idle_entries = {}
+        app.cycles_var.set("1")
+        app._on_cycles()
+        app.recompute()
+
     def test_时间滑块两侧按钮与步长提示(self):
         """滑块两侧改成纯箭头（原来写 "◀ 15min" 容易被误读成"15 分钟前/时长"），
         步长与快捷键改用右侧一句人话提示。"""

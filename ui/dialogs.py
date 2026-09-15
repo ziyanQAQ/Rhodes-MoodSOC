@@ -603,9 +603,11 @@ class IdleToDormDialog(tk.Toplevel):
         ttk.Checkbutton(self, text="① 启用闲置入宿（每班开始时结算一次）",
                         variable=self.enabled, command=self._on_toggle).pack(anchor="w", **pad)
 
-        tk.Label(self, text="② 逐次设置（从早到晚；「换谁」只列【那一刻】在宿舍且满心情的人；"
-                            "改动立即生效）",
-                 bg=theme.BG, fg=theme.TEXT, padx=theme.PAD).pack(anchor="w", pady=(theme.GAP, 2))
+        tk.Label(self, text="② 逐次设置（从早到晚；「去哪／与谁换」可选【那一刻有空位的宿舍】"
+                            "（宿舍01、宿舍02…＝放进那间宿舍的空位）或【那一刻在宿舍且满心情的人】"
+                            "（与他互换，他换出来闲置）；改动立即生效）",
+                 bg=theme.BG, fg=theme.TEXT, padx=theme.PAD, justify="left",
+                 wraplength=640, anchor="w").pack(anchor="w", pady=(theme.GAP, 2))
         self._build_table()
 
         if note:
@@ -639,6 +641,11 @@ class IdleToDormDialog(tk.Toplevel):
         self.canvas.bind("<Configure>",
                          lambda e: self.canvas.itemconfigure(self._win, width=e.width))
         self._fill_table()
+        tk.Label(self, text="「宿舍01」＝第 1 间宿舍（放进它最靠前的空位，不动任何人）；"
+                            "选一个人名＝与他互换（他已是满心情，换出来闲置不会掉心情）。"
+                            "指定的那间那一刻已经满了 / 那个人不在宿舍或不满心情 → 跳过这一位。",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=640, anchor="w",
+                 padx=theme.PAD).pack(anchor="w", pady=(2, 0))
 
     def _fill_table(self) -> None:
         for w in self.inner.winfo_children():

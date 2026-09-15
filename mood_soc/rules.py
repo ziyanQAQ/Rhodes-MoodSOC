@@ -963,6 +963,41 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
         if want is None and entry is not None:
             want = entry.swap_with or None
 
+        # ⓪ 指定了"放进哪一间宿舍的空位"（`dorm`）→ 按它放，不看氛围、也不换人
+        if entry is not None and entry.dorm is not None:
+            dorms = [f for f in world.facilities
+                     if f.ftype == FacilityType.DORMITORY and f.enabled]
+            if entry.dorm < 1 or entry.dorm > len(dorms):
+                events.append(Contribution(
+                    Bucket.EVENT, "闲置入宿未执行", ZERO, group="idle_to_dorm_skipped",
+                    owner=name, target=f"宿舍{entry.dorm:02d}", detail=(
+                        f"（指定的「宿舍{entry.dorm:02d}」不存在——本布局只有 "
+                        f"{len(dorms)} 间宿舍 → 跳过这一位）")))
+                continue
+            dorm = dorms[entry.dorm - 1]
+            if len(dorm.operators) >= dorm.capacity:
+                events.append(Contribution(
+                    Bucket.EVENT, "闲置入宿未执行", ZERO, group="idle_to_dorm_skipped",
+                    owner=name, target=dorm.display_name, detail=(
+                        f"（指定的「宿舍{entry.dorm:02d}」（{dorm.display_name}）那一刻已经满了 → "
+                        f"跳过这一位；要它照样能进，就改成「自动」或指一个满心情的人）")))
+                continue
+            if op is None:
+                op = build_operator({"name": name, "mood": mood})
+            _leave_previous_facility(world, name)
+            pos = len(dorm.operators) + 1
+            dorm.operators.append(op)
+            extra = ""
+            if entry.slot is not None and entry.slot != pos:
+                extra = (f"（指定第 {entry.slot} 位，但最靠前的空位是第 {pos} 位；"
+                         f"宿舍位次没有机制差异，按第 {pos} 位放）")
+            events.append(Contribution(
+                Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
+                owner=name, target=dorm.display_name, detail=(
+                    f"（{name} 心情 {mood} 没满且在闲置（{where}）→ 进 "
+                    f"宿舍{entry.dorm:02d}（{dorm.display_name}）的第 {pos} 个空位{extra}）")))
+            continue
+
         dorm = _dorm_with_free_slot(world)
         if dorm is not None:                              # ① 有空位：直接进
             if op is None:

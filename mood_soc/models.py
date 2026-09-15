@@ -232,6 +232,12 @@ class IdleToDormEntry:
     - `enabled`：这一位参不参与（`False` = 永远不动他）。
     - `swap_with`：宿舍满了时**与谁互换**（必须是那一刻宿舍里心情满的那位）。
       `None`/`""` = **自动**（挑一个满心情的宿舍干员）。
+    - `dorm` / `slot`：**指定放进哪一间宿舍的空位**（与 `swap_with` 互斥，写了 `dorm` 就按它）。
+      `dorm` 是 1 基的**宿舍序号**（第 1 间 = `1`，界面写作「宿舍01」）；
+      `slot` 是 1 基位次（`None` = 那间最靠前的空位）。
+      ⚠️ 宿舍位次在模型里**没有机制差异**（回复只看宿舍等级/氛围/人数），而且 `operators` 是紧凑列表、
+      不表示"洞"，所以引擎总是放进**最靠前的空位**；`slot` 与它不一致时会在说明里注明。
+      指定的那间**没有空位**了 → **跳过这一位**（严格按指定，与"指定的人不在宿舍"同一套规矩）。
     - `cycle` / `shift`：**1 基**的周期序号 / 班次序号（`None` = 不限）。
       为什么要有这两维：心情跨班跨周期连续，所以"这一刻谁没满、谁在宿舍且满了"**每次都不同**，
       候选与可交换对象都不一样（实测示例排班 3 个周期的闲置入宿事件分别落在 12/18h、24/42h、66h）。
@@ -242,6 +248,8 @@ class IdleToDormEntry:
     swap_with: Optional[str] = None
     cycle: Optional[int] = None
     shift: Optional[int] = None
+    dorm: Optional[int] = None      # 1 基宿舍序号（指定"放进哪一间宿舍的空位"）
+    slot: Optional[int] = None      # 1 基位次；None = 那间最靠前的空位
 
     def matches(self, name: str, cycle: Optional[int] = None,
                 shift: Optional[int] = None) -> bool:
@@ -354,12 +362,16 @@ def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
         target = value.get("swap_with", value.get("swapWith"))
         cyc = value.get("cycle", value.get("cycleIndex"))
         shf = value.get("shift", value.get("shiftIndex"))
+        dorm = value.get("dorm", value.get("dormIndex"))
+        slot = value.get("slot", value.get("slotIndex"))
         entries.append(IdleToDormEntry(
             name=str(value.get("name", name)),
             enabled=bool(value.get("enabled", True)),
             swap_with=(str(target).strip() or None) if target is not None else None,
             cycle=(int(cyc) if cyc is not None else None),
-            shift=(int(shf) if shf is not None else None)))
+            shift=(int(shf) if shf is not None else None),
+            dorm=(int(dorm) if dorm is not None else None),
+            slot=(int(slot) if slot is not None else None)))
     return IdleToDormConfig(
         enabled=(None if raw.get("enabled") is None else bool(raw["enabled"])),
         per_operator=entries)

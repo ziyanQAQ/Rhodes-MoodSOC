@@ -1541,5 +1541,51 @@ class Test闲置入宿(unittest.TestCase):
         self.assertIn("甲", apply_idle_to_dorm(w4, enabled=True)[0].detail)
 
 
+    def test_指定宿舍空位(self):
+        """目标也可以是**空位**：`dorm=序号` ＝放进那间宿舍的空位（不动任何人）。"""
+        def world(dorms):
+            facs = []
+            for i, (used, cap) in enumerate(dorms):
+                facs.append({"type": "宿舍", "level": 5, "slots": cap,
+                             "operators": [{"name": f"满{i+1}_{j}", "mood": "24"}
+                                           for j in range(used)]})
+            facs.append({"type": "加工站", "level": 1, "operators": [{"name": "丙", "mood": "6"}]})
+            w = build_base_layout(scenario(*facs))
+            w.idle_to_dorm = build_idle_to_dorm_config({"enabled": True})
+            return w
+
+        # ① 第 1 间满、第 2 间有空位 → 指定"宿舍02"就进第 2 间（自动本来也会挑它，这里看事件文案）
+        w = world([(2, 2), (1, 5)])
+        w.idle_to_dorm.per_operator.append(IdleToDormEntry(name="丙", dorm=2))
+        evs = apply_idle_to_dorm(w, enabled=True)
+        self.assertEqual([e.group for e in evs], ["idle_to_dorm"])
+        self.assertIn("宿舍02", evs[0].detail)
+        self.assertEqual(self._where(w, "丙"), w.facilities[1].display_name)
+        # ② 第 1 间**有空位**（自动会挑它）但指定第 2 间 → 按指定走
+        w2 = world([(1, 5), (1, 5)])
+        w2.idle_to_dorm.per_operator.append(IdleToDormEntry(name="丙", dorm=2))
+        evs2 = apply_idle_to_dorm(w2, enabled=True)
+        self.assertIn("宿舍02", evs2[0].detail)
+        self.assertEqual(self._where(w2, "丙"), w2.facilities[1].display_name)
+        self.assertEqual(len(w2.facilities[0].operators), 1)     # 第 1 间没被动
+        # ③ 指定的那间没空位 → 跳过这一位（不退回自动）
+        w3 = world([(1, 5), (2, 2)])
+        w3.idle_to_dorm.per_operator.append(IdleToDormEntry(name="丙", dorm=2))
+        self.assertEqual([e.group for e in apply_idle_to_dorm(w3, enabled=True)],
+                         ["idle_to_dorm_skipped"])
+        self.assertEqual(self._where(w3, "丙"), "加工站")
+        # ④ 宿舍序号越界 → 跳过
+        w4 = world([(1, 5)])
+        w4.idle_to_dorm.per_operator.append(IdleToDormEntry(name="丙", dorm=9))
+        self.assertEqual([e.group for e in apply_idle_to_dorm(w4, enabled=True)],
+                         ["idle_to_dorm_skipped"])
+        # ⑤ 位次与"最靠前的空位"不一致时按最靠前的放，并在说明里注明
+        w5 = world([(1, 5)])
+        w5.idle_to_dorm.per_operator.append(IdleToDormEntry(name="丙", dorm=1, slot=4))
+        evs5 = apply_idle_to_dorm(w5, enabled=True)
+        self.assertIn("按第 2 位放", evs5[0].detail)
+        self.assertEqual([o.name for o in w5.facilities[0].operators][-1], "丙")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
