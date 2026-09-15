@@ -404,8 +404,8 @@ class Test新增交互(unittest.TestCase):
         app.entry_scope = "dorm"
         app._sync_entry_label()
 
-    def test_进驻事件只有三个设置(self):
-        """对话框＝① 开启 ② 换谁 ③ 强制切换；后两组（位置 / 按班次）已收掉。"""
+    def test_进驻事件四个设置(self):
+        """对话框＝① 开启 ② 换谁 ③ 强制切换 ④ 换哪个班（多选）；位置那一组已收掉。"""
         from ui.dialogs import EntryEventDialog
 
         app = self.app
@@ -417,6 +417,7 @@ class Test新增交互(unittest.TestCase):
             self.assertTrue(dlg.enabled.get())
             self.assertEqual(dlg.target.get(), EntryEventDialog.PREV)   # 默认＝游戏原口径
             self.assertFalse(dlg.force.get())                            # 不勾＝没满就不换
+            self.assertEqual([v.get() for v in dlg.shift_use], [True] * len(labels))  # ④ 默认全选
             self.assertEqual(dlg.adv_frame.winfo_manager(), "")          # 高级区默认收起
             self.assertNotIn("位置也一起互换", str(dlg.result))
             # ③ 勾上强制切换 + ② 换成指定干员 → wait + 基建任意位置
@@ -424,6 +425,7 @@ class Test新增交互(unittest.TestCase):
             dlg.target.set("塞雷娅")
             dlg._ok()
             self.assertEqual(dlg.result[:5], (True, "塞雷娅", "anywhere", True, "wait"))
+            # ④ 全选 ⇒ 不生成任何覆盖项（与"没有 ④ 之前"逐位相同）
             self.assertEqual(dlg.result[5], [])
         finally:
             dlg.destroy()
@@ -436,6 +438,30 @@ class Test新增交互(unittest.TestCase):
             self.assertEqual(dlg2.result[:5], (True, "any", "anywhere", True, "full"))
         finally:
             dlg2.destroy()
+        # ④ 取消勾选某些班次 → 那些班写 enabled=False；勾着的班不写东西
+        dlg4 = EntryEventDialog(app, True, None, cands, holders, shift_labels=labels)
+        try:
+            app.update()
+            dlg4.shift_use[0].set(False)          # 只留第 2、3 班
+            dlg4._set_all_shifts(False)           # 全不选
+            self.assertEqual([v.get() for v in dlg4.shift_use], [False] * len(labels))
+            dlg4._set_all_shifts(True)            # 全选
+            self.assertEqual([v.get() for v in dlg4.shift_use], [True] * len(labels))
+            dlg4.shift_use[2].set(False)
+            dlg4._ok()
+            self.assertEqual([(o.key, o.enabled, o.swap_with, o.when) for o in dlg4.result[5]],
+                             [(3, False, None, None)])
+        finally:
+            dlg4.destroy()
+        # 载入已有逐班配置：写 enabled=false 的班次在 ④ 里应当是不勾的
+        from mood_soc.models import EntryShiftOverride
+        dlg5 = EntryEventDialog(app, True, None, cands, holders, shift_labels=labels,
+                               per_shift=[EntryShiftOverride(key=2, enabled=False)])
+        try:
+            app.update()
+            self.assertEqual([v.get() for v in dlg5.shift_use], [True, False, True])
+        finally:
+            dlg5.destroy()
         # 旧配置「立刻换」不再提供：显示为不勾，应用后变成"没满就不换"
         dlg3 = EntryEventDialog(app, True, None, cands, holders, when="immediate")
         try:
@@ -635,7 +661,7 @@ class Test新增交互(unittest.TestCase):
         self.assertNotEqual(names_after, names_before)
 
     def test_按班次面板与逐班联动(self):
-        """「按班次」面板：每班一行（使用 / 换给谁 / 什么时候换），预填已有配置，应用后逐班生效。"""
+        """「④ 换哪个班」定"用不用这一班"，折叠的高级区只管"换给谁 / 什么时候换"。"""
         from mood_soc.models import EntryShiftOverride
         from ui.dialogs import EntryEventDialog
 
@@ -650,10 +676,12 @@ class Test新增交互(unittest.TestCase):
         try:
             app.update()
             self.assertEqual(len(dlg.shift_rows), 3)
-            self.assertEqual(dlg.shift_rows[0][1].get(), "巫恋")             # 预填对象
-            self.assertEqual(dlg.shift_rows[0][2].get(), "等她回满")          # 预填触发方式
-            self.assertEqual(dlg.shift_rows[1][2].get(), "（跟随上面的默认）")  # 未覆盖
-            self.assertFalse(dlg.shift_rows[2][0].get())                     # 第 3 班预填"不用"
+            # ④：写 enabled=false 的第 3 班应当是不勾的
+            self.assertEqual([v.get() for v in dlg.shift_use], [True, True, False])
+            # 高级区只预填"换给谁 / 什么时候换"
+            self.assertEqual(dlg.shift_rows[0][0].get(), "巫恋")             # 预填对象
+            self.assertEqual(dlg.shift_rows[0][1].get(), "等她回满")          # 预填触发方式
+            self.assertEqual(dlg.shift_rows[1][1].get(), "（跟随上面的默认）")  # 未覆盖
             dlg._ok()
             self.assertEqual([(o.key, o.enabled, o.swap_with, o.when) for o in dlg.result[5]],
                              [(1, True, "巫恋", "wait"), (3, False, None, None)])
@@ -680,6 +708,61 @@ class Test新增交互(unittest.TestCase):
         app.entry_scope = "dorm"
         app.initial_moods.clear()
         app.recompute()
+
+    def test_换哪个班多选端到端(self):
+        """④ 取消勾选某班 → 那一班不再换心情；勾着的班照换（引擎侧＝逐班 `enabled`）。"""
+        from mood_soc.models import EntryShiftOverride
+
+        app = self.app
+        app.entry_events.set(True)
+        app.entry_swap_with, app.entry_scope, app.entry_when = "塞雷娅", "anywhere", "full"
+        app.entry_per_shift = []
+        app.recompute()
+        self.assertEqual(self._swap_times(app), [Decimal("0"), Decimal("12"), Decimal("18")])
+        # ④ 里取消第 3 班（面板上就是那个勾选框 → 一条 enabled=False 的覆盖项）
+        app.entry_per_shift = [EntryShiftOverride(key=3, enabled=False)]
+        app.recompute()
+        self.assertEqual(self._swap_times(app), [Decimal("0"), Decimal("12")])
+        # 全不选 ⇒ 一班都不换
+        app.entry_per_shift = [EntryShiftOverride(key=i + 1, enabled=False) for i in range(3)]
+        app.recompute()
+        self.assertEqual(self._swap_times(app), [])
+        # 收尾：恢复默认，别把状态留给其它用例
+        app.entry_events.set(False)
+        app.entry_per_shift = []
+        app.entry_swap_with, app.entry_scope = None, "dorm"
+        app.initial_moods.clear()
+        app.recompute()
+
+    @staticmethod
+    def _swap_times(app):
+        """轨迹里"真的换了心情"的时刻（跳过"未执行"那类说明）。"""
+        return [m.t for m in app.traj.marks if m.kind == "entry" and "互换" in m.label]
+
+    def test_进驻模式三种口径(self):
+        """`full`（没满就不换）/ `wait`（等她回满再换）/ `immediate`（连她满不满都不看）。"""
+        app = self.app
+        app.entry_events.set(True)
+        app.entry_swap_with, app.entry_scope = "塞雷娅", "anywhere"
+        app.initial_moods = {"菲亚梅塔": Decimal("10")}
+        try:
+            app.entry_when = "full"
+            app.recompute()
+            self.assertNotIn(Decimal("0"), self._swap_times(app), "她没满 → 第 1 班不换")
+            app.entry_when = "wait"
+            app.recompute()
+            self.assertTrue(any(Decimal("0") < t < Decimal("12") for t in self._swap_times(app)),
+                            "等她回满那一刻才换（落在第 1 班中间）")
+            app.entry_when = "immediate"      # 引擎仍支持（界面不再提供）
+            app.recompute()
+            self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("24"))
+            self.assertIn(Decimal("0"), self._swap_times(app))
+        finally:
+            app.entry_events.set(False)
+            app.entry_when = "full"
+            app.entry_swap_with, app.entry_scope = None, "dorm"
+            app.initial_moods.clear()
+            app.recompute()
 
     def test_时间滑块两侧按钮与步长提示(self):
         """滑块两侧改成纯箭头（原来写 "◀ 15min" 容易被误读成"15 分钟前/时长"），
