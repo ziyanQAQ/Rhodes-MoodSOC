@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ui import theme  # noqa: E402
+from ui.batch import ask_batch  # noqa: E402
 from ui.board import BaseBoard, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
 from ui.dialogs import ask_entry_event, ask_mood, ask_operator, ask_shift_hours  # noqa: E402
@@ -73,8 +74,8 @@ class MoodSocApp(tk.Tk):
         self.entry_events = tk.BooleanVar(value=False)
         self.entry_swap_with: Optional[str] = None     # None = 默认「前一位进驻」；"any" = 自动挑最累的
         self.entry_scope = "dorm"                      # "dorm" 仅同宿舍 / "anywhere" 基建任意位置
-        self.entry_restore_back = True                 # True = 换回去（只换心情、位置不变）
-        self.entry_when = "immediate"                  # immediate（强制立刻换）/ wait（等她满）/ full（只在她满时）
+        self.entry_restore_back = True                 # 界面固定：只换心情、两人留原位
+        self.entry_when = "full"                       # wait（勾了强制切换：等她满）/ full（没满就不换）
         self.entry_per_shift: list = []                # 按班次覆盖（EntryShiftOverride 列表）
         self.play_speed = Decimal("1")
         self.current_t = Decimal("0")
@@ -130,6 +131,7 @@ class MoodSocApp(tk.Tk):
         ttk.Button(bar, text="班次设置…", command=self.edit_shifts).pack(side="left",
                                                                         padx=(6, 0))
         ttk.Button(bar, text="重置心情", command=self.reset_moods).pack(side="left", padx=(6, 0))
+        ttk.Button(bar, text="批量设置…", command=self.batch_edit).pack(side="left", padx=(6, 0))
 
         tk.Label(bar, text="周期数", bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(16, 4))
@@ -139,12 +141,12 @@ class MoodSocApp(tk.Tk):
         cb.pack(side="left")
         cb.bind("<<ComboboxSelected>>", lambda _e: self._on_cycles())
 
-        ttk.Checkbutton(bar, text="结算进驻事件（进驻那一刻换心情）", variable=self.entry_events,
+        ttk.Checkbutton(bar, text="结算进驻事件（菲亚梅塔换心情）", variable=self.entry_events,
                         command=self.recompute).pack(side="left")
         self.entry_detail = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
                                      font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.entry_detail.pack(side="left", padx=(6, 4))
-        ttk.Button(bar, text="这是什么／换谁…", command=self.edit_entry_events).pack(
+        ttk.Button(bar, text="设置…", command=self.edit_entry_events).pack(
             side="left", padx=(0, 0))
 
         play = tk.Frame(bar, bg=theme.BG)
@@ -274,8 +276,10 @@ class MoodSocApp(tk.Tk):
         self.entry_events.set(bool(cfg.enabled))
         self.entry_swap_with = cfg.swap_with
         self.entry_scope = getattr(cfg, "scope", "dorm")
-        self.entry_restore_back = bool(getattr(cfg, "restore_back", True))
-        self.entry_when = normalize_entry_when(getattr(cfg, "when", None)) or "immediate"
+        # 「位置也一起互换」按用户要求从界面收掉：界面固定"只换心情、两人留原位"。
+        # 场景 JSON 里写 restore_back: false 会被这条界面口径覆盖（CLI / API 不受影响）。
+        self.entry_restore_back = True
+        self.entry_when = normalize_entry_when(getattr(cfg, "when", None)) or "full"
         self.entry_per_shift = list(getattr(cfg, "per_shift", []) or [])
         self._sync_entry_label()
         self._build_shift_buttons()
@@ -518,6 +522,40 @@ class MoodSocApp(tk.Tk):
         if self.schedule:
             self.recompute()
 
+    # ------------------------------------------------------------ 批量设置
+    def batch_edit(self):
+        """「批量设置…」：当前布局的**所有干员 + 心情**摊成一张表，一次改完。
+
+        干员改动按"改过哪几班"返回（对话框里可切班次，未应用的改动不会丢）；
+        心情是**周期起点**（全排班共用），对话框只返回"与导入值不同的那些"，
+        所以这里整份替换 `initial_moods`（`恢复导入值` ⇒ 空差集 ⇒ 手动心情清空）。
+        """
+        if self.schedule is None:
+            return
+        idx = self._editing_shift_index()
+        now = self.traj.moods_at(self.current_t) if self.traj is not None else {}
+        picked = ask_batch(self, self.schedule, shift_index=idx,
+                           initial_moods=self.initial_moods,
+                           imported_moods=default_initial_moods(self.schedule),
+                           moods_now=now, current_t=self.current_t)
+        if picked is None:
+            return
+        changes, moods = picked
+        n_ops = 0
+        for i in sorted(changes):
+            facs = changes[i]
+            n_ops += sum(len(f.get("operators", [])) for f in facs)
+            self.schedule = self.schedule.replaced_shift(i, facs)
+        self.initial_moods = dict(moods)
+        self._layout_sig = None
+        self.recompute()
+        which = ("第 " + "、".join(str(i + 1) for i in sorted(changes)) + " 班"
+                 if changes else "未改动布局")
+        self.status.configure(
+            text=f"批量设置已应用：{which}"
+                 + (f"（{n_ops} 个位置）" if changes else "")
+                 + f"　｜　手动起点心情 {len(moods)} 名，其余用导入值")
+
     # ------------------------------------------------------------ 进驻事件（换心情）
     def _entry_candidates(self):
         """返回 `(触发者名单, 可交换对象名单)`。
@@ -549,13 +587,13 @@ class MoodSocApp(tk.Tk):
         return holders, mates + others
 
     def _when_token(self, when: str) -> str:
-        """「什么时候换」的紧凑说法（默认的"强制立刻"不写，省工具栏宽度）。"""
-        return {"wait": "等她满", "full": "仅满心情"}.get(when, "")
+        """「③ 强制切换」的紧凑说法（不勾＝"没满就不换"是默认口径，不写，省工具栏宽度）。"""
+        return "等她满" if when == "wait" else ""
 
     def _sync_entry_label(self):
-        """把当前设置写在开关旁边（极简；完整说明在「这是什么／换谁…」对话框里）。
+        """把当前设置写在开关旁边（极简；完整说明在「设置…」对话框里）。
 
-        工具栏宽度紧张，所以用紧凑写法：`（最累的·任意位置·等她满）`；
+        三个设置 → 一行字：`（塞雷娅·等她满）` / `（前一位）` / `（最累的）`；
         配了按班次覆盖时只写 `（按班次）`，明细进状态栏。
         """
         if not self.entry_events.get():
@@ -564,23 +602,12 @@ class MoodSocApp(tk.Tk):
         if self.entry_per_shift:
             self.entry_detail.configure(text="（按班次）")
             return
-        if self.entry_swap_with == "any" or entry_target_kind(self.entry_swap_with,
-                                                              self.entry_scope) == "auto":
-            target = "最累的"
-        elif self.entry_swap_with:
-            target = f"「{self.entry_swap_with}」"
-        else:
-            target = "前一位"
-        bits = []
-        if self.entry_scope == "anywhere":
-            bits.append("任意位置")
-        if not self.entry_restore_back:
-            bits.append("位置也换")
+        kind = entry_target_kind(self.entry_swap_with, self.entry_scope)
+        target = {"auto": "最累的", "named": f"「{self.entry_swap_with}」",
+                  "default": "前一位"}[kind]
         token = self._when_token(self.entry_when)
-        if token:
-            bits.append(token)
-        suffix = "·" + "·".join(bits) if bits else ""
-        self.entry_detail.configure(text=f"（{target}{suffix}）")
+        self.entry_detail.configure(text=f"（{target}·{token}）" if token
+                                    else f"（{target}）")
 
     def _per_shift_brief(self) -> str:
         """按班次的紧凑摘要：`（按班次：1巫恋·强等·3不用）`。"""
@@ -608,30 +635,26 @@ class MoodSocApp(tk.Tk):
         if not self.entry_events.get():
             return "进驻事件：不结算（按你写的初始心情开始）"
         kind = entry_target_kind(self.entry_swap_with, self.entry_scope)
-        if kind == "auto":
-            who = "全基建最累的那位"
-        elif kind == "named":
-            who = f"「{self.entry_swap_with}」"
-        else:
-            who = "同宿舍的前一位进驻者"
-        where = "基建任意位置" if self.entry_scope == "anywhere" else "仅同一宿舍"
-        after = "换完后两人都留在原位" if self.entry_restore_back else "换完后位置也对调"
-        when = {"immediate": "；强制立刻换（不看双方心情）",
-                "wait": "；到点没满就等她回满再换",
-                "full": "；只在她满心情时换（游戏原口径）"}.get(self.entry_when, "")
-        text = f"进驻事件：每班开始时结算——与{who}互换心情（{where}，{after}）{when}"
+        who = {"auto": "全基建最累的那位", "named": f"「{self.entry_swap_with}」",
+               "default": "同宿舍的前一位进驻者"}[kind]
+        where = "仅同一宿舍" if kind == "default" else "基建任意位置"
+        when = ("；勾了强制切换：到点没满就等她回满再换" if self.entry_when == "wait"
+                else "；没勾强制切换：判定时她没满心情就不换")
+        text = f"进驻事件：每班开始时结算——与{who}互换心情（{where}，只换心情、位置不动）{when}"
         if self.entry_per_shift:
             text += f"　｜　按班次覆盖：{self._per_shift_brief()[1:-1]}"
         return text
 
     def edit_entry_events(self):
-        """「这是什么／换谁…」：解释这个开关 + 设置换哪、换谁、换完怎么放、要不要强等、按班次。"""
+        """「设置…」：菲亚梅塔换心情的三个设置（开启 / 换谁 / 强制切换）。"""
         holders, mates = self._entry_candidates()
         picked = ask_entry_event(self, self.entry_events.get(), self.entry_swap_with,
                                  mates, holders, scope=self.entry_scope,
                                  restore_back=self.entry_restore_back, when=self.entry_when,
                                  shift_labels=(self.schedule.shift_labels() if self.schedule else ()),
-                                 per_shift=self.entry_per_shift)
+                                 per_shift=self.entry_per_shift,
+                                 all_names=all_operator_names(self.schedule.operator_names()
+                                                              if self.schedule else ()))
         if picked is None:
             return
         # 对话框返回 6 元组；只给前几项时其余沿用当前值
@@ -644,7 +667,7 @@ class MoodSocApp(tk.Tk):
         self.entry_swap_with = swap_with
         self.entry_scope = scope
         self.entry_restore_back = restore_back
-        self.entry_when = when or "immediate"
+        self.entry_when = when or "full"      # 界面口径：缺省＝"没满就不换"
         self.entry_per_shift = list(per_shift or [])
         self._sync_entry_label()
         self.recompute()                      # 先重算（recompute 会写状态栏）

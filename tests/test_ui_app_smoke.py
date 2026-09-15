@@ -340,35 +340,72 @@ class Test新增交互(unittest.TestCase):
 
     # ------------------------------------------------------- 进驻事件（换心情）
     def test_进驻事件开关有说明且状态可见(self):
-        """开关旁的旁注要说清"换不换/换谁/在哪换/要不要等"（小白不打开对话框也能知道）。"""
-        from ui import app as app_mod
+        """开关旁的旁注只写「换谁 + 要不要等她满」——三个设置的紧凑版。"""
         app = self.app
         app.entry_events.set(False)
         app._sync_entry_label()
         self.assertIn("不结算", app.entry_detail.cget("text"))
         app.entry_events.set(True)
-        app.entry_swap_with = None
-        app.entry_scope = "dorm"
-        app.entry_when = "immediate"
-        app.entry_restore_back = True
+        app.entry_swap_with, app.entry_scope, app.entry_when = None, "dorm", "full"
         app._sync_entry_label()
-        self.assertIn("前一位", app.entry_detail.cget("text"))
+        self.assertEqual(app.entry_detail.cget("text"), "（前一位）")
         app.entry_swap_with = "塞雷娅"
         app._sync_entry_label()
-        self.assertIn("塞雷娅", app.entry_detail.cget("text"))
-        # 任意位置 + 自动挑 + 等她满 + 位置也换 → 旁注用紧凑写法带出这几项
-        app.entry_swap_with = "any"
-        app.entry_scope = "anywhere"
-        app.entry_when = "wait"
-        app.entry_restore_back = False
+        self.assertEqual(app.entry_detail.cget("text"), "（「塞雷娅」）")
+        app.entry_swap_with, app.entry_scope, app.entry_when = "any", "anywhere", "wait"
         app._sync_entry_label()
-        text = app.entry_detail.cget("text")
-        for token in ("最累的", "任意位置", "等她满", "位置也换"):
-            self.assertIn(token, text)
-        # 状态栏那一句话也要说全
+        self.assertEqual(app.entry_detail.cget("text"), "（最累的·等她满）")
+        # 状态栏那一句话要说全：谁 / 在哪 / 只换心情 / 两种强制口径
         summary = app._entry_summary()
-        for token in ("全基建最累的那位", "基建任意位置", "位置也对调", "等她回满"):
+        for token in ("全基建最累的那位", "基建任意位置", "只换心情、位置不动", "等她回满"):
             self.assertIn(token, summary)
+        app.entry_when = "full"
+        self.assertIn("没勾强制切换", app._entry_summary())
+        app.entry_swap_with = None
+        app.entry_scope = "dorm"
+        app._sync_entry_label()
+
+    def test_进驻事件只有三个设置(self):
+        """对话框＝① 开启 ② 换谁 ③ 强制切换；后两组（位置 / 按班次）已收掉。"""
+        from ui.dialogs import EntryEventDialog
+
+        app = self.app
+        holders, cands = app._entry_candidates()
+        labels = app.schedule.shift_labels()
+        dlg = EntryEventDialog(app, True, None, cands, holders, shift_labels=labels)
+        try:
+            app.update()
+            self.assertTrue(dlg.enabled.get())
+            self.assertEqual(dlg.target.get(), EntryEventDialog.PREV)   # 默认＝游戏原口径
+            self.assertFalse(dlg.force.get())                            # 不勾＝没满就不换
+            self.assertEqual(dlg.adv_frame.winfo_manager(), "")          # 高级区默认收起
+            self.assertNotIn("位置也一起互换", str(dlg.result))
+            # ③ 勾上强制切换 + ② 换成指定干员 → wait + 基建任意位置
+            dlg.force.set(True)
+            dlg.target.set("塞雷娅")
+            dlg._ok()
+            self.assertEqual(dlg.result[:5], (True, "塞雷娅", "anywhere", True, "wait"))
+            self.assertEqual(dlg.result[5], [])
+        finally:
+            dlg.destroy()
+        # ② 「全基建最累的」→ swap_with="any"；③ 不勾 → "full"
+        dlg2 = EntryEventDialog(app, True, "any", cands, holders)
+        try:
+            app.update()
+            self.assertEqual(dlg2.target.get(), EntryEventDialog.AUTO)
+            dlg2._ok()
+            self.assertEqual(dlg2.result[:5], (True, "any", "anywhere", True, "full"))
+        finally:
+            dlg2.destroy()
+        # 旧配置「立刻换」不再提供：显示为不勾，应用后变成"没满就不换"
+        dlg3 = EntryEventDialog(app, True, None, cands, holders, when="immediate")
+        try:
+            app.update()
+            self.assertFalse(dlg3.force.get())
+            dlg3._ok()
+            self.assertEqual(dlg3.result[4], "full")
+        finally:
+            dlg3.destroy()
 
     def test_进驻事件换心情端到端(self):
         """设定「菲亚梅塔 24 / 塞雷娅 6」后：开启并指定对象 → 真的互换。"""
@@ -389,29 +426,48 @@ class Test新增交互(unittest.TestCase):
         self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("24"))
         self.assertEqual(app.traj.mood_at("塞雷娅", 0), Decimal("6"))
 
-        # ② 开启 + 指定「塞雷娅」（仅同宿舍）→ 互换
+        # ② 开启 + 指定「塞雷娅」+ 不勾强制切换（她满 24 → 判定时照换）
         try:
-            app_mod.ask_entry_event = lambda *a, **k: (True, "塞雷娅", "dorm", True, "immediate")
+            app_mod.ask_entry_event = lambda *a, **k: (True, "塞雷娅", "anywhere", True, "full")
             app.edit_entry_events()
         finally:
             app_mod.ask_entry_event = orig_dlg
         self.assertTrue(app.entry_events.get())
         self.assertEqual(app.entry_swap_with, "塞雷娅")
-        self.assertEqual(app.entry_scope, "dorm")
-        self.assertTrue(app.entry_restore_back)
-        self.assertEqual(app.entry_when, "immediate")
+        self.assertEqual(app.entry_scope, "anywhere")
+        self.assertTrue(app.entry_restore_back)          # 界面固定：只换心情
+        self.assertEqual(app.entry_when, "full")
         self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("6"))
         self.assertEqual(app.traj.mood_at("塞雷娅", 0), Decimal("24"))
         self.assertTrue([m for m in app.traj.marks if m.kind == "entry"])
 
-        # ③ 关掉 → 复原（记得清掉手动心情，避免影响其它用例）
+        # ③ 她没满心情时：不勾=不换 / 勾了=等她回满再换（同一份「她 10」的起点）
+        try:
+            app_mod.ask_mood = lambda parent, who, cur, note="": (Decimal("10")
+                                                                 if who == "菲亚梅塔" else None)
+            app._ask_and_set_mood("菲亚梅塔")
+        finally:
+            app_mod.ask_mood = orig_mood
+        app.entry_when = "full"
+        app.recompute()
+        self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("10"))
+        app.entry_when = "wait"
+        app.recompute()
+        labels = [m.label for m in app.traj.marks if m.kind == "entry"]
+        self.assertTrue(any("等她回满再换" in t for t in labels))
+        self.assertTrue(any("菲亚梅塔 24 → 24" in t for t in labels), "她回到满心情后才换")
+
+        # 收尾：关掉 + 清掉手动心情，别把状态留给其它用例
         app.entry_events.set(False)
+        app.entry_when = "full"
+        app.entry_swap_with = None
+        app.entry_scope = "dorm"
         app.initial_moods.clear()
         app.recompute()
         self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("24"))
 
     def test_进驻事件任意位置与自动挑(self):
-        """UI 也能走"基建任意位置 + 自动挑最累的 + 等她满 + 位置也换"这条组合。"""
+        """UI 也能走「基建任意位置 + 自动挑最累的 + 勾了强制切换」这条组合。"""
         from ui import app as app_mod
         app = self.app
         preset = {"菲亚梅塔": Decimal("24"), "巫恋": Decimal("1")}
@@ -420,23 +476,23 @@ class Test新增交互(unittest.TestCase):
             app_mod.ask_mood = lambda parent, who, cur, note="": preset.get(who)
             for who in preset:
                 app._ask_and_set_mood(who)
-            app_mod.ask_entry_event = lambda *a, **k: (True, "any", "anywhere", False, "wait")
+            app_mod.ask_entry_event = lambda *a, **k: (True, "any", "anywhere", True, "wait")
             app.edit_entry_events()
         finally:
             app_mod.ask_mood, app_mod.ask_entry_event = orig_mood, orig_dlg
         self.assertEqual(app.entry_swap_with, "any")
         self.assertEqual(app.entry_scope, "anywhere")
-        self.assertFalse(app.entry_restore_back)
+        self.assertTrue(app.entry_restore_back)
         self.assertEqual(app.entry_when, "wait")
         events = [m for m in app.traj.marks if m.kind == "entry"]
         self.assertTrue(events, "应当发生了一次换心情")
         self.assertTrue(any("自动挑" in m.label for m in events))
-        self.assertTrue(any("位置也对调" in m.label for m in events))
+        self.assertTrue(any("位置不变" in m.label for m in events), "界面固定只换心情")
         # 收尾：恢复默认，别把状态留给其它用例
         app.entry_events.set(False)
         app.entry_scope = "dorm"
         app.entry_restore_back = True
-        app.entry_when = "immediate"
+        app.entry_when = "full"
         app.entry_swap_with = None
         app.initial_moods.clear()
         app.recompute()
@@ -569,7 +625,7 @@ class Test新增交互(unittest.TestCase):
         app.entry_scope = "anywhere"
         app.entry_swap_with = None
         app.entry_restore_back = True
-        app.entry_when = "immediate"
+        app.entry_when = "full"
         app.entry_per_shift = list(dlg.result[5])
         app._sync_entry_label()
         app.recompute()
