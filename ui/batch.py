@@ -30,7 +30,8 @@ from decimal import Decimal
 from tkinter import ttk
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from mood_soc.config import MOOD_MAX, MOOD_MIN
+from mood_soc.config import (MOOD_MAX, MOOD_MIN, OUTPUT_ROOM_TYPES, OUTPUT_SLOT_TOTAL,
+                            facility_max_level, facility_slots)
 
 from ui import theme
 from ui.dialogs import ask_operator, parse_mood
@@ -83,6 +84,7 @@ class BatchDialog(tk.Toplevel):
         for n, v in (initial_moods or {}).items():
             self._moods[n] = Decimal(str(v))
         self._fac_names: List[dict] = []
+        self._level_vars: Dict[int, tk.StringVar] = {}   # 房间下标 → 等级下拉
         self._draft: Dict[int, List[dict]] = {}      # 改过的班次：下标 → 工作副本
         self._rows: List[dict] = []                  # 行控件（结构没变时复用）
         self._mood_vars: Dict[str, tk.StringVar] = {}
@@ -103,7 +105,9 @@ class BatchDialog(tk.Toplevel):
                  bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(8, 0))
 
+        self._sync_facilities()          # 先把工作副本准备好（等级/容量区要用）
         self._build_mood_bar()
+        self._build_level_bar()
         self._build_op_bar()
         self._build_table()
 
@@ -118,10 +122,66 @@ class BatchDialog(tk.Toplevel):
                    command=self._ok).pack(side="right", padx=(0, 6))
 
         self.bind("<Escape>", lambda _e: self.destroy())
-        self._sync_facilities()
         self._rebuild_rows()
         self._center(parent)
         self._modal(parent)
+
+    # ================================================================ 房间等级区
+    def _build_level_bar(self) -> None:
+        """逐间房改**等级**（容量随之变化）——上游 `rooms[].phases[lv].maxStationedNum`。
+
+        为什么要在这里：MAA 排班文件不带等级（导入时按人数推断最低可行等级，
+        见 `mood_soc/maa.py`），而等级决定"这间房能放几个人"，改完表格行数要跟着变。
+        制造站/贸易站/发电站共用 9 个建造位（上游 `layouts.v0.slots` 的 OUTPUT 槽位），
+        所以这里顺带把"已用 N/9"写出来。
+        """
+        box = tk.LabelFrame(self, text="房间等级（决定这间房能放几个人）", bg=theme.BG,
+                            fg=theme.TEXT, font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1,
+                            relief="groove", labelanchor="nw")
+        box.pack(fill="x", padx=theme.PAD, pady=(0, 4))
+        row = tk.Frame(box, bg=theme.BG)
+        row.pack(fill="x", padx=theme.GAP, pady=(4, 2))
+        for i, fac in enumerate(self._fac_names):
+            world = self._schedule.shifts[self._shift_index].world.facilities[i]
+            label = world.display_name
+            tk.Label(row, text=f"{label} Lv", bg=theme.BG, fg=theme.MUTED,
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(0, 2))
+            var = tk.StringVar(value=str(int(fac.get("level", world.level))))
+            cb = ttk.Combobox(row, textvariable=var, state="readonly", width=2,
+                              values=[str(lv) for lv in
+                                      range(1, facility_max_level(world.ftype) + 1)])
+            cb.pack(side="left")
+            cb.bind("<<ComboboxSelected>>",
+                    lambda _e, k=i, v=var: self._on_level_change(k, v))
+            self._level_vars[i] = var
+            tk.Label(row, text="　", bg=theme.BG).pack(side="left")
+        used = sum(1 for i, f in enumerate(self._fac_names)
+                   if self._schedule.shifts[self._shift_index].world.facilities[i].ftype
+                   in OUTPUT_ROOM_TYPES)
+        self.level_note = tk.Label(box, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
+                                   font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.level_note.pack(fill="x", padx=theme.GAP, pady=(0, 6))
+        self._sync_level_note(used)
+
+    def _sync_level_note(self, used: int = None) -> None:
+        if used is None:
+            used = sum(1 for i in range(len(self._fac_names))
+                       if self._schedule.shifts[self._shift_index].world.facilities[i].ftype
+                       in OUTPUT_ROOM_TYPES)
+        over = used > OUTPUT_SLOT_TOTAL
+        self.level_note.configure(
+            text=f"制造站/贸易站/发电站已用 {used}/{OUTPUT_SLOT_TOTAL} 个建造位"
+                 + ("（超过上游上限！）" if over else "")
+                 + "　｜　改等级会立刻改变下面表格的行数",
+            fg=(theme.DANGER if over else theme.MUTED))
+
+    def _on_level_change(self, fac_index: int, var) -> None:
+        """改房间等级 → 写进工作副本 → 重建表格（容量变了，行数跟着变）。"""
+        self._collect_moods()
+        self._fac_names[fac_index]["level"] = int(var.get())
+        self._mark_dirty()
+        self._rebuild_rows()
+        self._sync_level_note()
 
     # ================================================================ 心情区
     def _build_mood_bar(self) -> None:
@@ -254,9 +314,14 @@ class BatchDialog(tk.Toplevel):
         self._draft[self._shift_index] = self._fac_names
 
     def _slot_count(self, fac: dict, fac_index: int) -> int:
-        """这一行房画几个位置（容量以外若还有人也画出来，与看板同一口径）。"""
+        """这一行房画几个位置（容量以外若还有人也画出来，与看板同一口径）。
+
+        ⚠️ 容量按**工作副本里的等级**算（不是模型那一份）——否则在上面改了等级，
+        下面表格的行数不会跟着变。上游：`rooms[].phases[lv].maxStationedNum`。
+        """
         world = self._schedule.shifts[self._shift_index].world.facilities[fac_index]
-        return max(world.capacity, len(fac.get("operators", [])), 1)
+        cap = facility_slots(world.ftype, int(fac.get("level", world.level)))
+        return max(cap, len(fac.get("operators", [])), 1)
 
     def _room_name(self, fac_index: int) -> str:
         """房间显示名（用模型侧的 `display_name`，如"制造站#2"）。"""

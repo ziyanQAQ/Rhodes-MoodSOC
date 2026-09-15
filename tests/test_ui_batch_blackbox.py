@@ -181,18 +181,22 @@ class Test批量设置(unittest.TestCase):
 
     # ------------------------------------------------------------- 干员批量
     def test_粘贴名单按房间顺序填入(self):
+        """粘贴的名单按"房间顺序 + 位次"填满：填到几号房取决于**该房间当前等级的容量**。
+
+        （等级由导入时按人数推断，见 `mood_soc/maa.py`：示例排班的控制中枢是 Lv5 = 5 个位置。）
+        """
         app = self.app
         dlg = self._open(0)
-        names = ["泡泡", "慕斯", "克洛丝", "米格鲁"]
+        names = ["泡泡", "慕斯", "克洛丝", "米格鲁", "芬", "玫兰莎"]
         dlg._apply_names(names, clear_first=True)
-        self.assertIn("已填入 4 人", dlg.err.cget("text"))
+        self.assertIn(f"已填入 {len(names)} 人", dlg.err.cget("text"))
         changes, moods = self._apply(dlg)
-        got = self._ops_of(changes)
-        self.assertEqual(got, names)
-        # 看板/引擎侧确实变了：第 1 班的干员名单跟着换
-        self.assertEqual([o.name for o in app.schedule.shifts[0].world.facilities[0].operators],
-                         ["泡泡"])
-        self.assertEqual(app.schedule.shifts[0].world.facilities[1].operators[0].name, "慕斯")
+        self.assertEqual(self._ops_of(changes), names)          # 顺序不变
+        world = app.schedule.shifts[0].world
+        cap0 = world.facilities[0].capacity
+        self.assertEqual([o.name for o in world.facilities[0].operators], names[:cap0])
+        if len(names) > cap0:                                   # 装不下的顺延到下一间房
+            self.assertEqual(world.facilities[1].operators[0].name, names[cap0])
 
     def test_粘贴名单去重与截断(self):
         app = self.app

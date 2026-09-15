@@ -702,6 +702,38 @@ class Test速率读数(MoodAssertMixin, unittest.TestCase):
             self.assertMood(traj.shift_average_rate(name, i), expect, f"第{i+1}班平均")
 
 
+class Test导入等级推断(MoodAssertMixin, unittest.TestCase):
+    """MAA 排班文件**不带房间等级** → 导入时按"实际放了几个人"推断最低可行等级。"""
+
+    def test_按人数推断等级(self):
+        data = maa_data([
+            ("Shift 1 · 12h", {
+                "control": [["甲", "乙", "丙", "丁", "戊"]],     # 5 人 → 中枢 Lv5（默认是 1）
+                "manufacture": [["a", "b", "c"], ["d"]],          # 3 人 → Lv3；1 人 → 默认 Lv3
+                "trading": [["e", "f"]],                          # 2 人 → Lv2 够，但默认 Lv3 更大
+                "dormitory": [["g", "h"]],                        # 宿舍默认 Lv5（等级决定基础回复）
+            }),
+        ])
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+        json.dump(data, tmp, ensure_ascii=False)
+        tmp.close()
+        sch = load_schedule([tmp.name])
+        world = sch.shifts[0].world
+        by_name = {f.display_name: f for f in world.facilities}
+        self.assertEqual(by_name["控制中枢"].level, 5)
+        self.assertEqual(by_name["控制中枢"].capacity, 5)         # 5 人放得下
+        self.assertEqual(by_name["制造站#1"].level, 3)
+        self.assertEqual(by_name["宿舍"].level, 5)                 # 不被压低
+        # 推断之后布局自洽（示例：不再出现"Lv1 容量 1 却站 5 人"）
+        self.assertEqual(world.validate(), [])
+        Path(tmp.name).unlink()
+
+    def test_示例排班导入后自洽(self):
+        sch = load_schedule([SAMPLE_MAA])
+        for shift in sch.shifts:
+            self.assertEqual(shift.world.validate(), [], shift.label)
+
+
 class Test引擎不依赖GUI(unittest.TestCase):
     def test_导入schedule不加载tkinter(self):
         """结构性不变式：计算核心必须能在无显示器环境导入（tkinter 只在 app 层）。"""

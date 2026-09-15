@@ -138,6 +138,37 @@ def facility_slots(ftype, level: int = 1) -> int:
     return table[idx]
 
 
+# 各类型最高等级（= 上游 `rooms[].phases` 的条数；控制中枢/宿舍 5 级，其余 3 级）
+def facility_max_level(ftype) -> int:
+    """该设施的最高等级（上游 `rooms[].phases` 的形态数）。"""
+    return len(FACILITY_SLOTS_BY_LEVEL.get(ftype) or ()) or 1
+
+
+def min_level_for_slots(ftype, count: int) -> int:
+    """要塞进 `count` 个人，**至少**需要几级（放不下就返回最高等级）。
+
+    用途：MAA 排班文件**不带房间等级**，导入后按"实际放了几个人"反推最低可行等级，
+    免得出现"Lv1 容量 1 却站着 5 个人"这种自相矛盾的布局。
+    """
+    want = max(0, int(count))
+    for lv in range(1, facility_max_level(ftype) + 1):
+        if facility_slots(ftype, lv) >= want:
+            return lv
+    return facility_max_level(ftype)
+
+
+# ============================================================================
+# 建造位总量（上游 `layouts.v0.slots` 的 `category == "OUTPUT"` 槽位）
+#
+# 上游事实（building_data.json，客户端 2.7.71）：
+#   · `rooms.MANUFACTURE.maxCount = 5`、`rooms.TRADING.maxCount = 5`、`rooms.POWER.maxCount = 3`；
+#   · `layouts.v0.slots` 里 `category = "OUTPUT"` 的槽位**正好 9 个** ——
+#     制造站 / 贸易站 / 发电站**共用这 9 个建造位**，所以三者总数不能超过 9。
+# ============================================================================
+OUTPUT_ROOM_TYPES = (FacilityType.MANUFACTURING, FacilityType.TRADING, FacilityType.POWER)
+OUTPUT_SLOT_TOTAL = 9
+
+
 # ============================================================================
 # 各设施的基础心情消耗速率（点 / 小时）
 #

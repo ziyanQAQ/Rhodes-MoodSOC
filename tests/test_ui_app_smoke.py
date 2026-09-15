@@ -1009,6 +1009,64 @@ class Test新增交互(unittest.TestCase):
         app.set_time(Decimal("0"))
         app.update()
 
+    def test_房间等级可改且容量跟着变(self):
+        """点看板房间卡头 → 改等级 → 容量/校验结果跟着变（上游 phases[lv].maxStationedNum）。"""
+        from ui import app as app_mod
+
+        app = self.app
+        app.set_time(Decimal("0"))
+        shift = app.schedule.shifts[0]
+        idx = next(i for i, f in enumerate(shift.world.facilities)
+                   if f.ftype.name == "MANUFACTURING")
+        self.assertEqual(shift.world.facilities[idx].level, 3)
+        orig = app_mod.ask_level
+        try:
+            app_mod.ask_level = lambda *a, **k: 2          # 制造站#1 → Lv2
+            app.on_room_left(idx)
+        finally:
+            app_mod.ask_level = orig
+        fac = app.schedule.shifts[0].world.facilities[idx]
+        self.assertEqual(fac.level, 2)
+        self.assertEqual(fac.capacity, 2)
+        self.assertIn("Lv2", app.status.cget("text"))
+        # 3 个人塞进容量 2 的房间 → 自检要报出来（看板卡头也会标红）
+        self.assertIn("超过 Lv2 容量 2 人", app._layout_issues())
+        # 改回去
+        try:
+            app_mod.ask_level = lambda *a, **k: 3
+            app.on_room_left(idx)
+        finally:
+            app_mod.ask_level = orig
+        self.assertEqual(app.schedule.shifts[0].world.facilities[idx].capacity, 3)
+        self.assertEqual(app._layout_issues(), "")
+
+    def test_批量设置能改房间等级(self):
+        """批量设置的「房间等级」区：改等级 → 表格行数/容量按新等级算，应用后落到模型。"""
+        import tkinter as tk
+
+        from ui.batch import BatchDialog
+
+        app = self.app
+        dlg = BatchDialog(app, app.schedule, shift_index=0, initial_moods={},
+                          imported_moods={}, moods_now={})
+        try:
+            app.update()
+            self.assertEqual(len(dlg._level_vars), len(dlg._fac_names))
+            self.assertIn("9/9", dlg.level_note.cget("text"))     # 示例排班正好用满 9 个建造位
+            ftype = app.schedule.shifts[0].world.facilities[1].ftype
+            from mood_soc.config import facility_slots
+            dlg._level_vars[1].set("2")
+            dlg._on_level_change(1, dlg._level_vars[1])
+            app.update()
+            cap = dlg._slot_count(dlg._fac_names[1], 1)
+            self.assertGreaterEqual(cap, facility_slots(ftype, 2))
+            dlg._ok()
+            changes, _moods = dlg.result
+        finally:
+            dlg.destroy()
+        self.assertIn(0, changes)
+        self.assertEqual(changes[0][1]["level"], 2)
+
     def test_时间滑块两侧按钮与步长提示(self):
         """滑块两侧改成纯箭头（原来写 "◀ 15min" 容易被误读成"15 分钟前/时长"），
         步长与快捷键改用右侧一句人话提示。"""

@@ -639,11 +639,15 @@ class BaseLayout:
 
     # ================================================================ 校验
     def validate(self) -> List[str]:
-        """布局合法性自检：房间数量上限 + 进驻人数容量。
+        """布局合法性自检：房间数量上限 + **建造位总量** + 进驻人数容量。
 
         返回问题字符串列表（**不抛异常**，因为历史场景数据可能刻意超容量）。
-        上游依据：`rooms[].maxCount` 与 `rooms[].phases[lv].maxStationedNum`。
+        上游依据：`rooms[].maxCount`（单类型上限）、`layouts.v0.slots` 的 `category=OUTPUT`
+        槽位数 = 9（制造站/贸易站/发电站共用）、`rooms[].phases[lv].maxStationedNum`（容量）。
         """
+        from .config import OUTPUT_ROOM_TYPES, OUTPUT_SLOT_TOTAL, facility_max_count, \
+            facility_max_level, facility_slots
+
         issues: List[str] = []
         for ftype in {f.ftype for f in self.facilities}:
             rooms = self.of_type(ftype)
@@ -651,10 +655,24 @@ class BaseLayout:
             if cap >= 0 and len(rooms) > cap:
                 issues.append(f"{FACILITY_LABELS.get(ftype, ftype)} 有 {len(rooms)} 间，"
                               f"超过上游上限 {cap} 间")
+
+        # 制造站 / 贸易站 / 发电站共用 9 个建造位（上游 layouts.v0.slots → category=OUTPUT）
+        output_rooms = [f for f in self.facilities if f.ftype in OUTPUT_ROOM_TYPES]
+        if len(output_rooms) > OUTPUT_SLOT_TOTAL:
+            detail = "、".join(f"{f.display_name}"
+                               for f in output_rooms)
+            issues.append(f"制造站/贸易站/发电站共 {len(output_rooms)} 间，超过建造位总量 "
+                          f"{OUTPUT_SLOT_TOTAL}（上游 layouts.v0.slots 的 OUTPUT 槽位）：{detail}")
+
         for f in self.facilities:
-            if len(f.operators) > f.capacity:
+            max_lv = facility_max_level(f.ftype)
+            if f.level > max_lv:
+                issues.append(f"{f.display_name} 等级 Lv{f.level} 超过上游最高等级 Lv{max_lv}")
+            # 容量按**当前等级**算（等级可改；上游 phases[lv].maxStationedNum）
+            cap = facility_slots(f.ftype, f.level) if f.slots is None else f.slots
+            if len(f.operators) > cap:
                 issues.append(f"{f.display_name} 进驻 {len(f.operators)} 人，"
-                              f"超过 Lv{f.level} 容量 {f.capacity} 人")
+                              f"超过 Lv{f.level} 容量 {cap} 人")
         return issues
 
 

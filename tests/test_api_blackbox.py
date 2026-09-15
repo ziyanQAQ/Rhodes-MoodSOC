@@ -1587,5 +1587,71 @@ class Test闲置入宿(unittest.TestCase):
         self.assertEqual([o.name for o in w5.facilities[0].operators][-1], "丙")
 
 
+class Test布局约束与等级(unittest.TestCase):
+    """上游约束：单类型房间上限、**建造位总量 9**、等级 → 容量。
+
+    出处（`building_data.json`，客户端 2.7.71）：
+      · `rooms.MANUFACTURE.maxCount=5` / `TRADING=5` / `POWER=3` / `DORMITORY=4` / `PRIVATE=6`；
+      · `layouts.v0.slots` 里 `category="OUTPUT"` 的槽位正好 9 个（制造/贸易/发电共用）；
+      · `rooms[].phases[].maxStationedNum`：制造/贸易 1/2/3、发电 1/1/1、宿舍 5、
+        控制中枢 1/2/3/4/5、会客室与训练室 2、加工站与办公室 1。
+    """
+
+    @staticmethod
+    def _output_rooms(n_manu=0, n_trade=0, n_power=0, level=3):
+        facs = []
+        for label, n, who in (("制造站", n_manu, "甲"), ("贸易站", n_trade, "乙"),
+                              ("发电站", n_power, "丙")):
+            for i in range(n):
+                facs.append({"type": label, "level": level,
+                             "name": f"{label}#{i+1}", "operators": [who]})
+        return build_base_layout(scenario(*facs))
+
+    def test_建造位总量上限是9(self):
+        self.assertEqual(self._output_rooms(4, 3, 2).validate(), [])          # 9 间 → 合法
+        issues = self._output_rooms(4, 3, 3).validate()                       # 10 间 → 超
+        self.assertTrue(issues)
+        self.assertIn("建造位总量 9", issues[0])
+        self.assertIn("制造站#4", issues[0])                                   # 指出是哪几间
+
+    def test_单类型房间上限(self):
+        self.assertTrue(any("超过上游上限 5 间" in s
+                            for s in self._output_rooms(6).validate()))
+        self.assertTrue(any("超过上游上限 3 间" in s
+                            for s in self._output_rooms(0, 0, 4).validate()))
+
+    def test_等级决定容量(self):
+        def rooms(level, n_ops):
+            facs = [{"type": "制造站", "level": level, "name": "制造站",
+                     "operators": [f"路人{i}" for i in range(n_ops)]}]
+            return build_base_layout(scenario(*facs))
+
+        self.assertEqual(rooms(1, 1).validate(), [])
+        self.assertTrue(any("超过 Lv1 容量 1 人" in s for s in rooms(1, 2).validate()))
+        self.assertEqual(rooms(2, 2).validate(), [])
+        self.assertTrue(any("超过 Lv2 容量 2 人" in s for s in rooms(2, 3).validate()))
+        self.assertEqual(rooms(3, 3).validate(), [])
+
+    def test_等级超上游上限要报(self):
+        facs = [{"type": "制造站", "level": 4, "name": "制造站", "operators": ["甲"]}]
+        self.assertTrue(any("超过上游最高等级 Lv3" in s
+                            for s in build_base_layout(scenario(*facs)).validate()))
+        # 控制中枢可以到 Lv5
+        cc = [{"type": "控制中枢", "level": 5, "name": "控制中枢",
+               "operators": ["甲", "乙", "丙", "丁", "戊"]}]
+        self.assertEqual(build_base_layout(scenario(*cc)).validate(), [])
+
+    def test_按人数推断最低等级(self):
+        from mood_soc.config import min_level_for_slots, parse_facility_type
+
+        manu = parse_facility_type("制造站")
+        self.assertEqual([min_level_for_slots(manu, n) for n in (0, 1, 2, 3, 4)],
+                         [1, 1, 2, 3, 3])          # 4 人放不下 → 给最高等级（由校验去报错）
+        cc = parse_facility_type("控制中枢")
+        self.assertEqual(min_level_for_slots(cc, 5), 5)
+        dorm = parse_facility_type("宿舍")
+        self.assertEqual(min_level_for_slots(dorm, 5), 1)     # 宿舍各级都是 5 个位置
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

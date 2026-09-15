@@ -90,11 +90,13 @@ class BaseBoard(tk.Frame):
     """
 
     def __init__(self, master, on_slot_click: Optional[Callable[[int, int], None]] = None,
-                 on_slot_right: Optional[Callable[[int, int], None]] = None, **kw):
+                 on_slot_right: Optional[Callable[[int, int], None]] = None,
+                 on_room_click: Optional[Callable[[int], None]] = None, **kw):
         kw.setdefault("bg", theme.BG)
         super().__init__(master, **kw)
         self.on_slot_click = on_slot_click
         self.on_slot_right = on_slot_right
+        self.on_room_click = on_room_click          # 点房间头 = 改这间房的等级
         self.slots: List[SlotView] = []
         self.chip_by_operator: Dict[str, MoodChip] = {}
         self._chips: Dict[tuple, MoodChip] = {}      # (设施下标, 座位号) → 芯片（复用用）
@@ -287,11 +289,19 @@ class BaseBoard(tk.Frame):
         head.pack(fill="x")
         tk.Label(head, text=facility_tag(facility, ordinal), bg=theme.PANEL_ALT, fg=theme.TEXT,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(6, 4), pady=1)
-        tk.Label(head, text=f"{label} Lv{facility.level}", bg=theme.PANEL_ALT, fg=theme.MUTED,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", pady=1)
-        tk.Label(head, text=f"{len(facility.operators)}/{facility.capacity}",
-                 bg=theme.PANEL_ALT, fg=theme.MUTED,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="right", padx=(2, 6), pady=1)
+        # 房间头可点：改这间房的等级（容量随之变化；上游 rooms[].phases[lv].maxStationedNum）
+        lv_label = tk.Label(head, text=f"{label} Lv{facility.level}", bg=theme.PANEL_ALT,
+                            fg=theme.MUTED, cursor="hand2",
+                            font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        lv_label.pack(side="left", pady=1)
+        lv_label.bind("<Button-1>", lambda _e: self._room_click(fac_index))
+        over = len(facility.operators) > facility.capacity
+        count = tk.Label(head, text=f"{len(facility.operators)}/{facility.capacity}",
+                         bg=theme.PANEL_ALT, fg=(theme.DANGER if over else theme.MUTED),
+                         font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        count.pack(side="right", padx=(2, 6), pady=1)
+        if over:
+            count.bind("<Button-1>", lambda _e: self._room_click(fac_index))
 
         strip = tk.Frame(card, bg=theme.PANEL)
         strip.pack(fill="x", padx=4, pady=3)
@@ -327,6 +337,10 @@ class BaseBoard(tk.Frame):
     def _click(self, fac_index: int, slot_index: int) -> None:
         if self.on_slot_click:
             self.on_slot_click(fac_index, slot_index)
+
+    def _room_click(self, fac_index: int) -> None:
+        if self.on_room_click:
+            self.on_room_click(fac_index)
 
     def _right(self, fac_index: int, slot_index: int) -> None:
         if self.on_slot_right:

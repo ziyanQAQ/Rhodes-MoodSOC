@@ -33,13 +33,14 @@ from ui import theme  # noqa: E402
 from ui.batch import ask_batch  # noqa: E402
 from ui.board import BaseBoard, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
-from ui.dialogs import (ask_entry_event, ask_idle_to_dorm, ask_mood, ask_operator,  # noqa: E402
-                        ask_shift_hours)
+from ui.dialogs import (ask_entry_event, ask_idle_to_dorm, ask_level, ask_mood,  # noqa: E402
+                        ask_operator, ask_shift_hours)
 from ui.roster import RosterStrip  # noqa: E402
 from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
                          default_initial_moods, load_schedule, simulate_schedule)
 from mood_soc import entry_event_holders, entry_target_kind  # noqa: E402
-from mood_soc.config import MOOD_MAX, FacilityType  # noqa: E402
+from mood_soc.config import (MOOD_MAX, FacilityType, facility_max_level,  # noqa: E402
+                             facility_slots)
 from mood_soc.models import IdleToDormEntry, normalize_entry_when  # noqa: E402
 
 SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
@@ -207,7 +208,8 @@ class MoodSocApp(tk.Tk):
         body.pack(fill="both", expand=True, padx=theme.PAD)
 
         self.board = BaseBoard(body, on_slot_click=self.on_slot_left,
-                               on_slot_right=self.on_slot_right)
+                               on_slot_right=self.on_slot_right,
+                               on_room_click=self.on_room_left)
         self.board.pack(side="left", fill="both", expand=True)
 
         right = tk.Frame(body, bg=theme.PANEL, highlightbackground=theme.BORDER,
@@ -558,6 +560,31 @@ class MoodSocApp(tk.Tk):
             return
         who = facility.operators[slot_index].name
         self._ask_and_set_mood(who)
+
+    def on_room_left(self, fac_index: int):
+        """点房间卡头：改这间房的**等级**（容量随之变化）。
+
+        上游依据：`rooms[].phases[lv].maxStationedNum` —— 制造站/贸易站 1/2/3 人、发电站 1/1/1、
+        宿舍 5、控制中枢 1~5、会客室/训练室 2、加工站/办公室 1。宿舍等级还决定基础回复；
+        中枢等级决定中枢能站几个人（→ 全基建减免）。
+        """
+        if self.schedule is None:
+            return
+        idx = self._editing_shift_index()
+        facility = self.schedule.shifts[idx].world.facilities[fac_index]
+        ftype = facility.ftype
+        new_lv = ask_level(self, facility.display_name, facility.level,
+                           facility_max_level(ftype),
+                           lambda lv: facility_slots(ftype, lv))
+        if new_lv is None or new_lv == facility.level:
+            return
+        facs = self._facilities_of(idx)
+        facs[fac_index]["level"] = int(new_lv)
+        self._apply_facilities(idx, facs)
+        self.status.configure(
+            text=f"{facility.display_name} 已设为 Lv{new_lv}"
+                 f"（可放 {facility_slots(ftype, new_lv)} 人）"
+                 + (f"　⚠ {self._layout_issues()}" if self._layout_issues() else ""))
 
     def set_curve_mood(self):
         """右侧面板：给当前曲线选中的干员设心情。"""
@@ -910,6 +937,13 @@ class MoodSocApp(tk.Tk):
                                         "这个开关暂时不会有任何效果")
         else:
             self.status.configure(text=self._entry_summary())   # 再用配置摘要盖上去
+
+    def _layout_issues(self) -> str:
+        """当前班次布局的自检问题（上游约束：单类型上限 / 建造位总量 9 / 人数 ≤ 等级容量）。"""
+        if self.schedule is None:
+            return ""
+        issues = self.schedule.shifts[self._editing_shift_index()].world.validate()
+        return "；".join(issues)
 
     def _facilities_of(self, idx: int):
         return [dict(f, operators=list(f.get("operators", [])))

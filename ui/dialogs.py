@@ -544,6 +544,58 @@ def ask_entry_event(parent, enabled: bool, swap_with, candidates: Sequence[str],
     return dlg.result
 
 
+class LevelDialog(tk.Toplevel):
+    """改一间房的**等级**（容量随之变化）。
+
+    上游依据：`rooms[].phases[lv].maxStationedNum` —— 制造站/贸易站 1/2/3 人、
+    发电站 1/1/1、宿舍 5/5/5/5/5、控制中枢 1/2/3/4/5、会客室与训练室 2、加工站与办公室 1。
+    等级同时影响别的口径（宿舍等级 → 基础回复、中枢等级 → 能放几个人 → 全基建减免），
+    所以这里把"这一级能放几个人"直接写在选项旁边。
+    """
+
+    def __init__(self, parent, name: str, current: int, max_level: int, slots_of):
+        super().__init__(parent, bg=theme.BG)
+        self.title(f"房间等级 · {name}")
+        self.resizable(False, False)
+        self.result = None
+        self._max = max(1, int(max_level))
+
+        tk.Label(self, text=name, bg=theme.BG, fg=theme.TEXT,
+                 font=(theme.FONT_FAMILY, theme.FS_TITLE)).pack(anchor="w", padx=theme.PAD,
+                                                                pady=(theme.PAD, 2))
+        tk.Label(self, text="等级决定能放几个人（上游 rooms[].phases[].maxStationedNum）；"
+                            "宿舍等级还决定基础回复速率，中枢等级决定中枢能站几个人"
+                            "（进而决定全基建的心情减免）。",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=420,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.PAD)
+
+        self.var = tk.IntVar(value=max(1, min(int(current), self._max)))
+        box = tk.Frame(self, bg=theme.BG)
+        box.pack(fill="x", padx=theme.PAD, pady=theme.GAP)
+        for lv in range(1, self._max + 1):
+            ttk.Radiobutton(box, value=lv, variable=self.var,
+                            text=f"Lv{lv}（可放 {slots_of(lv)} 人）").pack(anchor="w")
+
+        btns = tk.Frame(self, bg=theme.BG)
+        btns.pack(fill="x", padx=theme.PAD, pady=(0, theme.PAD))
+        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
+        ttk.Button(btns, text="确定", style="Accent.TButton", command=self._ok).pack(
+            side="right", padx=(0, 6))
+        self.bind("<Escape>", lambda _e: self.destroy())
+        _modal(self, parent)
+
+    def _ok(self) -> None:
+        self.result = int(self.var.get())
+        self.destroy()
+
+
+def ask_level(parent, name: str, current: int, max_level: int, slots_of) -> Optional[int]:
+    """返回新的等级；取消返回 None。"""
+    dlg = LevelDialog(parent, name, current, max_level, slots_of)
+    parent.wait_window(dlg)
+    return dlg.result
+
+
 class IdleToDormDialog(tk.Toplevel):
     """**闲置入宿**设置 —— 一个总开关 + 一张"候选人一行"的表。
 

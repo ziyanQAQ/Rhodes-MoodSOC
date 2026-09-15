@@ -38,6 +38,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 # MAA room 键 -> (本工具的设施中文名, 默认等级)
+#
+# ⚠️ MAA 的排班文件**不带房间等级**（它只记"把谁放进哪个房间"），所以这里给的只是**兜底默认值**。
+# 真正的等级按"实际放了几个人"反推最低可行等级（`min_level_for_slots`），再与默认值取大：
+#   制造站放 3 人 → Lv3；控制中枢放 5 人 → Lv5（默认是 1，不推断就会出现"Lv1 容量 1 却站 5 人"）；
+#   宿舍保持默认 Lv5 —— 宿舍等级决定**基础回复**（`dormitory_recovery`），不能往下压。
+# 导入后可以在界面里逐间改（批量设置的「房间等级」区 / 点看板房间卡头）。
 ROOM_MAP: Dict[str, tuple] = {
     "control": ("控制中枢", 1),
     "manufacture": ("制造站", 3),
@@ -97,24 +103,33 @@ def parse_duration_hint(name: str) -> Optional[Decimal]:
 
 
 def convert_plan(plan: dict) -> List[dict]:
-    """把单个排班计划转换成 facilities 列表（skip / 空房间不纳入）。"""
+    """把单个排班计划转换成 facilities 列表（skip / 空房间不纳入）。
+
+    等级取 `max(该类型的默认等级, 按实际人数反推的最低等级)` —— MAA 文件不带等级，
+    这样才能保证"放得下"（详见 `ROOM_MAP` 上方注释与 `min_level_for_slots`）。
+    """
+    from .config import min_level_for_slots, parse_facility_type
+
     rooms = plan.get("rooms", {}) or {}
     facilities: List[dict] = []
     for key in ROOM_ORDER:
         if key not in rooms:
             continue
         label, level = ROOM_MAP[key]
+        ftype = parse_facility_type(label)
         for idx, room in enumerate(rooms[key], start=1):
             if not isinstance(room, dict):
                 continue
             if room.get("skip") or not room.get("operators"):
                 continue
+            ops = [str(o) for o in room["operators"] if o]
+            lv = max(int(level), min_level_for_slots(ftype, len(ops)))
             facilities.append({
                 "type": label,
-                "level": level,
+                "level": lv,
                 # 同名多房间在界面上要能区分，故带序号（如"制造站#2"）
                 "name": f"{label}#{idx}" if len(rooms[key]) > 1 else label,
-                "operators": [str(o) for o in room["operators"] if o],
+                "operators": ops,
             })
     return facilities
 
