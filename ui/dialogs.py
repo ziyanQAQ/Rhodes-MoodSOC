@@ -3,8 +3,8 @@
 都做成"模态 + 返回结果"的简单函数（`ask_*` → 值或 None），调用方（`app.py`）不必关心细节。
 键盘优先：选人框回车即确认、Esc 取消；设心情框支持 `0/6/12/18/24` 快捷按钮。
 
-进驻事件设置（`EntryEventDialog`）按用户要求**只有三个设置**：① 开启心情交换、② 换谁、
-③ 强制切换（勾＝等她满心情再换、不勾＝判定时没满就不换）；逐班覆盖收进折叠的「高级」区。
+进驻事件设置（`EntryEventDialog`）：一个总开关 + **一张"每班一行"的表**
+（`用 / 换谁 / 强制切换`）——真正逐班的就是这一整组，所以不再分"全局值 + 例外"两层。
 批量改干员与心情在 `ui/batch.py`。
 """
 from __future__ import annotations
@@ -14,17 +14,10 @@ from decimal import Decimal, InvalidOperation
 from tkinter import ttk
 from typing import List, Optional, Sequence
 
+from mood_soc import entry_target_kind
 from mood_soc.models import normalize_entry_when
 
 from . import theme
-
-# 「什么时候换」在下拉里的短标签（按班次用）
-WHEN_LABELS = {
-    "immediate": "立即（强制）",
-    "wait": "等她回满",
-    "full": "只在她满时",
-}
-LABEL_TO_WHEN = {v: k for k, v in WHEN_LABELS.items()}
 
 # 心情输入的合法范围（周期起点心情．引擎侧同样钳位 [0, 24]）
 MOOD_MIN_TEXT = Decimal("0")
@@ -303,45 +296,45 @@ def ask_shift_hours(parent, labels: Sequence[str], hours: Sequence, cycle: Decim
 
 
 class EntryEventDialog(tk.Toplevel):
-    """**进驻事件**（M15a 患难之交）设置 —— 四个设置。
+    """**进驻事件**（M15a 患难之交）设置 —— **一张表说尽"每个班次怎么换"**。
 
-    | 设置 | 控件 | 落到引擎 |
-    |---|---|---|
-    | ① 开启心情交换 | 复选框 | `enabled`（与工具栏那颗「换心情设置」按钮右侧的状态是同一份配置） |
-    | ② 换谁 | 一个下拉 + 「更多干员…」 | `swap_with` + `scope`（**每个选项自带范围**，不会再出现"任意位置 + 前一位进驻"这种矛盾组合） |
-    | ③ 强制切换 | 复选框 | `when`：勾＝`"wait"`（等她满心情再换）/ 不勾＝`"full"`（判定时她没满就不换） |
-    | ④ 换哪个班 | 班次多选（默认全选）+ 全选/全不选 | `per_shift`：**没勾的班次**写一条 `enabled=False`；勾着的班次不写任何东西（留给全局配置） |
+    | 控件 | 落到引擎 |
+    |---|---|
+    | ① 开启心情交换（总开关） | `enabled` |
+    | 表格每行「用」 | `per_shift[key].enabled`（不勾＝这一班不换心情） |
+    | 表格每行「换谁」 | `swap_with` + `scope`（**每个选项自带范围**） |
+    | 表格每行「强制切换」 | `when`：勾＝`"wait"`（等她满心情再换）/ 不勾＝`"full"`（判定时没满就不换） |
 
-    按用户要求收成固定口径、不再出现在界面上的两件事：
+    为什么是"每班一行"：真正逐班的东西本来就是**这一整组**（用不用 + 换谁 + 要不要等），
+    所以不再做"全局值 + 例外"那两层（旧版的 ①②③ + ④ + 折叠高级区就是那么分的，
+    设置时要在脑子里做三次映射）。现在**第 1 个勾着「用」的班次那一行充当全局默认**，
+    其余班次只有和它不同才写一条 `per_shift` 覆盖 ⇒ 三班设置相同时 `per_shift` 为空、
+    行为与"没有这张表"逐位相同。
 
-    - **「对方心情是多少」不设开关**：固定"照换"——哪怕双方都是 24 也执行
-      （数值不变；位置互换模式下位置照换）。
-    - **「位置也一起互换」**：固定为「只换心情，两人都留在自己的岗位上」。
-
-    底部的**折叠区**（默认收起）只回答"某班想换给别人 / 想改 ③"（逐班 `swap_with` / `when`）；
-    "这一班换不换"一律由 ④ 决定——**同一个开关不做两处**。
+    固定口径（不设开关）：**「对方心情是多少」照换**（双方都是 24 也执行）；
+    **位置不动**（只换心情，界面固定 `restore_back=True`）。
     """
 
     TITLE = "进驻事件设置（换心情）"
     # 「换谁」的两个口径（其余下拉项＝具体干员名）
     PREV = "前一位进驻（同宿舍）"              # 游戏原口径：swap_with=None + scope="dorm"
     AUTO = "全基建最累的那位（自动）"            # swap_with="any" + scope="anywhere"
-    INHERIT = "（跟随上面的默认）"              # 按班次：不覆盖
-    DEFAULT_TARGET = "前一位进驻（默认口径）"     # 按班次：明确用默认口径
 
     def __init__(self, parent, enabled: bool, swap_with, candidates: Sequence[str],
                  current_holders: Sequence[str] = (), scope: str = "dorm",
                  restore_back: bool = True, when: str = "immediate",
-                 shift_labels: Sequence[str] = (), per_shift: Sequence = (),
-                 all_names: Sequence[str] = ()):
+                 shift_labels: Sequence[str] = (), per_shift: Sequence = ()):
         super().__init__(parent, bg=theme.BG)
         self.title(self.TITLE)
         self.resizable(False, False)
         self.result = None      # (enabled, swap_with, scope, restore_back, when, per_shift)
         self._candidates = list(candidates)
-        self._all_names = list(all_names) or list(candidates)
         self._shift_labels = list(shift_labels)
         self._per_shift_in = list(per_shift)
+        # 全局配置（没有逐班覆盖时，每行的预填值就是它）
+        self._swap_with_in = swap_with
+        self._scope_in = scope or "dorm"
+        self._when_in = normalize_entry_when(when) or "full"
 
         pad = dict(padx=theme.PAD)
         tk.Label(self, text="进驻事件 = 干员【进驻那一刻】的一次性心情跳变，不是每小时速率。",
@@ -354,229 +347,142 @@ class EntryEventDialog(tk.Toplevel):
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=470,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad, pady=(0, theme.GAP))
 
-        # ① 开启
+        # ① 总开关
         self.enabled = tk.BooleanVar(value=bool(enabled))
         ttk.Checkbutton(self, text="① 开启心情交换（进驻宿舍那一刻，与她互换心情）",
                         variable=self.enabled, command=self._sync).pack(anchor="w", **pad)
 
-        # ② 换谁（一个下拉；"在哪换"由选项自带，不再单独设）
-        row = tk.Frame(self, bg=theme.BG)
-        row.pack(fill="x", **pad, pady=(theme.GAP, 0))
-        tk.Label(row, text="② 换谁", bg=theme.BG, fg=theme.TEXT,
-                 font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(side="left")
-        target = (swap_with or "").strip()
-        auto = (target.lower() in ("any", "auto", "anyone")
-                or target in ("任意", "最累", "谁都可以"))
-        self.target = tk.StringVar(value=(self.AUTO if auto else (target or self.PREV)))
-        self._values = [self.PREV, self.AUTO] + [n for n in self._candidates
-                                                 if n not in (self.PREV, self.AUTO)]
-        self.target_box = ttk.Combobox(row, textvariable=self.target, state="readonly",
-                                       values=self._values, width=24)
-        self.target_box.pack(side="left", padx=(6, 4))
-        self.more_btn = ttk.Button(row, text="更多干员…", command=self._pick_other)
-        self.more_btn.pack(side="left")
         holders = "、".join(current_holders) if current_holders else "（本排班里没有）"
-        tk.Label(self, text=f"触发者：{holders}。前两位自带范围（同宿舍 / 全基建最累的）；"
-                            f"选到具体干员时可换基建任意位置的人。\n"
-                            f"点到的人不在允许范围内时，该班次不换并给出提示。",
-                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=470,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad, pady=(2, 0))
+        tk.Label(self, text=f"触发者：{holders}。勾了「用」的班次才换心情；"
+                            f"「换谁」的两个口径自带范围：前一位进驻＝同一宿舍，"
+                            f"全基建最累的 / 具体干员＝基建任意位置。",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=520,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
+                                                               pady=(2, theme.GAP))
 
-        # ③ 强制切换（一个复选框取代原来的三选一）
-        self.force = tk.BooleanVar(value=(normalize_entry_when(when) == "wait"))
-        self.force_chk = ttk.Checkbutton(
-            self, text="③ 强制切换（必须换成功：她没满心情就等她回满再换）",
-            variable=self.force)
-        self.force_chk.pack(anchor="w", **pad, pady=(theme.GAP, 0))
-        note = ("不勾＝到交换班次判定时她心情没满，这一次就【不换】。\n"
-                "「不管对方心情是多少都照换」是固定口径，不需要设置。")
-        if normalize_entry_when(when) == "immediate":
-            note += "\n（当前配置是「立刻换」那一档；界面不再提供，应用后会变成「没满就不换」。）"
-        tk.Label(self, text=note, bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=470,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad, pady=(2, 0))
+        # ② 一张表：每个班次自己的「用 / 换谁 / 强制切换」（没有"全局值 + 例外"两层）
+        self._build_shift_table()
 
-        # ④ 换哪个班（多选；上面 ①②③ 这套设置作用在哪几班）
-        self.shift_use: list = []        # [(BooleanVar, 控件...)] 按班次顺序
-        self._shift_widgets: list = []   # ① 关掉时要一起置灰的控件
-        if self._shift_labels:
-            row4 = tk.Frame(self, bg=theme.BG)
-            row4.pack(fill="x", **pad, pady=(theme.GAP, 0))
-            tk.Label(row4, text="④ 换哪个班", bg=theme.BG, fg=theme.TEXT,
-                     font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(side="left")
-            chips = tk.Frame(row4, bg=theme.BG)
-            chips.pack(side="left", padx=(6, 4))
-            for i, label in enumerate(self._shift_labels):
-                var = tk.BooleanVar(value=self._shift_use_default(i))
-                chip = tk.Checkbutton(chips, text=f"{i + 1}. {label[:16]}", variable=var,
-                                      bg=theme.BG, activebackground=theme.BG,
-                                      highlightthickness=0,
-                                      font=(theme.FONT_FAMILY, theme.FS_SMALL))
-                chip.grid(row=i // 4, column=i % 4, sticky="w", padx=(0, 8))
-                self.shift_use.append(var)
-                self._shift_widgets.append(chip)
-            for text, value, cmd_pad in (("全选", True, (6, 0)), ("全不选", False, (4, 0))):
-                btn = ttk.Button(row4, text=text,
-                                 command=lambda v=value: self._set_all_shifts(v))
-                btn.pack(side="left", padx=cmd_pad)
-                self._shift_widgets.append(btn)
-            tk.Label(self, text="勾上的班次用上面 ①②③ 这套设置；**没勾的班次不换心情**。",
-                     bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=470,
-                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
-                                                                    pady=(2, 0))
-        else:
-            tk.Label(self, text="④ 换哪个班：还没有导入排班，导入后可以逐班勾选。",
-                     bg=theme.BG, fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
-                     ).pack(anchor="w", **pad, pady=(theme.GAP, 0))
-
-        # 高级：按班次覆盖（折叠，默认收起；已有逐班配置时自动展开）
-        self.advanced = tk.BooleanVar(value=bool(self._per_shift_in))
-        ttk.Checkbutton(self, text="高级：某班想换给别人 / 想改 ③（不展开＝各勾选的班共用上面这一套）",
-                        variable=self.advanced, command=self._toggle_advanced).pack(
-            anchor="w", **pad, pady=(theme.GAP, 0))
-        self.adv_frame = tk.Frame(self, bg=theme.BG)
-        self._build_advanced()
+        tk.Label(self, text="「强制切换」勾上＝她没满心情就等她回满再换；不勾＝判定时没满就不换。\n"
+                            "对方心情是多少都照换（固定口径）；位置不变，只换心情。",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=520,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
+                                                               pady=(theme.GAP, 0))
 
         self.btn_frame = tk.Frame(self, bg=theme.BG)
         self.btn_frame.pack(fill="x", **pad, pady=(theme.GAP, theme.PAD))
         ttk.Button(self.btn_frame, text="取消", command=self.destroy).pack(side="right")
         ttk.Button(self.btn_frame, text="应用", style="Accent.TButton",
                    command=self._ok).pack(side="right", padx=(0, 6))
-        if self.advanced.get():
-            self._toggle_advanced()
         self.bind("<Escape>", lambda _e: self.destroy())
         self._sync()
         _modal(self, parent)
 
-    # ------------------------------------------------------------ 折叠区：按班次
-    def _shift_use_default(self, index: int) -> bool:
-        """④ 的默认勾选：**默认全选**；已有逐班配置写了 `enabled: false` 的班次才不勾。"""
-        for ov in self._per_shift_in:
-            if ov.matches(index, self._shift_labels[index]) and ov.enabled is False:
-                return False
-        return True
+    # ------------------------------------------------------------ 逐班表格
+    def _target_label(self, swap_with, scope: str) -> str:
+        """引擎口径 → 下拉里的文字（口径判定唯一来源仍是 `entry_target_kind`）。"""
+        kind = entry_target_kind(swap_with, scope)
+        return {"auto": self.AUTO, "named": str(swap_with), "default": self.PREV}[kind]
+
+    def _label_target(self, label: str):
+        """下拉文字 → `(swap_with, scope)`；`PREV` 用同宿舍口径（否则 anywhere 下会被读成自动挑）。"""
+        if label == self.AUTO:
+            return "any", "anywhere"
+        if label == self.PREV or not label:
+            return None, "dorm"
+        return label, "anywhere"
+
+    def _shift_row_defaults(self, index: int):
+        """第 `index` 班这一行怎么预填 → `(用, 换谁文字, 强制切换)`。
+
+        有逐班覆盖就用覆盖，没有就用全局配置——所以"没配过 per_shift"时每一行都预填成
+        当前的全局设置，等于"三班用同一套"（与旧版"④ 默认全选"逐位等价）。
+        """
+        ov = next((o for o in self._per_shift_in
+                   if o.matches(index, self._shift_labels[index])), None)
+        sw = self._swap_with_in
+        scope = self._scope_in
+        mode = self._when_in
+        use = True
+        if ov is not None:
+            if ov.enabled is not None:
+                use = bool(ov.enabled)
+            if ov.swap_with is not None:
+                sw = ov.swap_with or None            # "" = 明确"不指定" → 回到前一位进驻
+            if ov.scope is not None:
+                scope = ov.scope
+            if ov.when is not None:
+                mode = normalize_entry_when(ov.when) or mode
+            elif ov.force is not None:               # 旧字段兜底
+                mode = "wait" if ov.force else "full"
+        return use, self._target_label(sw, scope), (mode == "wait")
+
+    def _build_shift_table(self) -> None:
+        """「班次 | 用 | 换谁 | 强制切换」——一行说尽这一班的行为。"""
+        self.shift_use: List[tk.BooleanVar] = []
+        self.shift_who: List[tk.StringVar] = []
+        self.shift_force: List[tk.BooleanVar] = []
+        self._shift_widgets: list = []           # ① 关掉时要一起置灰的控件
+        if not self._shift_labels:
+            tk.Label(self, text="② 每个班次：还没有导入排班，导入后可以逐班设置。",
+                     bg=theme.BG, fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
+                     ).pack(anchor="w", padx=theme.PAD)
+            return
+        box = tk.LabelFrame(self, text="② 每个班次单独设置（勾了「用」的班次才换心情）",
+                            bg=theme.BG, fg=theme.TEXT,
+                            font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1, relief="groove",
+                            labelanchor="nw")
+        box.pack(fill="x", padx=theme.PAD)
+        hdr = tk.Frame(box, bg=theme.BG)
+        hdr.pack(fill="x", padx=theme.GAP, pady=(4, 0))
+        for text, width in (("班次", 24), ("用", 5), ("换谁", 26), ("强制切换", 10)):
+            tk.Label(hdr, text=text, bg=theme.BG, fg=theme.MUTED, width=width, anchor="w",
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+        values = [self.PREV, self.AUTO] + [n for n in self._candidates
+                                           if n not in (self.PREV, self.AUTO)]
+        for i, label in enumerate(self._shift_labels):
+            use_d, who_d, force_d = self._shift_row_defaults(i)
+            row = tk.Frame(box, bg=theme.BG)
+            row.pack(fill="x", padx=theme.GAP, pady=(2, 0))
+            tk.Label(row, text=f"{i + 1}. {label}", bg=theme.BG, fg=theme.TEXT, width=24,
+                     anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+            use = tk.BooleanVar(value=use_d)
+            chk = tk.Checkbutton(row, text="", variable=use, bg=theme.BG,
+                                 activebackground=theme.BG, highlightthickness=0)
+            chk.pack(side="left", padx=(4, 0))
+            who = tk.StringVar(value=who_d)
+            box_who = ttk.Combobox(row, textvariable=who, state="readonly", values=values,
+                                   width=22)
+            box_who.pack(side="left", padx=(4, 6))
+            force = tk.BooleanVar(value=force_d)
+            chk_force = tk.Checkbutton(row, text="", variable=force, bg=theme.BG,
+                                       activebackground=theme.BG, highlightthickness=0)
+            chk_force.pack(side="left", padx=(4, 0))
+            self.shift_use.append(use)
+            self.shift_who.append(who)
+            self.shift_force.append(force)
+            self._shift_widgets.extend([chk, box_who, chk_force])
+        bar = tk.Frame(box, bg=theme.BG)
+        bar.pack(fill="x", padx=theme.GAP, pady=(4, 2))
+        for text, value in (("全选", True), ("全不选", False)):
+            btn = ttk.Button(bar, text=text, command=lambda v=value: self._set_all_shifts(v))
+            btn.pack(side="left", padx=(0, 6))
+            self._shift_widgets.append(btn)
+        tk.Label(box, text="第 1 班就是「默认口径」：其余班次只有和它不同时才单独记一笔，"
+                           "所以三班都一样时不会产生多余配置。",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=500,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
+                                                                pady=(0, 6))
 
     def _set_all_shifts(self, value: bool) -> None:
-        """④ 的全选 / 全不选。"""
+        """表格下方的全选 / 全不选。"""
         for var in self.shift_use:
             var.set(bool(value))
 
-    def _build_advanced(self) -> None:
-        """逐班覆盖表格（构建后由 `_toggle_advanced` 决定显示与否）。
-
-        **「用不用这一班」不在这里**——那由 ④ 统一决定，本表只回答"某班想换给别人 / 想改 ③"。
-        """
-        f = self.adv_frame
-        self.shift_rows = []            # [(换谁 StringVar, 什么时候 StringVar)]
-        if not self._shift_labels:
-            tk.Label(f, text="（还没有导入排班，导入后可以逐班设置）", bg=theme.BG,
-                     fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
-                     ).pack(anchor="w", padx=theme.GAP, pady=4)
-            return
-        hdr = tk.Frame(f, bg=theme.BG)
-        hdr.pack(fill="x", padx=theme.GAP)
-        for text, width in (("班次", 22), ("换给谁", 18), ("什么时候换", 14)):
-            tk.Label(hdr, text=text, bg=theme.BG, fg=theme.MUTED, width=width, anchor="w",
-                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
-        values = [self.INHERIT, self.DEFAULT_TARGET, self.AUTO] + self._candidates
-        # 界面口径只有「等她满 / 只在她满时」两档；旧配置里的「立刻换」仍会原样显示
-        when_values = [self.INHERIT] + [WHEN_LABELS[m] for m in ("wait", "full")]
-        for i, label in enumerate(self._shift_labels):
-            row = tk.Frame(f, bg=theme.BG)
-            row.pack(fill="x", padx=theme.GAP, pady=(2, 0))
-            tk.Label(row, text=f"{i + 1}. {label}", bg=theme.BG, fg=theme.TEXT, width=22,
-                     anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
-            who = tk.StringVar(value=self.INHERIT)
-            ttk.Combobox(row, textvariable=who, state="readonly", values=values,
-                         width=16).pack(side="left", padx=(4, 6))
-            when_var = tk.StringVar(value=self.INHERIT)
-            ttk.Combobox(row, textvariable=when_var, state="readonly", values=when_values,
-                         width=12).pack(side="left")
-            self.shift_rows.append((who, when_var))
-        tk.Label(f, text="换给谁＝这一班的交换对象；什么时候换＝这一班的触发方式。\n"
-                         "「跟随上面的默认」= 用 ①②③；全都没改、且 ④ 勾着的班不会生成覆盖项。",
-                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=460,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
-                                                                pady=(4, 6))
-        self._load_per_shift()
-
-    def _toggle_advanced(self) -> None:
-        """展开/收起逐班表格（`before=` 保证它仍在按钮上方）。"""
-        if self.advanced.get():
-            self.adv_frame.pack(fill="x", padx=theme.PAD, pady=(2, 0), before=self.btn_frame)
-        else:
-            self.adv_frame.pack_forget()
-
-    def _pick_other(self) -> None:
-        """「更多干员…」：从全量名册里搜（下拉只放当前排班的干员，省得翻 900 个）。"""
-        cur = self.target.get()
-        cur = "" if cur in (self.PREV, self.AUTO) else cur
-        picked = ask_operator(self, self._all_names, cur)
-        if not picked:
-            return
-        if picked not in self._values:
-            self._values.append(picked)
-            self.target_box.configure(values=self._values)
-        self.target.set(picked)
-
-    # ------------------------------------------------------------------ 按班次
-    def _load_per_shift(self) -> None:
-        """把已有的按班次配置填进表格（`EntryShiftOverride` → 两个下拉）。
-
-        ④ 的勾选状态在 `__init__` 里就按同一条配置定好了（`_shift_use_default`）。
-        """
-        for i, (who, when_var) in enumerate(self.shift_rows):
-            ov = next((o for o in self._per_shift_in if o.matches(i, self._shift_labels[i])), None)
-            if ov is None:
-                continue
-            if ov.swap_with is not None:
-                if ov.swap_with == "":
-                    who.set(self.DEFAULT_TARGET)
-                elif ov.swap_with in ("any", "auto", "anyone", "任意", "最累", "谁都可以"):
-                    who.set(self.AUTO)
-                else:
-                    who.set(ov.swap_with)
-            if ov.when is not None:
-                when_var.set(WHEN_LABELS.get(ov.when, self.INHERIT))
-            elif ov.force is not None:              # 旧字段兜底
-                when_var.set(WHEN_LABELS["wait" if ov.force else "full"])
-
-    def _collect_per_shift(self) -> list:
-        """把「④ 换哪个班」+ 高级区表格收成 `EntryShiftOverride` 列表。
-
-        - **没勾的班次**：写一条 `enabled=False`（这一班不换心情）。
-        - **勾着的班次**：只有高级区改了"换给谁 / 什么时候换"才写覆盖项，
-          否则什么都不写（留给全局配置，`per_shift` 保持为空）。
-        """
-        from mood_soc.models import EntryShiftOverride
-
-        out = []
-        for i, (who, when_var) in enumerate(self.shift_rows):
-            target = who.get()
-            swap_with = None
-            scope = None
-            if target == self.DEFAULT_TARGET:
-                # 「前一位进驻」这一班就明确用同宿舍口径（否则 scope=anywhere 下会被读成"自动挑"）
-                swap_with = ""
-                scope = "dorm"
-            elif target == self.AUTO:
-                swap_with = "any"
-            elif target != self.INHERIT:
-                swap_with = target
-            label = when_var.get()
-            when = LABEL_TO_WHEN.get(label) if label != self.INHERIT else None
-            use_on = bool(self.shift_use[i].get()) if i < len(self.shift_use) else True
-            # 勾着 + 全跟随默认 → 不生成覆盖项；没勾的一定生成（enabled=False）
-            if use_on and swap_with is None and scope is None and when is None:
-                continue
-            out.append(EntryShiftOverride(key=i + 1, enabled=use_on, swap_with=swap_with,
-                                          scope=scope, when=when))
-        return out
-
     def _sync(self) -> None:
-        """关掉「① 开启」时把 ②③④ 置灰（① 自己不能灰）。"""
+        """关掉「① 开启」时把整张表置灰（① 自己不能灰）。"""
         on = bool(self.enabled.get())
-        self.target_box.configure(state="readonly" if on else "disabled")
-        for w in [self.more_btn, self.force_chk, *self._shift_widgets]:
+        for w in self._shift_widgets:
             try:
                 w.state(["!disabled"] if on else ["disabled"])
             except (tk.TclError, AttributeError):
@@ -585,18 +491,31 @@ class EntryEventDialog(tk.Toplevel):
     def _ok(self) -> None:
         """收成 `(enabled, swap_with, scope, restore_back, when, per_shift)`。
 
-        `scope` 由「② 换谁」的选项自带（前一位进驻＝同宿舍；最累的 / 具体干员＝基建任意位置），
+        **第 1 个勾着「用」的班次那一行充当全局默认**（写进 `swap_with`/`scope`/`when`），
+        其余班次只有和它不同（含"这一班不用"）才写一条 `per_shift` 覆盖——
+        于是"三班设置相同"时 `per_shift` 为空，工具栏文案仍是那套紧凑的单设置写法。
         `restore_back` 固定 `True`（只换心情、两人留原位）。
         """
-        enabled = bool(self.enabled.get())
-        value = self.target.get().strip()
-        swap_with, scope = None, "dorm"
-        if value == self.AUTO:
-            swap_with, scope = "any", "anywhere"
-        elif value and value != self.PREV:
-            swap_with, scope = value, "anywhere"
-        when = "wait" if self.force.get() else "full"
-        self.result = (enabled, swap_with, scope, True, when, self._collect_per_shift())
+        from mood_soc.models import EntryShiftOverride
+
+        rows = []
+        for i in range(len(self._shift_labels)):
+            sw, scope = self._label_target(self.shift_who[i].get().strip())
+            rows.append((bool(self.shift_use[i].get()), sw, scope,
+                         bool(self.shift_force[i].get())))
+        bi = next((i for i, r in enumerate(rows) if r[0]), 0)
+        _, base_sw, base_scope, base_force = rows[bi] if rows else (True, None, "dorm", False)
+        per_shift = []
+        for i, (use, sw, scope, force) in enumerate(rows):
+            if use and sw == base_sw and scope == base_scope and force == base_force:
+                continue                     # 与第 1 班那一行完全相同 → 不写覆盖项
+            per_shift.append(EntryShiftOverride(
+                key=i + 1, enabled=use,
+                # `""`＝明确"不指定"（回到「前一位进驻」），否则会被全局的指定对象盖住
+                swap_with=(sw if sw is not None else ""),
+                scope=scope, when=("wait" if force else "full")))
+        self.result = (bool(self.enabled.get()), base_sw, base_scope, True,
+                       "wait" if base_force else "full", per_shift)
         self.destroy()
 
 
@@ -608,16 +527,15 @@ def messagebox_showinfo_safe(parent, text: str) -> None:
 def ask_entry_event(parent, enabled: bool, swap_with, candidates: Sequence[str],
                     current_holders: Sequence[str] = (), scope: str = "dorm",
                     restore_back: bool = True, when: str = "immediate",
-                    shift_labels: Sequence[str] = (), per_shift: Sequence = (),
-                    all_names: Sequence[str] = ()):
+                    shift_labels: Sequence[str] = (), per_shift: Sequence = ()):
     """返回 `(enabled, swap_with, scope, restore_back, when, per_shift)`；取消返回 None。
 
-    `candidates`＝下拉里直接列的干员（排班里的那些人）；`all_names`＝「更多干员…」搜索用的
-    全量名册（缺省＝`candidates`）。
+    `candidates`＝「换谁」下拉里直接列的干员（排班里的那些人）。
+    返回的 `swap_with`/`scope`/`when` 取自"第 1 个勾着「用」的班次那一行"，`per_shift` 只含
+    与它不同的班次。
     """
     dlg = EntryEventDialog(parent, enabled, swap_with, candidates, current_holders,
                            scope=scope, restore_back=restore_back, when=when,
-                           shift_labels=shift_labels, per_shift=per_shift,
-                           all_names=all_names)
+                           shift_labels=shift_labels, per_shift=per_shift)
     parent.wait_window(dlg)
     return dlg.result

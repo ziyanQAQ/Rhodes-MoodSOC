@@ -674,9 +674,7 @@ class MoodSocApp(tk.Tk):
                                  mates, holders, scope=self.entry_scope,
                                  restore_back=self.entry_restore_back, when=self.entry_when,
                                  shift_labels=(self.schedule.shift_labels() if self.schedule else ()),
-                                 per_shift=self.entry_per_shift,
-                                 all_names=all_operator_names(self.schedule.operator_names()
-                                                              if self.schedule else ()))
+                                 per_shift=self.entry_per_shift)
         if picked is None:
             return
         # 对话框返回 6 元组；只给前几项时其余沿用当前值
