@@ -527,6 +527,71 @@ class Test进驻事件与口径(MoodAssertMixin, unittest.TestCase):
         self.assertIn("锡人", names)
 
 
+class Test副本状态时效性(MoodAssertMixin, unittest.TestCase):
+    """一类老 bug 的回归：**同一个副本被跨班次/跨周期复用**时的状态时效性。
+
+    | 症状 | 原因 |
+    |---|---|
+    | 周期数 ≥ 2 时第 2 周期起换心情一次都不触发 | `Operator.entry_swapped` 幂等标记留在复用的副本上 |
+    | 依赖心情的条件技能（宿舍单体回复选谁…）算错 | 算速率读副本里的 `.mood`，而时间推进的是另一个字典 |
+    | `restore_back=false` + 多周期时那一班静默不换 | 位置互换改过副本，第 2 个周期她不在宿舍、触发条件不成立 |
+    """
+
+    @staticmethod
+    def _dorm_schedule(plan_mood_of_c: str):
+        """两班 12/12：宿舍 = 临光（宿舍单体回复提供者）+ 乙 + 丙；另一班只有甲。
+
+        `plan_mood_of_c`＝写进**布局文件**里丙的心情（副本初始值）。
+        """
+        fac1 = [{"type": "宿舍", "level": 3,
+                 "operators": [{"name": "临光", "mood": "24"}, {"name": "乙", "mood": "24"},
+                               {"name": "丙", "mood": plan_mood_of_c}]}]
+        fac2 = [{"type": "制造站", "level": 3, "operators": ["甲"]}]
+        return Schedule([shift_from_facilities("A · 12h", 12, fac1),
+                         shift_from_facilities("B · 12h", 12, fac2)], D("24"))
+
+    def test_条件技能按真实心情选目标(self):
+        """丙 是宿舍里唯一未满的人 ⇒ 宿舍单体回复该落到她身上（+0.5/h）。
+
+        ⚠️ 不变量：**"心情写在布局文件里"与"只在模拟起点指定"必须得到同一个结果**——
+        实现上要求"算速率前把真实心情同步进副本"。曾经只写起点指定时算错（3h 后差 1.5 点）。
+        """
+        in_file = self._dorm_schedule("5")                       # 副本里就写着 5
+        at_start = self._dorm_schedule("24")                     # 副本写着 24，只在起点指定 5
+        a = simulate_schedule(in_file, cycles=1)
+        b = simulate_schedule(at_start, cycles=1, initial_moods={"丙": D("5")})
+        for hours in ("1", "3"):
+            self.assertMood(b.mood_at("丙", D(hours)), a.mood_at("丙", D(hours)),
+                            f"{hours}h 时丙的心情")
+        # 丙 拿到基础 3.0 + 单体回复 0.5 = 3.5/h：5 + 3.5×3 = 15.5
+        self.assertMood(a.mood_at("丙", D("3")), D("15.5"))
+
+    def test_位置互换在多周期下每班复位(self):
+        """`restore_back=false`（位置也一起互换）时，每个班次都从**计划**出发。"""
+        sch = load_schedule([SAMPLE_MAA])
+
+        def swaps(cycles):
+            traj = simulate_schedule(sch, cycles=cycles, entry_events=True,
+                                     entry_swap_with="森蚺", entry_scope="anywhere",
+                                     entry_restore_back=False, entry_when="full")
+            return [float(m.t) for m in traj.marks if m.kind == "entry" and "互换" in m.label]
+
+        one = swaps(1)
+        self.assertEqual(one, [0.0, 18.0])
+        two = swaps(2)
+        # 第 2 个周期必须是第 1 个周期的**平移**（曾经缺 t=24：那一班她不在宿舍，静默不换）
+        self.assertEqual(two[:len(one)], one)
+        self.assertEqual(two[len(one):], [t + 24.0 for t in one])
+
+    def test_默认路径不受影响(self):
+        """`restore_back=true`（默认、界面口径）：位置每班本就复位，结果与上面无关。"""
+        sch = load_schedule([SAMPLE_MAA])
+        traj = simulate_schedule(sch, cycles=1, entry_events=True, entry_swap_with="塞雷娅",
+                                 entry_scope="anywhere", entry_when="full")
+        self.assertEqual(traj.mood_at("菲亚梅塔", D("12")), D("24"))
+        self.assertMood(traj.mood_at("巫恋", D("6")), D("20.1"))
+
+
 class Test引擎不依赖GUI(unittest.TestCase):
     def test_导入schedule不加载tkinter(self):
         """结构性不变式：计算核心必须能在无显示器环境导入（tkinter 只在 app 层）。"""

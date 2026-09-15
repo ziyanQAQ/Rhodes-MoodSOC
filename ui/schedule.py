@@ -583,6 +583,12 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     for seg_i, (t0, seg_end, idx) in enumerate(segments):
         world = worlds[idx]                 # 本班次的**可变副本**（位置互换只发生在副本里）
         eff = effs[idx]                     # 本班次的**有效**进驻事件配置（含按班次覆盖）
+        # ⚠️ 位置也可能被改过（`restore_back=False` 的「位置也一起互换」）：那就**从计划重建**
+        #    这一班的副本。副本是跨班次 / 跨周期复用的，不重建就会带着上一轮换过的位置——
+        #    多周期时她可能因此不在宿舍里，「进驻宿舍时」这个触发条件直接不成立，那一班静默不换。
+        if eff.restore_back is False and worlds[idx] is not schedule.shifts[idx].world:
+            world = worlds[idx] = copy.deepcopy(schedule.shifts[idx].world)
+            world.entry_events = eff
         pending: List[str] = []             # "等她回满心情再换"的触发者（force）
         # —— 进驻事件（可选）：进入班次那一刻先试一次 ——
         # 这是 t0 处的**跳变**：t0 之前是换心情前的值，t0 起是换之后的（就地改写节点，
@@ -617,6 +623,11 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             # 或走了兜底分支。纯"安全上限推进"时速率必然不变，直接复用（这是主要的提速点：
             # 重算一次全布局约 2.5ms，复用它能把 3 周期的重算从 ~1.9s 压到 ~0.2s）。
             if rates is None:
+                # ⚠️ 算速率前必须把"真实心情"同步进副本：`rates_in_world` 读的是副本里每个干员的
+                #    `.mood`，而时间推进的是上面那个 `moods` 字典。不同步的话，**依赖心情的条件技能**
+                #    （宿舍单体回复该选谁、池分配、自身条件…）会拿旧值判断 —— 速率就错了。
+                #    （示例排班恰好对心情不敏感，换成有这类技能的真实阵容就会歪。）
+                _sync_moods(world, moods)
                 rates = rates_in_world(world, names)
             nxt, snaps = _next_event(schedule, moods, rates, t, seg_end, groups)
             event_fired = bool(snaps) or nxt < seg_end
