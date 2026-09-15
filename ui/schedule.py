@@ -637,7 +637,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         if idle_to_dorm:
             _sync_moods(world, moods)
             idle_moods = {n: moods[n] for n in names if world.get_operator(n) is None}
-            for ev in apply_idle_to_dorm(world, enabled=True, idle=idle_moods):
+            # 这一刻是"第几周期的第几班"：逐人设置按它取最具体的那一条
+            # （心情跨班跨周期连续 ⇒ 每次的候选与可交换对象都不一样）
+            scope = (seg_i // len(schedule.shifts) + 1, idx + 1)
+            for ev in apply_idle_to_dorm(world, enabled=True, idle=idle_moods, scope=scope):
                 marks.append(Mark(t0, "idle", ev.detail))
         groups = [[o.name for o in f.operators] for f in world.facilities]
 

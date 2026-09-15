@@ -224,19 +224,42 @@ class EntryShiftOverride:
 
 @dataclass
 class IdleToDormEntry:
-    """**某个干员**在「闲置入宿」里的设置（只列"改过默认"的人：默认＝参与、自动挑目标）。
+    """**某一次进驻**（周期 × 班次 × 干员）在「闲置入宿」里的设置。
 
-    - `enabled`：这个干员参不参与（`False` = 永远不动他）。
-    - `swap_with`：宿舍满了时**与谁互换**（必须是宿舍里心情满的那位）。
+    默认（不写 `cycle`/`shift`）= 对该干员的**所有**班次/周期生效；
+    写了就只在对应的那几次生效（更具体的优先，见 `IdleToDormConfig.entry_for`）。
+
+    - `enabled`：这一位参不参与（`False` = 永远不动他）。
+    - `swap_with`：宿舍满了时**与谁互换**（必须是那一刻宿舍里心情满的那位）。
       `None`/`""` = **自动**（挑一个满心情的宿舍干员）。
+    - `cycle` / `shift`：**1 基**的周期序号 / 班次序号（`None` = 不限）。
+      为什么要有这两维：心情跨班跨周期连续，所以"这一刻谁没满、谁在宿舍且满了"**每次都不同**，
+      候选与可交换对象都不一样（实测示例排班 3 个周期的闲置入宿事件分别落在 12/18h、24/42h、66h）。
     """
 
     name: str = ""
     enabled: bool = True
     swap_with: Optional[str] = None
+    cycle: Optional[int] = None
+    shift: Optional[int] = None
 
-    def matches(self, name: str) -> bool:
-        return bool(self.name) and self.name == name
+    def matches(self, name: str, cycle: Optional[int] = None,
+                shift: Optional[int] = None) -> bool:
+        """这一条设置对"第 `cycle` 周期的第 `shift` 班的 `name`"是否适用。
+
+        带作用域的设置**只在调用方给出了对应序号时**才匹配（所以不带作用域的旧调用不会误命中）。
+        """
+        if not self.name or self.name != name:
+            return False
+        if self.cycle is not None and self.cycle != cycle:
+            return False
+        if self.shift is not None and self.shift != shift:
+            return False
+        return True
+
+    def specificity(self) -> int:
+        """具体程度：周期+班次都写 = 2，只写一个 = 1，都不写 = 0（越大越优先）。"""
+        return (1 if self.cycle is not None else 0) + (1 if self.shift is not None else 0)
 
 
 @dataclass
@@ -265,12 +288,21 @@ class IdleToDormConfig:
     enabled: Optional[bool] = None
     per_operator: List["IdleToDormEntry"] = field(default_factory=list)
 
-    def entry_for(self, name: str) -> Optional["IdleToDormEntry"]:
-        """这个干员的设置（没写过 = 参与、自动挑目标 → 返回 None）。"""
+    def entry_for(self, name: str, cycle: Optional[int] = None,
+                  shift: Optional[int] = None) -> Optional["IdleToDormEntry"]:
+        """这一刻（`cycle` 周期的 `shift` 班）该干员的有效设置 → **最具体的那一条**。
+
+        优先级：周期+班次都写 > 只写一个 > 都不写（全局）；同分时**后写的赢**。
+        没写过 = 参与、自动挑目标（返回 `None`）。
+        """
+        best: Optional["IdleToDormEntry"] = None
+        best_score = -1
         for e in self.per_operator:
-            if e.matches(name):
-                return e
-        return None
+            if not e.matches(name, cycle, shift):
+                continue
+            if e.specificity() >= best_score:
+                best, best_score = e, e.specificity()
+        return best
 
 
 def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
@@ -283,7 +315,8 @@ def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
     ```
 
     `per_operator` 支持三种写法：`{"名字": "交换对象"}`、`{"名字": false}`（不参与）、
-    或数组 `[{"name": ..., "enabled": ..., "swap_with": ...}]`。
+    或数组 `[{"name": ..., "enabled": ..., "swap_with": ..., "cycle": 2, "shift": 3}]`。
+    数组写法里可以带 `cycle` / `shift`**限定只在哪几次生效**（1 基序号；不写 = 不限）。
     """
     if raw is None:
         return IdleToDormConfig()
@@ -319,10 +352,14 @@ def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
         if not isinstance(value, dict):
             raise ValueError(f"per_operator[{name!r}] 格式无法识别：{value!r}")
         target = value.get("swap_with", value.get("swapWith"))
+        cyc = value.get("cycle", value.get("cycleIndex"))
+        shf = value.get("shift", value.get("shiftIndex"))
         entries.append(IdleToDormEntry(
             name=str(value.get("name", name)),
             enabled=bool(value.get("enabled", True)),
-            swap_with=(str(target).strip() or None) if target is not None else None))
+            swap_with=(str(target).strip() or None) if target is not None else None,
+            cycle=(int(cyc) if cyc is not None else None),
+            shift=(int(shf) if shf is not None else None)))
     return IdleToDormConfig(
         enabled=(None if raw.get("enabled") is None else bool(raw["enabled"])),
         per_operator=entries)

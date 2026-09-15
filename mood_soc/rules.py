@@ -908,7 +908,7 @@ def _full_dorm_mate(world: BaseLayout, exclude: Optional[set] = None):
 
 
 def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
-                       swap_with=None) -> List[Contribution]:
+                       swap_with=None, scope=None) -> List[Contribution]:
     """**把"未满心情的闲置干员"安排进宿舍**（班次开始时的布局事件；就地修改 `world`）。
 
     与 `apply_entry_events` 同一层：它改的是**布局**（谁在哪个房间），不是每小时速率，
@@ -934,6 +934,9 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
         idle     本班未排班的干员 → 心情：`{名字: 心情}`；给了才把他们当候选
         only     只处理这些干员（界面勾了"参与"的人；`None` = 全部候选）
         swap_with  指定交换对象：`{候选名: 目标名}`（`None`/`""` = 自动）
+        scope    这一刻是"第几周期的第几班" → `(周期序号, 班次序号)`（1 基）。
+                 逐人设置按它取**最具体**的那一条（周期×班次 > 周期/班次 > 全局）；
+                 `None` = 不限定（只认没写作用域的设置）
 
     ⚠️ **会就地修改 `world`**（有人进宿舍、有人被换出）。返回事件流水账（`Bucket.EVENT`）。
     """
@@ -948,9 +951,10 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
 
     events: List[Contribution] = []
     swapped_out: set = set()
+    cycle_no, shift_no = (scope if scope else (None, None))
     for op, name, mood, where in _idle_candidates(world, idle=idle, only=only):
-        # 界面"逐人设置"里的参与 / 指定对象
-        entry = cfg.entry_for(name) if cfg is not None else None
+        # 界面"逐人/逐次设置"里的参与 / 指定对象（按 (周期, 班次) 取最具体的那一条）
+        entry = cfg.entry_for(name, cycle_no, shift_no) if cfg is not None else None
         if entry is not None and not entry.enabled:
             continue
         want = None

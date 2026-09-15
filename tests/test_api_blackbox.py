@@ -1510,5 +1510,36 @@ class Test闲置入宿(unittest.TestCase):
         self.assertIn("乙", events[0].detail)
 
 
+    def test_逐次设置_按周期班次生效(self):
+        """`scope=(周期, 班次)`：同一个人在不同班次/周期可以有不同的设置（最具体的优先）。"""
+        def world():
+            w = self._layout(dorm=[("甲", "24"), ("乙", "24")], dorm_slots=2,
+                             others=[("加工站", [("丙", "6")])])
+            w.idle_to_dorm = build_idle_to_dorm_config({"enabled": True, "per_operator": [
+                {"name": "丙", "swap_with": "甲"},                    # 全局：与甲换
+                {"name": "丙", "cycle": 2, "shift": 1, "enabled": False},  # 第 2 周期第 1 班：不动
+                {"name": "丙", "shift": 3, "swap_with": "乙"},        # 第 3 班：与乙换
+            ]})
+            return w
+
+        # 第 1 周期第 1 班 → 命中全局（与甲换）
+        w1 = world()
+        ev1 = apply_idle_to_dorm(w1, enabled=True, scope=(1, 1))
+        self.assertEqual([e.group for e in ev1], ["idle_to_dorm"])
+        self.assertIn("甲", ev1[0].detail)
+        self.assertEqual(self._where(w1, "甲"), "未排班")
+        # 第 2 周期第 1 班 → 命中"不参与"（更具体）
+        w2 = world()
+        self.assertEqual(apply_idle_to_dorm(w2, enabled=True, scope=(2, 1)), [])
+        self.assertEqual(self._where(w2, "丙"), "加工站")
+        # 第 1 周期第 3 班 → 命中"与乙换"
+        w3 = world()
+        ev3 = apply_idle_to_dorm(w3, enabled=True, scope=(1, 3))
+        self.assertIn("乙", ev3[0].detail)
+        # 不带 scope → 只认全局那条
+        w4 = world()
+        self.assertIn("甲", apply_idle_to_dorm(w4, enabled=True)[0].detail)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

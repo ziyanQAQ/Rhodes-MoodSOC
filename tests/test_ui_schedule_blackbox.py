@@ -650,6 +650,24 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         self.assertGreater(n2, n1, "第 2 个周期也应当有闲置入宿事件")
 
 
+    def test_逐次设置_同一人不同班次可以不一样(self):
+        """`IdleToDormEntry` 可带 `cycle`/`shift`：同一人在第 2 班不动、第 3 班仍参与。"""
+        from mood_soc.models import IdleToDormEntry
+
+        # 地灵 只在第 3 班（=shift 3）闲置 → 限定"第 3 班不参与"之后应当完全不动
+        only3 = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True,
+                                  idle_entries=[IdleToDormEntry(name="地灵", enabled=False,
+                                                                shift=3)])
+        self.assertFalse([m for m in only3.marks if m.kind == "idle" and "地灵" in m.label])
+        self.assertLess(only3.mood_at("地灵", 24), D("24"))
+        # 限定成"第 1 班不参与" → 第 3 班照样入宿
+        only1 = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True,
+                                  idle_entries=[IdleToDormEntry(name="地灵", enabled=False,
+                                                                shift=1)])
+        self.assertTrue([m for m in only1.marks if m.kind == "idle" and "地灵" in m.label])
+        self.assertMood(only1.mood_at("地灵", 24), D("24"))
+
+
 class Test引擎不依赖GUI(unittest.TestCase):
     def test_导入schedule不加载tkinter(self):
         """结构性不变式：计算核心必须能在无显示器环境导入（tkinter 只在 app 层）。"""

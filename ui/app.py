@@ -547,66 +547,77 @@ class MoodSocApp(tk.Tk):
 
     # ------------------------------------------------------------ 闲置入宿
     def _idle_entry_list(self):
-        """把界面的逐人设置转成 `[IdleToDormEntry, ...]`——**只列改过默认的**
+        """把界面的逐次设置转成 `[IdleToDormEntry, ...]`——**只列改过默认的**
         （勾掉不参与的、或指定了交换对象的人）；没人改过就返回 `None`（＝全都参与、全自动）。
         """
-        out = [IdleToDormEntry(name=n, enabled=use, swap_with=target)
-               for n, (use, target) in self.idle_entries.items()
+        out = [IdleToDormEntry(name=n, enabled=use, swap_with=target, cycle=cyc, shift=shf)
+               for (cyc, shf, n), (use, target) in self.idle_entries.items()
                if (not use) or target]
         return out or None
 
-    def _idle_candidates(self):
-        """给设置框算候选表 → `(rows, targets)`。
+    def _idle_groups(self, cycles: Optional[int] = None, entries: Optional[dict] = None,
+                     traj=None):
+        """给设置框算**按时间排序的逐次表** → `[group, ...]`。
 
-        `rows`：`[(干员, 心情文字, "班次·位置", 参与, 换谁)]`，取**最需要入宿的那一班**
-        （心情最低的那次）。`targets`：「换谁」下拉能选的人——当前轨迹下**在宿舍且心情满**
-        的那些（界面上就不会给出不满足条件的人）。
+        `group = (标题, [(干员, 心情, 位置, 参与, 换谁, [(可选目标…)]), ...])`。
+
+        为什么按"周期 → 班次"展开：心情跨班跨周期连续，所以**每次**"谁没满、谁在宿舍且满"
+        都不一样 —— 候选与「换谁」的可选项都得按那一刻算（实测 3 个周期的事件分别落在
+        12/18h、24/42h、66h）。只列出**真的有候选**的那几次。
         """
-        rows: dict = {}
-        targets: list = []
-        if self.schedule is None or self.traj is None:
-            return [], []
-        for i, shift in enumerate(self.schedule.shifts):
-            t0 = self.schedule.starts[i]
-            for name in self.traj.names:
-                mood = self.traj.mood_at(name, t0)
-                fac = shift.world.facility_of(name)
-                if fac is not None and fac.ftype == FacilityType.DORMITORY:
-                    if mood >= MOOD_MAX and name not in targets:
-                        targets.append(name)          # 可以作为"被换出"的对象
+        cycles = int(cycles if cycles is not None else self.cycles)
+        entries = self.idle_entries if entries is None else entries
+        traj = traj if traj is not None else self.traj
+        if self.schedule is None or traj is None:
+            return []
+        groups = []
+        n_shifts = len(self.schedule.shifts)
+        for k in range(max(1, cycles)):
+            for i, shift in enumerate(self.schedule.shifts):
+                t0 = self.schedule.cycle_hours * k + self.schedule.starts[i]
+                cands, targets = [], []
+                for name in traj.names:
+                    mood = traj.mood_at(name, t0)
+                    fac = shift.world.facility_of(name)
+                    if fac is not None and fac.ftype == FacilityType.DORMITORY:
+                        if mood >= MOOD_MAX and name not in targets:
+                            targets.append(name)
+                        continue
+                    if fac is not None and fac.ftype not in (FacilityType.WORKSHOP,
+                                                             FacilityType.TRAINING):
+                        continue
+                    if mood >= MOOD_MAX:
+                        continue
+                    cands.append((mood, name, fac.display_name if fac else "未排班"))
+                if not cands:
                     continue
-                if fac is not None and fac.ftype not in (FacilityType.WORKSHOP,
-                                                         FacilityType.TRAINING):
-                    continue                          # 在上班，不是候选
-                if mood >= MOOD_MAX:
-                    continue
-                where = f"第{i + 1}班 · {fac.display_name if fac else '未排班'}"
-                if name not in rows or mood < rows[name][0]:
-                    rows[name] = (mood, where)
-        out = []
-        for name, (mood, where) in sorted(rows.items(), key=lambda kv: kv[1][0]):
-            use, target = self.idle_entries.get(name, (True, None))
-            out.append((name, theme.fmt_mood(mood), where, use, target))
-        return out, targets
+                cands.sort(key=lambda row: (row[0], row[1]))
+                rows = []
+                for mood, name, where in cands:
+                    use, target = entries.get((k + 1, i + 1, name), (True, None))
+                    rows.append((name, theme.fmt_mood(mood), where, use, target,
+                                 [t for t in targets if t != name]))
+                end = t0 + shift.hours
+                title = (f"第 {k + 1} 周期 · 第 {i + 1} 班"
+                         f"（{theme.fmt_clock(t0, self.schedule.cycle_hours)}"
+                         f"–{theme.fmt_clock(end, self.schedule.cycle_hours)}）")
+                groups.append((title, (k + 1, i + 1), rows))
+        return groups
 
-    def _idle_participant_count(self) -> int:
-        """当前轨迹下会有多少人参与（表里的候选减去被勾掉的）。"""
-        rows, _targets = self._idle_candidates()
-        n = 0
-        for name, _m, _w, use_default, _t in rows:
-            use, _target = self.idle_entries.get(name, (use_default, None))
-            n += 1 if use else 0
-        return n
+    def _idle_count(self) -> int:
+        """当前设置下会有多少次"有人入宿"、共涉及多少人。"""
+        groups = self._idle_groups()
+        return sum(len([r for r in rows if r[3]]) for _title, _scope, rows in groups)
 
     def _sync_idle_label(self):
-        """工具栏右侧的当前状态：`未开启` / `已开启 · 5 人（自动）`。"""
+        """工具栏右侧的当前状态：`未开启` / `已开启 · 6 次（自动）`。"""
         if not self.idle_to_dorm.get():
             self.idle_detail.configure(text="未开启", fg=theme.MUTED)
             return
         self.idle_detail.configure(fg=theme.TEXT)
         has_target = any(t for _u, t in self.idle_entries.values())
         self.idle_detail.configure(
-            text=f"已开启 · {self._idle_participant_count()} 人"
+            text=f"已开启 · {self._idle_count()} 次"
                  + ("（含指定）" if has_target else "（自动）"))
 
     def _idle_status(self) -> str:
@@ -614,23 +625,37 @@ class MoodSocApp(tk.Tk):
         if not self.idle_to_dorm.get():
             return "闲置入宿：未开启"
         return (f"闲置入宿：已开启（每班开始时把未满的闲置干员安排进宿舍："
-                f"{self._idle_participant_count()} 人参与；空位优先，"
+                f"{self._idle_count()} 次入宿；空位优先，"
                 f"没空位就与宿舍里心情满的那位互换）")
 
     def edit_idle_to_dorm(self):
-        """工具栏「闲置入宿设置」：总开关 + 一张候选人的表。"""
+        """工具栏「闲置入宿设置」：总开关 + 一张按时间排的逐次表（改动**实时**生效）。
+
+        实时性：对话框每次改动都会回调 `_idle_live` —— 它把当前（还没点应用的）设置套进
+        模拟重算一遍，主界面看板/曲线与对话框里的表**一起**刷新（因为改动会影响后面每一次的候选）。
+        取消时回滚到打开对话框前的那份设置。
+        """
         if self.schedule is None:
             return
-        rows, targets = self._idle_candidates()
-        picked = ask_idle_to_dorm(self, self.idle_to_dorm.get(), rows, targets=targets,
-                                  note="「心情 / 位置」取最需要入宿的那一班；"
-                                       "勾选与「换谁」对每个班次都生效。")
-        if picked is None:
+        snapshot = (self.idle_to_dorm.get(), dict(self.idle_entries), list(self.idle_entries))
+
+        def live(enabled, entries):
+            """对话框的当前状态 → 立刻生效并返回新的分组表。"""
+            self.idle_to_dorm.set(bool(enabled))
+            self.idle_entries = dict(entries)
+            self.recompute()                       # 看板/曲线跟着刷新
+            return self._idle_groups()
+
+        picked = ask_idle_to_dorm(self, self.idle_to_dorm.get(), self._idle_groups(),
+                                  on_change=live)
+        if picked is None:                          # 取消 → 回滚
+            self.idle_to_dorm.set(snapshot[0])
+            self.idle_entries = snapshot[1]
+            self.recompute()
             return
-        enabled, per_operator = picked
-        self.idle_to_dorm.set(enabled)
-        self.idle_entries = dict(per_operator)
-        self._sync_idle_label()
+        enabled, entries = picked                   # 应用（live 已经把它算进去了）
+        self.idle_to_dorm.set(bool(enabled))
+        self.idle_entries = dict(entries)
         self.recompute()
         self.status.configure(text=self._idle_status())
 

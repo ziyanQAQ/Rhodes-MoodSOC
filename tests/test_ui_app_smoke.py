@@ -772,56 +772,81 @@ class Test新增交互(unittest.TestCase):
             app.recompute()
 
     # ------------------------------------------------------- 闲置入宿
-    def test_闲置入宿表与联动(self):
-        """「闲置入宿设置」：表里是"未满且在闲置"的候选人，勾选/指定落进引擎并改变轨迹。"""
+    def test_闲置入宿按周期班次分组(self):
+        """表按时间排（周期 → 班次），每组的候选与「换谁」都按**那一刻**算。
+
+        回归：不同周期/班次的候选集合本来就不一样（心情跨班跨周期连续），
+        所以表必须逐次展开，而不是"一人一行取最危险那次"。
+        """
+        app = self.app
+        app.cycles_var.set("2")
+        app._on_cycles()
+        app.update()
+        groups = app._idle_groups()
+        self.assertGreaterEqual(len(groups), 4)
+        scopes = [g[1] for g in groups]
+        self.assertEqual(scopes, sorted(scopes), "必须按时间从早到晚排")
+        # 不同组的候选集合不一样（至少两组的成员不同）
+        sets = {g[1]: {r[0] for r in g[2]} for g in groups}
+        self.assertGreater(len({frozenset(s) for s in sets.values()}), 1)
+        # 同一个班次在不同周期里连数值都不同（心情跨周期连续）
+        moods = {g[1]: {r[0]: r[1] for r in g[2]} for g in groups}
+        self.assertIn((1, 2), moods)
+        self.assertIn((2, 2), moods)
+        self.assertIn("虎狼丸", moods[(1, 2)])
+        self.assertIn("虎狼丸", moods[(2, 2)])
+        self.assertNotEqual(moods[(1, 2)]["虎狼丸"], moods[(2, 2)]["虎狼丸"])
+        # 「换谁」的可选项也是按那一刻算的（不是全局并集）
+        first_of = {g[1]: frozenset(g[2][0][5]) for g in groups if g[2]}
+        self.assertTrue(first_of)
+        self.assertGreater(len(set(first_of.values())), 1)
+        app.cycles_var.set("1")
+        app._on_cycles()
+        app.update()
+
+    def test_闲置入宿改动实时生效(self):
+        """对话框里改动 → 回调把设置套进模拟重算 → 表与主界面一起刷新；取消则回滚。"""
         from ui.dialogs import IdleToDormDialog
 
         app = self.app
-        rows, targets = app._idle_candidates()
-        self.assertTrue(rows, "示例排班第 2/3 班有未满的闲置干员才对")
-        names = [r[0] for r in rows]
-        self.assertIn("地灵", names)
-        self.assertTrue(targets, "「换谁」下拉要有在宿舍且满心情的人")
-        # 关闭状态：先记住"没开"时地灵的心情
-        app.idle_to_dorm.set(False)
-        app.recompute()
-        before = app.traj.mood_at("地灵", 24)
-        self.assertLess(before, Decimal("24"))
+        groups = app._idle_groups()
+        self.assertTrue(groups)
+        title, scope, rows = groups[0]
+        name = rows[0][0]
+        before = app.traj.mood_at(name, 24)
 
-        dlg = IdleToDormDialog(app, False, rows, targets=targets)
+        seen = []
+
+        def live(enabled, entries):
+            seen.append((enabled, dict(entries)))
+            app.idle_to_dorm.set(bool(enabled))
+            app.idle_entries = dict(entries)
+            app.recompute()                       # 主界面（看板/曲线/状态栏）跟着刷新
+            return app._idle_groups()
+
+        snapshot = (app.idle_to_dorm.get(), dict(app.idle_entries))
+        dlg = IdleToDormDialog(app, False, groups, on_change=live)
         try:
             app.update()
-            self.assertEqual(len(dlg.rows), len(rows))
-            self.assertFalse(dlg.enabled.get())
-            dlg.enabled.set(True)                       # 开总开关
-            dlg._set_all(False)                         # 全不选 → 只留地灵
-            target_row = next(i for i, r in enumerate(rows) if r[0] == "地灵")
-            dlg.rows[target_row][0].set(True)
-            dlg.rows[target_row][1].set("塞雷娅")        # 指定与塞雷娅互换
-            dlg._ok()
-            enabled, per_operator = dlg.result
+            self.assertEqual(len(dlg._rows), sum(len(g[2]) for g in groups))
+            dlg.enabled.set(True)
+            dlg._on_toggle()
+            dlg._rebuild()                        # 不等防抖，直接重建
+            self.assertTrue(seen, "改动必须回调（实时重算）")
+            self.assertTrue(app.idle_to_dorm.get())
+            self.assertIn("闲置入宿：已开启", app._idle_status())
+            self.assertTrue([m for m in app.traj.marks if m.kind == "idle"])
+            self.assertGreater(app.traj.mood_at(name, 24), before)   # 入宿后心情变好
+            dlg._ok()                             # 「应用」：拿到逐次设置
+            enabled, entries = dlg.result
         finally:
             dlg.destroy()
         self.assertTrue(enabled)
-        self.assertFalse(per_operator["地灵"][0] is False)
-        self.assertEqual(per_operator["地灵"][1], "塞雷娅")
-        self.assertTrue(any(use is False for use, _t in per_operator.values()),
-                        "全不选后应当有一批人是不参与的")
-
-        # 直接照对话框的结果接线（等价于 edit_idle_to_dorm 的后半段）
-        app.idle_to_dorm.set(enabled)
-        app.idle_entries = dict(per_operator)
-        app._sync_idle_label()
-        app.recompute()
-        self.assertTrue(app.idle_detail.cget("text").startswith("已开启"))
-        self.assertIn("闲置入宿：已开启", app._idle_status())
-        idle_marks = [m for m in app.traj.marks if m.kind == "idle"]
-        self.assertEqual(len(idle_marks), 1)            # 只有地灵参与
-        self.assertIn("塞雷娅", idle_marks[0].label)
-        self.assertGreater(app.traj.mood_at("地灵", 24), before)
-        # 收尾：恢复默认
-        app.idle_to_dorm.set(False)
-        app.idle_entries = {}
+        self.assertTrue(entries, "应当有设置项")
+        self.assertTrue(all(len(k) == 3 for k in entries), "键是 (周期, 班次, 干员)")
+        # 收尾：回滚
+        app.idle_to_dorm.set(snapshot[0])
+        app.idle_entries = snapshot[1]
         app._sync_idle_label()
         app.recompute()
         self.assertEqual(app.idle_detail.cget("text"), "未开启")
