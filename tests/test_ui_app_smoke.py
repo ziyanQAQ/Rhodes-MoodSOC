@@ -938,6 +938,57 @@ class Test新增交互(unittest.TestCase):
             app.toggle_play()                        # 复原，别把状态留给其它用例
         app.focus_set()
 
+    def test_曲线刻度不重叠且跨天另标天数(self):
+        """横轴刻度只写 `HH:MM`（不带「（第2天）」），跨天另起一行标「第N天」。
+
+        回归：刻度最后一条落在周期末尾，`fmt_clock(24)` 会返回 `00:00（第2天）`（约 90px），
+        塞进 ~43px 的刻度间距里会和左右两条叠字。
+        """
+        import re
+
+        app = self.app
+        app.cycles_var.set("2")
+        app._on_cycles()
+        app.update()
+        chart = app.chart
+        chart.set_data(app.traj, app.curve_operator)
+        app.update()
+        texts = [(i, chart.itemcget(i, "text")) for i in chart.find_all()
+                 if chart.type(i) == "text"]
+        ticks = [(i, t) for i, t in texts if re.fullmatch(r"\d{2}:\d{2}", t)]
+        days = [t for _i, t in texts if re.fullmatch(r"第\d+天", t)]
+        self.assertGreaterEqual(len(ticks), 4)
+        self.assertEqual(days, ["第1天", "第2天"], "跨两个周期应当标出两天")
+        boxes = sorted((chart.bbox(i)[0], chart.bbox(i)[2]) for i, _t in ticks)
+        for (a0, a1), (b0, b1) in zip(boxes, boxes[1:]):
+            self.assertLessEqual(a1, b0, f"刻度标签重叠了：{boxes}")
+        # 单周期时不该出现天数那一行
+        app.cycles_var.set("1")
+        app._on_cycles()
+        app.update()
+        chart.redraw()
+        app.update()
+        texts1 = [chart.itemcget(i, "text") for i in chart.find_all() if chart.type(i) == "text"]
+        self.assertFalse([t for t in texts1 if re.fullmatch(r"第\d+天", t)])
+        self.assertTrue(all(not t.startswith("00:00（") for t in texts1), texts1)
+
+    def test_图下显示此刻与本班速率(self):
+        """曲线图下方的关键数值里要能看到"心情增加/下降的速度"（此刻 + 本班平均）。"""
+        app = self.app
+        app.set_time(Decimal("3"))
+        app._update_chart()
+        text = app.stats.cget("text")
+        self.assertIn("此刻", text)
+        self.assertIn("/时", text)
+        self.assertIn("本班平均", text)
+        # 悬停读数里也带上速率
+        chart = app.chart
+        chart.event_generate("<Motion>", x=int(chart.winfo_width() // 2), y=60)
+        app.update()
+        hover = [chart.itemcget(i, "text") for i in chart.find_withtag("hover")
+                 if chart.type(i) == "text"]
+        self.assertTrue(hover and any("速率" in t for t in hover), hover)
+
     def test_时间滑块两侧按钮与步长提示(self):
         """滑块两侧改成纯箭头（原来写 "◀ 15min" 容易被误读成"15 分钟前/时长"），
         步长与快捷键改用右侧一句人话提示。"""

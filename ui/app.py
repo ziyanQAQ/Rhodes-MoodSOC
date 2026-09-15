@@ -972,7 +972,12 @@ class MoodSocApp(tk.Tk):
         lo, lo_t, hi, hi_t = traj.bounds(name)
         spans = traj.red_face_spans(name)
         total_red = sum((b - a for a, b in spans), Decimal("0"))
+        idx = self.schedule.index_at(self.current_t)
         lines = [
+            # 速率：此刻（滑块所在时刻）与"本班平均"——看曲线时最想知道的两个数
+            f"此刻 {theme.fmt_rate(traj.rate_at(name, self.current_t))}"
+            f"　本班平均 {theme.fmt_rate(traj.shift_average_rate(name, idx))}"
+            f"（{self.schedule.shifts[idx].label}）",
             f"起点 {theme.fmt_mood(traj.mood_at(name, 0))}　"
             f"周期末 {theme.fmt_mood(traj.mood_at(name, traj.total_hours))}",
             f"最低 {theme.fmt_mood(lo)} @ {theme.fmt_clock(lo_t, traj.schedule.cycle_hours)}"

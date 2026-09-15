@@ -121,6 +121,33 @@ def fmt_clock(hours, cycle: Decimal = Decimal("24")) -> str:
     return f"{label}（第{day + 1}天）" if day else label
 
 
+def fmt_clock_short(hours, cycle: Decimal = Decimal("24")) -> str:
+    """只要 `HH:MM`（**不带**「（第N天）」）——图表横轴刻度用。
+
+    为什么单独一个：横轴刻度间距只有几十像素，带上天数的标签（约 90px）必然和左右
+    刻度叠在一起（末尾那条 `24:00` 尤其明显）。跨天信息改由"另起一行标第N天 + 天分界线"表达。
+    """
+    h = Decimal(str(hours)) % cycle
+    hh = int(h)
+    mm = int((h - hh) * 60)
+    if mm == 60:                      # 舍入兜底
+        hh, mm = hh + 1, 0
+    return f"{hh:02d}:{mm:02d}"
+
+
+def fmt_rate(value, places: int = 2) -> str:
+    """心情变化速率 → 人话（**点/时**）：`↓2/时`（在降）/ `↑1.5/时`（在升）/ `0/时`（不变）。
+
+    口径同引擎：`I = 消耗 − 回复`，`I > 0` 下降。这里按"看曲线的人"的习惯加箭头。
+    """
+    v = Decimal(str(value))
+    if v > 0:
+        return "↓" + fmt_mood(v, places) + "/时"
+    if v < 0:
+        return "↑" + fmt_mood(-v, places) + "/时"
+    return "0/时"
+
+
 def fmt_hours(hours) -> str:
     """小时数的紧凑显示（12 / 12.5 / 0.25）。"""
     return fmt_mood(hours, 3) + "h"

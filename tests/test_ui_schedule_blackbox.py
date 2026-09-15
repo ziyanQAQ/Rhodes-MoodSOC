@@ -668,6 +668,40 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         self.assertMood(only1.mood_at("地灵", 24), D("24"))
 
 
+class Test速率读数(MoodAssertMixin, unittest.TestCase):
+    """`Trajectory.rate_at` / `shift_average_rate`：心情变化速率（点/时，>0 下降）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sch = load_schedule([SAMPLE_MAA])
+
+    def test_段内速率恒定且与方向一致(self):
+        traj = simulate_schedule(self.sch, cycles=1)
+        name = "森蚺"                    # 制造站，一直在消耗
+        self.assertGreater(traj.rate_at(name, 1), 0)
+        self.assertEqual(traj.rate_at(name, 1), traj.rate_at(name, 3))     # 同一段内恒定
+        # 宿舍里在回复 → 速率为负（上升）：给她一个低起点，1h 内不会回满
+        rested = simulate_schedule(self.sch, cycles=1, initial_moods={"菲亚梅塔": D("6")})
+        self.assertLess(rested.rate_at("菲亚梅塔", D("0.5")), 0)
+
+    def test_跳变点取右侧那一段(self):
+        """进驻事件那种"同刻跳变"上取速率时，要取**跳变之后**正在走的那一段。"""
+        traj = simulate_schedule(self.sch, cycles=1, entry_events=True, entry_swap_with="塞雷娅",
+                                 entry_scope="anywhere", entry_when="full")
+        # t=0 有一次换心情（她进宿舍前的速率 ≠ 换完之后的速率）；取 0 与 0.001 应一致
+        self.assertEqual(traj.rate_at("菲亚梅塔", 0), traj.rate_at("菲亚梅塔", D("0.001")))
+
+    def test_本班平均速率(self):
+        traj = simulate_schedule(self.sch, cycles=1)
+        name = "森蚺"
+        sch = self.sch
+        for i in range(len(sch.shifts)):
+            a = traj.mood_at(name, sch.starts[i])
+            b = traj.mood_at(name, sch.starts[i] + sch.shifts[i].hours)
+            expect = -(b - a) / sch.shifts[i].hours
+            self.assertMood(traj.shift_average_rate(name, i), expect, f"第{i+1}班平均")
+
+
 class Test引擎不依赖GUI(unittest.TestCase):
     def test_导入schedule不加载tkinter(self):
         """结构性不变式：计算核心必须能在无显示器环境导入（tkinter 只在 app 层）。"""

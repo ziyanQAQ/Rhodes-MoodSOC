@@ -351,6 +351,40 @@ class Trajectory:
         """某时刻所有干员的心情（界面"时间滑动"用的就是这个）。"""
         return {n: self.mood_at(n, t) for n in self.names}
 
+    def rate_at(self, name: str, t) -> Decimal:
+        """某一时刻的心情变化速率（**点 / 时**；`>0` 表示在下降、`<0` 表示在上升）。
+
+        段内速率恒定（这是"事件驱动精确积分"的前提），所以取该时刻所在折线的斜率就是**精确值**。
+        正好落在**跳变节点**（进驻事件 / 闲置入宿那种同刻跳变）上时取**右侧**那一段——
+        即"跳变之后正在按什么速率走"。
+        """
+        t = to_decimal(t)
+        times = self.times
+        if len(times) < 2 or name not in self.moods:
+            return ZERO
+        i = bisect.bisect_right(times, t) - 1
+        if i < 0:
+            i = 0
+        while i + 1 < len(times) - 1 and times[i + 1] == times[i]:
+            i += 1                        # 同刻跳变：跳到右边那一段
+        if i + 1 >= len(times):
+            i = len(times) - 2
+        dt = times[i + 1] - times[i]
+        if dt == 0:
+            return ZERO
+        series = self.moods[name]
+        return -(series[i + 1] - series[i]) / dt
+
+    def shift_average_rate(self, name: str, index: int) -> Decimal:
+        """第 `index` 班（0 基）那一班里的**平均**速率（点 / 时，含进班那一刻的跳变）。"""
+        if self.schedule is None or index < 0 or index >= len(self.schedule.shifts):
+            return ZERO
+        start = self.schedule.starts[index]
+        hours = self.schedule.shifts[index].hours
+        if hours == 0:
+            return ZERO
+        return -(self.mood_at(name, start + hours) - self.mood_at(name, start)) / hours
+
     def bounds(self, name: str) -> Tuple[Decimal, Decimal, Decimal, Decimal]:
         """(最低值, 最低时刻, 最高值, 最高时刻)。"""
         vals, ts = self.moods[name], self.times

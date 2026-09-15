@@ -17,6 +17,8 @@ from typing import Callable, Optional
 from . import theme
 
 M_LEFT, M_RIGHT, M_TOP, M_BOTTOM = 48, 18, 28, 34
+DAY_ROW_H = 14            # 跨天时，刻度下面再留一行写「第N天」
+TICK_MIN_GAP = 46         # 相邻刻度至少这么多像素（`HH:MM` 约 34px + 间距），免得叠字
 
 
 class MoodChart(tk.Canvas):
@@ -55,11 +57,17 @@ class MoodChart(tk.Canvas):
         self.delete("all")
 
     # ------------------------------------------------------------------ 坐标
+    def _multi_day(self) -> bool:
+        """曲线是否跨天（覆盖超过一个周期）——跨天才需要刻度下面那一行「第N天」。"""
+        return bool(self.traj is not None and self.traj.schedule is not None
+                    and self.traj.total_hours > self.traj.schedule.cycle_hours)
+
     def _geom(self):
         w = max(self.winfo_width(), 2)
         h = max(self.winfo_height(), 2)
         x0, x1 = M_LEFT, w - M_RIGHT
-        y0, y1 = M_TOP, h - M_BOTTOM          # y0=心情24，y1=心情0
+        bottom = M_BOTTOM + (DAY_ROW_H if self._multi_day() else 0)
+        y0, y1 = M_TOP, h - bottom           # y0=心情24，y1=心情0
         return x0, x1, y0, y1
 
     def _tx(self, t: Decimal, x0: int, x1: int, total: Decimal) -> float:
@@ -99,9 +107,10 @@ class MoodChart(tk.Canvas):
             ax, bx = self._tx(t, x0, x1, total), self._tx(end, x0, x1, total)
             self.create_rectangle(ax, y0, bx, y1, fill=theme.SHIFT_BAND[idx % 2], outline="")
             self.create_line(bx, y0 - 6, bx, y1, fill=theme.BORDER, dash=(3, 3))
-            self.create_text((ax + bx) / 2, y0 - 14,
-                             text=f"{shift.label}  {theme.fmt_hours(shift.hours)}",
-                             fill=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL))
+            if bx - ax >= 60:            # 太窄就别写，免得和相邻班次的标题叠在一起
+                self.create_text((ax + bx) / 2, y0 - 14,
+                                 text=f"{shift.label}  {theme.fmt_hours(shift.hours)}",
+                                 fill=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL))
             t, idx = end, idx + 1
 
         # —— 红脸区间底色 ——
@@ -117,15 +126,30 @@ class MoodChart(tk.Canvas):
             self.create_text(x0 - 8, y, text=theme.fmt_mood(mood), anchor="e",
                              fill=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL))
 
-        # —— 时间刻度（自动选步长，最多约 12 条）——
-        step_h = self._time_step(total)
+        # —— 时间刻度（只写 HH:MM；步长按"最多 12 条 + 间距 ≥ 46px"自动选）——
+        step_h = self._time_step(total, x1 - x0)
         tick = Decimal("0")
         while tick <= total + Decimal("0.0001"):
             x = self._tx(tick, x0, x1, total)
             self.create_line(x, y1, x, y1 + 4, fill=theme.BORDER)
-            self.create_text(x, y1 + 16, text=theme.fmt_clock(tick, sched.cycle_hours),
+            # ⚠️ 刻度**不带**「（第N天）」：带上就约 90px 宽，必然和左右刻度叠字
+            #    （末尾那条 24:00 最明显）。跨天信息由下面那一行「第N天」表达。
+            self.create_text(x, y1 + 16, text=theme.fmt_clock_short(tick, sched.cycle_hours),
                              fill=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL))
             tick += step_h
+
+        # —— 跨天：天分界线（实线）+ 每天区间下面居中标「第N天」——
+        if self._multi_day():
+            day_start = Decimal("0")
+            day_no = 1
+            while day_start < total:
+                day_end = min(day_start + sched.cycle_hours, total)
+                da, db = self._tx(day_start, x0, x1, total), self._tx(day_end, x0, x1, total)
+                if day_start > 0:
+                    self.create_line(da, y0, da, y1 + 4, fill=theme.MUTED, dash=(4, 2))
+                self.create_text((da + db) / 2, y1 + 30, text=f"第{day_no}天",
+                                 fill=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL))
+                day_start, day_no = day_end, day_no + 1
 
         # —— 曲线：直接用事件节点画折线（不采样，保拐点）——
         pts = []
@@ -169,12 +193,15 @@ class MoodChart(tk.Canvas):
 
         self._draw_cursor()
 
-    def _time_step(self, total: Decimal) -> Decimal:
-        """按总时长挑一个"整"刻度步长，使刻度数不超过 ~12 条。"""
-        for step in (Decimal("1"), Decimal("2"), Decimal("3"), Decimal("6"), Decimal("12"), Decimal("24")):
-            if total / step <= 12:
+    def _time_step(self, total: Decimal, span: float) -> Decimal:
+        """选一个"整"刻度步长：最多约 12 条，且相邻间距 ≥ `TICK_MIN_GAP` 像素（防叠字）。"""
+        for step in (Decimal("1"), Decimal("2"), Decimal("3"), Decimal("6"), Decimal("12"),
+                     Decimal("24"), Decimal("48"), Decimal("72")):
+            if total / step <= 12 and float(step / total) * span >= TICK_MIN_GAP:
                 return step
-        return total / 12
+        # 候选都不满足（比如特别长的周期）→ 按"能放下几条"反推，至少留 2 格
+        n = max(2, int(span // TICK_MIN_GAP))
+        return total / n
 
     def _draw_cursor(self) -> None:
         self.delete("cursor")
@@ -214,7 +241,9 @@ class MoodChart(tk.Canvas):
         self.create_oval(event.x - 3, y - 3, event.x + 3, y + 3,
                          fill=theme.TEXT, outline="", tags="hover")
         extra = self.info_provider(t) if self.info_provider else ""
-        text = f"{theme.fmt_clock(t, self.traj.schedule.cycle_hours)}　心情 {theme.fmt_mood(mood)}"
+        rate = self.traj.rate_at(self.name, t)
+        text = (f"{theme.fmt_clock(t, self.traj.schedule.cycle_hours)}　"
+                f"心情 {theme.fmt_mood(mood)}　速率 {theme.fmt_rate(rate)}")
         if extra:
             text += f"　{extra}"
         self.create_text(x0 + 6, y0 + 4, text=text, anchor="nw", fill=theme.TEXT,
