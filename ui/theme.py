@@ -69,6 +69,11 @@ def blend(color_a: str, color_b: str, ratio: float) -> str:
     return _hex(tuple(a[i] + (b[i] - a[i]) * ratio for i in range(3)))
 
 
+def zebra(index: int) -> str:
+    """表格行的隔行底色：偶数行白、奇数行次级色（三张表都用它，读起来不串行）。"""
+    return PANEL if index % 2 == 0 else PANEL_ALT
+
+
 def mood_tint(value) -> str:
     """心情 → **芯片底色**（心情色向白大量混，保证黑字可读）。"""
     return blend(mood_color(value), "#ffffff", 0.84)

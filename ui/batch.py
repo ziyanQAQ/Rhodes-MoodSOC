@@ -32,9 +32,13 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from mood_soc.config import (MOOD_MAX, MOOD_MIN, OUTPUT_ROOM_TYPES, OUTPUT_SLOT_TOTAL,
                             facility_max_level, facility_slots)
+from mood_soc.scenario import DEFAULT_OPERATOR_LEVEL
 
 from ui import theme
 from ui.dialogs import ask_operator, parse_mood
+
+# 表格默认可视高度（独立使用时的值；设置中心里传更矮的值，好让四个分区共用同一块内容区）
+TABLE_H = 420
 
 # 滚轮用的 bindtag：只让表格区域的滚轮生效（**不用 bind_all**，那会抢走整个窗口的滚轮）
 TABLE_TAG = "MoodBatchTable"
@@ -74,9 +78,23 @@ class BatchMixin:
                          initial_moods: Optional[Dict[str, Decimal]] = None,
                          imported_moods: Optional[Dict[str, Decimal]] = None,
                          moods_now: Optional[Dict[str, Decimal]] = None,
-                         current_t=Decimal("0"), on_change=None):
-        """装好状态 + 建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。"""
+                         current_t=Decimal("0"), on_change=None, pool=None,
+                         table_height: int = TABLE_H):
+        """装好状态 + 建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
+
+        `pool`：**干员池**（`[{"name","elite","level","own"}]`，来自「导入 v4 蓝图」这类
+        文件——那种文件里房间是空的，只给了"我有谁"）。池里的人：
+          · 会出现在"选人"搜索窗里（否则空布局里一个人都选不到）；
+          · 各自的练度作为默认值（不再是清一色 E2）；
+          · 可以一键「从池中依次填入」按顺序铺满当前班次的位置。
+        """
         self._on_change = on_change
+        self._table_h = int(table_height)   # 表格可视高度（设置中心里矮一点，好统一尺寸）
+        self._pool = [dict(p) for p in (pool or [])]
+        self._pool_elite = {p["name"]: int(p["elite"]) for p in self._pool
+                            if p.get("elite") is not None}
+        self._pool_level = {p["name"]: int(p["level"]) for p in self._pool
+                            if p.get("level") is not None}
         self._schedule = schedule
         self._labels = schedule.shift_labels()
         self._shift_index = max(0, min(int(shift_index), len(schedule.shifts) - 1))
@@ -279,6 +297,8 @@ class BatchMixin:
         row = tk.Frame(box, bg=theme.BG)
         row.pack(fill="x", padx=theme.GAP, pady=(4, 2))
         ttk.Button(row, text="批量粘贴名单…", command=self._paste_names).pack(side="left")
+        ttk.Button(row, text="从池中依次填入", command=self._fill_from_pool).pack(
+            side="left", padx=(6, 0))
         ttk.Button(row, text="清空本班次", command=self._clear_shift).pack(side="left",
                                                                           padx=(6, 0))
         ttk.Button(row, text="全部设为 E2", command=lambda: self._set_all_elite(2)).pack(
@@ -287,18 +307,55 @@ class BatchMixin:
         tk.Checkbutton(row, text="显示空位", variable=self.show_empty, bg=theme.BG,
                        activebackground=theme.BG, highlightthickness=0,
                        command=self._rebuild_rows).pack(side="left", padx=(10, 0))
+        self.pool_note = tk.Label(box, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
+                                  font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.pool_note.pack(fill="x", padx=theme.GAP)
+        self._sync_pool_note()
         tk.Label(box, text="「批量粘贴名单」＝一行一个（逗号/空格也行），按房间顺序依次填入；"
                            "点表格里的干员名可以搜索更换。",
                  bg=theme.BG, fg=theme.MUTED, anchor="w",
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(fill="x", padx=theme.GAP,
                                                                pady=(0, 6))
 
+    # ---------------------------------------------------------------- 干员池
+    def _sync_pool_note(self) -> None:
+        """池的状态那一行（没池就说清"为什么这按钮是灰的"）。"""
+        if not hasattr(self, "pool_note"):
+            return
+        if not self._pool:
+            self.pool_note.configure(
+                text="干员池：空（只有「v4 蓝图 + 干员池」那类文件会带池；"
+                     "MAA 排班与 v3 输出本身就带了人员安排）")
+            return
+        names = "、".join(p["name"] for p in self._pool[:6])
+        more = f" 等 {len(self._pool)} 名" if len(self._pool) > 6 else ""
+        self.pool_note.configure(text=f"干员池：{names}{more}（选人时可搜到，"
+                                      f"练度用池里的值）")
+
+    def _pool_names(self) -> List[str]:
+        return [p["name"] for p in self._pool]
+
+    def _fill_from_pool(self) -> None:
+        """把池里的干员**按顺序**铺满当前班次的位置（可再手改）。
+
+        为什么要有它：v4 那类文件只给"蓝图 + 我有谁"，房间里没有任何人——
+        没有这一键，用户就得一个个点位置把人放进去。
+        """
+        if not self._pool:
+            self._error("这份排班没有干员池（只有「v4 蓝图 + 干员池」文件才带池）")
+            return
+        self._collect_moods()
+        names = [p["name"] for p in self._pool]
+        self._apply_names(names, clear_first=True)
+        self.err.configure(text=f"已按池顺序填入 {min(len(names), len(self._all_slots()))} 人"
+                                "（可继续手改；点位置可以换人）")
+
     # ================================================================ 表格
     def _build_table(self) -> None:
         body = tk.Frame(self, bg=theme.BG)
         body.pack(fill="both", expand=True, padx=theme.PAD)
-        self.canvas = tk.Canvas(body, bg=theme.PANEL, highlightthickness=0, height=420,
-                                highlightbackground=theme.BORDER)
+        self.canvas = tk.Canvas(body, bg=theme.PANEL, highlightthickness=0,
+                                height=self._table_h, highlightbackground=theme.BORDER)
         self.scroll = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scroll.set)
         self.scroll.pack(side="right", fill="y")
@@ -361,6 +418,9 @@ class BatchMixin:
             self._fac_names.append(fac)
         for op in shift.world.all_operators():           # 练度预填（默认 E2 满练）
             self._elite.setdefault(op.name, int(op.elite))
+        for p in self._pool:                             # 池里的练度也算缺省（v4 蓝图用得上）
+            if p.get("elite") is not None:
+                self._elite.setdefault(p["name"], int(p["elite"]))
 
     def _mark_dirty(self) -> None:
         """记下"这一班的干员被改过"，并把工作副本留给切班次后复用。"""
@@ -394,11 +454,20 @@ class BatchMixin:
                 first = False
         return plan
 
+    # ---------------------------------------------------------------- 练度缺省
+    def _elite_of(self, name: str) -> int:
+        """某干员的练度：面板里改过的 > **干员池里的** > 满练（2）。"""
+        return int(self._elite.get(name, self._pool_elite.get(name, 2)))
+
+    def _level_of(self, name: str) -> Optional[int]:
+        """池里带的等级（没有就 None → 引擎用缺省等级）。"""
+        return self._pool_level.get(name)
+
     def _op_text(self, name: str) -> str:
         """表格里的干员名（非精英化二时带练度角标，与看板一致）。"""
         if not name:
             return "（空位 · 点这里选人）"
-        elite = self._elite.get(name, 2)
+        elite = self._elite_of(name)
         return f"{name} E{elite}" if elite < 2 else name
 
     def _on_elite_change(self, name: str) -> None:
@@ -428,16 +497,26 @@ class BatchMixin:
 
     def _refresh_elite_cells(self) -> None:
         for name, var in self._elite_vars.items():
-            var.set(f"E{self._elite.get(name, 2)}")
+            var.set(f"E{self._elite_of(name)}")
         for r in self._rows:
             op = r["op"].cget("text").split(" ")[0]
             if op in self._elite:
                 r["op"].configure(text=self._op_text(op))
 
     def _op_spec(self, name: str):
-        """写回场景的干员写法：只有**非 E2** 才写成对象（保持 JSON 简洁）。"""
-        elite = self._elite.get(name, 2)
-        return {"name": name, "elite": elite} if elite != 2 else name
+        """写回场景的干员写法：满练（E2 且等级为缺省）就用纯名字，否则写成对象。
+
+        「非满练才写对象」是为了 JSON 简洁；池里带来的 `level` 也要写进去
+        （本项目有 4 条技能要求等级 30，等级低了它们不生效）。
+        """
+        elite = self._elite_of(name)
+        level = self._level_of(name)
+        if elite == 2 and (level is None or level == DEFAULT_OPERATOR_LEVEL):
+            return name
+        spec: dict = {"name": name, "elite": elite}
+        if level is not None:
+            spec["level"] = level
+        return spec
 
     def _rebuild_rows(self) -> None:
         """按计划画表格；**结构没变就只换内容**（切班次/换人是最常见的路径，
@@ -450,21 +529,22 @@ class BatchMixin:
         for w in self.inner.winfo_children():
             w.destroy()
         self._rows = []
-        for fi, si, name, room in plan:
-            row = tk.Frame(self.inner, bg=theme.PANEL)
+        for row_i, (fi, si, name, room) in enumerate(plan):
+            bg = theme.zebra(row_i)                     # 隔行底色：一行一行看得清
+            row = tk.Frame(self.inner, bg=bg)
             row.pack(fill="x", padx=4, pady=ROW_PAD)
-            room_lbl = tk.Label(row, text=room, bg=theme.PANEL, fg=theme.TEXT, width=11,
+            room_lbl = tk.Label(row, text=room, bg=bg, fg=theme.TEXT, width=11,
                                 anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL))
             room_lbl.pack(side="left")
-            tk.Label(row, text=f"{si + 1}", bg=theme.PANEL, fg=theme.MUTED, width=3, anchor="w",
+            tk.Label(row, text=f"{si + 1}", bg=bg, fg=theme.MUTED, width=3, anchor="w",
                      font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
-            op = self._op_label(row, fi, si, name)
+            op = self._op_label(row, fi, si, name, bg=bg)
             op.pack(side="left", fill="x", expand=True)
             entry = ttk.Entry(row, width=6)
             elite = ttk.Combobox(row, state="readonly", width=3,
                                  values=[f"E{i}" for i in range(3)])
             elite.bind("<<ComboboxSelected>>", lambda _e, n=name: self._on_elite_change(n))
-            dash = tk.Label(row, text="—", bg=theme.PANEL, fg=theme.MUTED, width=8,
+            dash = tk.Label(row, text="—", bg=bg, fg=theme.MUTED, width=8,
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
             self._rows.append({"key": (fi, si), "room": room_lbl, "op": op,
                                "entry": entry, "elite": elite, "dash": dash})
@@ -482,7 +562,7 @@ class BatchMixin:
         self._cells = [(fi, si) for fi, si, _n, _r in plan]
         for r, (fi, si, name, room) in zip(self._rows, plan):
             r["room"].configure(text=room)
-            elite = self._elite.get(name, 2) if name else 2
+            elite = self._elite_of(name) if name else 2
             r["op"].configure(text=self._op_text(name),
                               fg=(theme.TEXT if name else theme.MUTED))
             if name:
@@ -508,9 +588,10 @@ class BatchMixin:
                     r["dash"].pack(side="left", padx=(6, 4))
 
 
-    def _op_label(self, row, fac_index: int, slot_index: int, name: str) -> tk.Label:
+    def _op_label(self, row, fac_index: int, slot_index: int, name: str,
+                  bg: str = theme.PANEL) -> tk.Label:
         """干员单元格：可点的文字（点开搜索窗换人 / 选人 / 清空）。"""
-        label = tk.Label(row, text=(name or "（空位 · 点这里选人）"), bg=theme.PANEL,
+        label = tk.Label(row, text=(name or "（空位 · 点这里选人）"), bg=bg,
                          fg=(theme.TEXT if name else theme.MUTED), anchor="w", cursor="hand2",
                          font=(theme.FONT_FAMILY, theme.FS_SMALL))
         label.bind("<Button-1>",
@@ -537,6 +618,9 @@ class BatchMixin:
         ops = self._fac_names[fac_index].setdefault("operators", [])
         current = ops[slot_index] if slot_index < len(ops) else ""
         names = [n for n in self._schedule.operator_names()]
+        for n in self._pool_names():            # 池里的人也要能选（空布局否则没人可选）
+            if n not in names:
+                names.append(n)
         others = [n for f in self._fac_names for n in f.get("operators", []) if n != current]
         picked = ask_operator(self, names + [n for n in others if n not in names], current)
         if picked is None:
@@ -666,11 +750,13 @@ class BatchPanel(tk.Frame, BatchMixin):
                  initial_moods: Optional[Dict[str, Decimal]] = None,
                  imported_moods: Optional[Dict[str, Decimal]] = None,
                  moods_now: Optional[Dict[str, Decimal]] = None,
-                 current_t=Decimal("0"), on_change=None):
+                 current_t=Decimal("0"), on_change=None, pool=None,
+                 table_height: int = TABLE_H):
         super().__init__(master, bg=theme.BG)
         self._init_batch_body(master, schedule, shift_index=shift_index,
                               initial_moods=initial_moods, imported_moods=imported_moods,
-                              moods_now=moods_now, current_t=current_t, on_change=on_change)
+                              moods_now=moods_now, current_t=current_t, on_change=on_change,
+                              pool=pool, table_height=table_height)
 
     def destroy(self) -> None:
         """销毁时取消还没落地的防抖任务（否则会对着已销毁的控件报 invalid command name）。"""

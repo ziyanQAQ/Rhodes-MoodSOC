@@ -19,6 +19,9 @@ from mood_soc.models import normalize_entry_when
 
 from . import theme
 
+# 「设置」中心里各分区共用的排版栅格：标签列宽（右对齐）
+LABEL_W = 12
+
 # 心情输入的合法范围（周期起点心情．引擎侧同样钳位 [0, 24]）
 MOOD_MIN_TEXT = Decimal("0")
 MOOD_MAX_TEXT = Decimal("24")
@@ -218,32 +221,37 @@ class TimelinePanel(tk.Frame):
         tk.Label(self, text="各班长之和必须等于周期时长", bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w")
 
-        cyc = tk.Frame(self, bg=theme.BG)
-        cyc.pack(fill="x", pady=(theme.GAP, 2))
-        tk.Label(cyc, text="周期（小时）", bg=theme.BG, fg=theme.TEXT,
-                 font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(side="left")
+        # 栅格：标签右对齐 + 输入框等宽（与设置中心别的分区同一套排版）
+        grid = tk.Frame(self, bg=theme.BG)
+        grid.pack(fill="x", pady=(theme.GAP, 0))
+        grid.columnconfigure(1, minsize=90)
+        tk.Label(grid, text="周期", bg=theme.BG, fg=theme.TEXT, width=LABEL_W, anchor="e",
+                 font=(theme.FONT_FAMILY, theme.FS_BODY)).grid(row=0, column=0, sticky="e",
+                                                               pady=2)
         self.cycle_var = tk.StringVar(value=theme.fmt_mood(cycle, 3))
-        ttk.Entry(cyc, textvariable=self.cycle_var, width=8).pack(side="left", padx=6)
-        ttk.Button(cyc, text="均分", command=self._even).pack(side="left")
+        ttk.Entry(grid, textvariable=self.cycle_var, width=8).grid(row=0, column=1, padx=8,
+                                                                   sticky="w")
+        tk.Label(grid, text="小时", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).grid(row=0, column=2, sticky="w")
+        ttk.Button(grid, text="均分", command=self._even).grid(row=0, column=3, padx=(8, 0))
 
         self.rows: List[tk.StringVar] = []
-        grid = tk.Frame(self, bg=theme.BG)
-        grid.pack(fill="x", pady=theme.GAP)
         for i, (label, h) in enumerate(zip(self._labels, hours)):
-            tk.Label(grid, text=label, bg=theme.BG, fg=theme.TEXT, anchor="w",
-                     font=(theme.FONT_FAMILY, theme.FS_BODY)).grid(row=i, column=0, sticky="w",
+            row = i + 1
+            tk.Label(grid, text=label, bg=theme.BG, fg=theme.TEXT, width=LABEL_W, anchor="e",
+                     font=(theme.FONT_FAMILY, theme.FS_BODY)).grid(row=row, column=0, sticky="e",
                                                                     pady=2)
             var = tk.StringVar(value=theme.fmt_mood(h, 3))
             var.trace_add("write", lambda *_a: self._validate())
-            ttk.Entry(grid, textvariable=var, width=8).grid(row=i, column=1, padx=8)
+            ttk.Entry(grid, textvariable=var, width=8).grid(row=row, column=1, padx=8, sticky="w")
             tk.Label(grid, text="小时", bg=theme.BG, fg=theme.MUTED,
-                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).grid(row=i, column=2, sticky="w")
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).grid(row=row, column=2, sticky="w")
             self.rows.append(var)
         self.cycle_var.trace_add("write", lambda *_a: self._validate())
 
-        self.msg = tk.Label(self, text="", bg=theme.BG, fg=theme.MUTED,
+        self.msg = tk.Label(self, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        self.msg.pack(anchor="w")
+        self.msg.pack(fill="x", pady=(theme.GAP, 0))
         self._validate()
 
     def _even(self) -> None:
@@ -439,13 +447,14 @@ class EntryEventMixin:
                                            if n not in (self.PREV, self.AUTO)]
         for i, label in enumerate(self._shift_labels):
             use_d, who_d, force_d = self._shift_row_defaults(i)
-            row = tk.Frame(box, bg=theme.BG)
+            bg = theme.zebra(i)                     # 隔行底色
+            row = tk.Frame(box, bg=bg)
             row.pack(fill="x", padx=theme.GAP, pady=(2, 0))
-            tk.Label(row, text=f"{i + 1}. {label}", bg=theme.BG, fg=theme.TEXT, width=24,
+            tk.Label(row, text=f"{i + 1}. {label}", bg=bg, fg=theme.TEXT, width=24,
                      anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
             use = tk.BooleanVar(value=use_d)
-            chk = tk.Checkbutton(row, text="", variable=use, bg=theme.BG,
-                                 activebackground=theme.BG, highlightthickness=0,
+            chk = tk.Checkbutton(row, text="", variable=use, bg=bg,
+                                 activebackground=bg, highlightthickness=0,
                                  command=self._notify)
             chk.pack(side="left", padx=(4, 0))
             who = tk.StringVar(value=who_d)
@@ -454,8 +463,8 @@ class EntryEventMixin:
             box_who.pack(side="left", padx=(4, 6))
             box_who.bind("<<ComboboxSelected>>", lambda _e: self._notify())
             force = tk.BooleanVar(value=force_d)
-            chk_force = tk.Checkbutton(row, text="", variable=force, bg=theme.BG,
-                                       activebackground=theme.BG, highlightthickness=0,
+            chk_force = tk.Checkbutton(row, text="", variable=force, bg=bg,
+                                       activebackground=bg, highlightthickness=0,
                                        command=self._notify)
             chk_force.pack(side="left", padx=(4, 0))
             self.shift_use.append(use)
@@ -717,20 +726,21 @@ class IdleToDormMixin:
                                  command=lambda v=value, s=scope: self._set_group(s, v))
                 btn.pack(side="right", padx=(0, 4))
                 self._widgets.append(btn)
-            for name, mood_text, where, _use_d, target_d, targets in rows:
-                row = tk.Frame(self.inner, bg=theme.PANEL)
+            for row_i, (name, mood_text, where, _use_d, target_d, targets) in enumerate(rows):
+                bg = theme.zebra(row_i)                 # 隔行底色
+                row = tk.Frame(self.inner, bg=bg)
                 row.pack(fill="x", padx=4, pady=ROW_PAD)
-                tk.Label(row, text=name, bg=theme.PANEL, fg=theme.TEXT, width=13, anchor="w",
+                tk.Label(row, text=name, bg=bg, fg=theme.TEXT, width=13, anchor="w",
                          font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
-                tk.Label(row, text=mood_text, bg=theme.PANEL, fg=theme.MUTED, width=7,
+                tk.Label(row, text=mood_text, bg=bg, fg=theme.MUTED, width=7,
                          anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
-                tk.Label(row, text=where, bg=theme.PANEL, fg=theme.MUTED, width=12, anchor="w",
+                tk.Label(row, text=where, bg=bg, fg=theme.MUTED, width=12, anchor="w",
                          font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
                 key = (scope[0], scope[1], name)
                 use_d, target_d = self.state.get(key, (True, None))
                 use = tk.BooleanVar(value=bool(use_d))
-                chk = tk.Checkbutton(row, text="", variable=use, bg=theme.PANEL,
-                                     activebackground=theme.PANEL, highlightthickness=0,
+                chk = tk.Checkbutton(row, text="", variable=use, bg=bg,
+                                     activebackground=bg, highlightthickness=0,
                                      command=self._schedule_rebuild)
                 chk.pack(side="left", padx=(6, 0))
                 who = tk.StringVar(value=(target_d or self.AUTO))
