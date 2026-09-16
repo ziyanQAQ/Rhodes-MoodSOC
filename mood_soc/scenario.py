@@ -35,6 +35,23 @@ def build_operator(spec) -> Operator:
                     factions=tuple(factions) if factions else None)
 
 
+def build_initial_variables(data) -> dict:
+    """解析顶层 `initial_global`（变量初始值）→ `{变量名: Decimal}`。
+
+    键用本项目的**变量中文名**（上游英文键由 `mood_soc/importer.py` 翻译好再进来）；
+    值走 `to_decimal`（禁止 `Decimal(float)`）。缺省/空 → 空表。
+
+    场景 JSON 写法：
+
+    ```json
+    {"initial_global": {"木天蓼": 5, "人间烟火": 30}, "facilities": [ ... ]}
+    ```
+    """
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): to_decimal(v) for k, v in data.items() if v is not None}
+
+
 def build_base_layout(data, validate: bool = False) -> BaseLayout:
     """由整个场景描述构建 BaseLayout。
 
@@ -98,6 +115,9 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
         # 顶层可选的「闲置入宿」配置（未满的闲置干员进宿舍恢复），见 models.IdleToDormConfig：
         #   {"idle_to_dorm": {"enabled": true, "per_operator": {"虎狼丸": "甲"}}, "facilities": [...]}
         idle_to_dorm=build_idle_to_dorm_config(data.get("idle_to_dorm")),
+        # 顶层可选的「变量初始值」（基建级中间货币的起始量）：
+        #   {"initial_global": {"木天蓼": 5, "人间烟火": 30}, "facilities": [...]}
+        initial_variables=build_initial_variables(data.get("initial_global")),
     )
     if validate:
         issues = world.validate()

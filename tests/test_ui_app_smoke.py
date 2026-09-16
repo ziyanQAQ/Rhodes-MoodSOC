@@ -379,6 +379,8 @@ class Test新增交互(unittest.TestCase):
         self.assertEqual([str(c.cget("textvariable")) for c in combos],
                          [str(app.speed_var)], "工具栏不该再有设置类下拉（周期数已进设置中心）")
         self.assertNotIn("cycles_var", str(combos))
+        # 下面只看状态文字：把"逐班覆盖"清掉（示例 MAA 自带的 Fiammetta 配置会带来覆盖项）
+        app.entry_per_shift = []
         # 右侧那串状态只报**当前状态**（点它也能开设置）
         app.entry_events.set(False)
         app._sync_entry_label()
@@ -395,6 +397,7 @@ class Test新增交互(unittest.TestCase):
     def test_进驻事件开关有说明且状态可见(self):
         """工具栏右侧那串只报"当前状态"：开没开 + 换谁 + 要不要等她满。"""
         app = self.app
+        app.entry_per_shift = []          # 只看全局口径（逐班覆盖会让状态变成"按班次"）
         app.entry_events.set(False)
         app._sync_entry_label()
         self.assertEqual(app.entry_detail.cget("text"), "未开启")
@@ -526,8 +529,10 @@ class Test新增交互(unittest.TestCase):
         self.assertEqual(app.traj.mood_at("塞雷娅", 0), Decimal("6"))
 
         # ② 开启 + 指定「塞雷娅」+ 不勾强制切换（她满 24 → 判定时照换）
-        #    走的正是设置中心「换心情」面板回调的那条落地函数
-        app.apply_entry_event((True, "塞雷娅", "anywhere", True, "full"))
+        #    走的正是设置中心「换心情」面板回调的那条落地函数。
+        #    ⚠️ 第 6 项 `per_shift=[]` 不能省：不传就"沿用当前值"（示例 MAA 自带的
+        #    Fiammetta 逐班配置会留下覆盖项），而面板每次都会把 6 项一并交出。
+        app.apply_entry_event((True, "塞雷娅", "anywhere", True, "full", []))
         self.assertTrue(app.entry_events.get())
         self.assertEqual(app.entry_swap_with, "塞雷娅")
         self.assertEqual(app.entry_scope, "anywhere")
@@ -574,7 +579,7 @@ class Test新增交互(unittest.TestCase):
                 app._ask_and_set_mood(who)
         finally:
             app_mod.ask_mood = orig_mood
-        app.apply_entry_event((True, "any", "anywhere", True, "wait"))
+        app.apply_entry_event((True, "any", "anywhere", True, "wait", []))
         self.assertEqual(app.entry_swap_with, "any")
         self.assertEqual(app.entry_scope, "anywhere")
         self.assertTrue(app.entry_restore_back)

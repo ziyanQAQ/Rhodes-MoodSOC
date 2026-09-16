@@ -567,13 +567,18 @@ class Test副本状态时效性(MoodAssertMixin, unittest.TestCase):
         self.assertMood(a.mood_at("丙", D("3")), D("15.5"))
 
     def test_位置互换在多周期下每班复位(self):
-        """`restore_back=false`（位置也一起互换）时，每个班次都从**计划**出发。"""
+        """`restore_back=false`（位置也一起互换）时，每个班次都从**计划**出发。
+
+        ⚠️ 显式 `entry_per_shift=[]`：示例 MAA 文件自带 `Fiammetta` 逐班配置（第 2 班换龙舌兰、
+        第 3 班不换），那份覆盖会盖过这里的全局口径；本用例要验证的是"三班统一照换"。
+        """
         sch = load_schedule([SAMPLE_MAA])
 
         def swaps(cycles):
             traj = simulate_schedule(sch, cycles=cycles, entry_events=True,
                                      entry_swap_with="森蚺", entry_scope="anywhere",
-                                     entry_restore_back=False, entry_when="full")
+                                     entry_restore_back=False, entry_when="full",
+                                     entry_per_shift=[])
             return [float(m.t) for m in traj.marks if m.kind == "entry" and "互换" in m.label]
 
         one = swaps(1)

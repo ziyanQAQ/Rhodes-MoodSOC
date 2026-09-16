@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .config import (
     FACILITY_LABELS,
@@ -528,6 +528,10 @@ class BaseLayout:
     entry_events: EntryEventConfig = field(default_factory=EntryEventConfig)
     # 闲置入宿（把未满的闲置干员安排进宿舍）的配置；见 IdleToDormConfig
     idle_to_dorm: IdleToDormConfig = field(default_factory=IdleToDormConfig)
+    # **变量初始值**：场景/导入文件给定的"基建级中间货币"起始量（如 木天蓼=5）。
+    # 本项目的变量默认是"从布局里的产出者推导"（`variables.collect_variables`），
+    # 这里允许额外给一份**初始值**——上游求解器的 `initial_global` 就是这种输入。
+    initial_variables: Dict[str, Decimal] = field(default_factory=dict)
 
     # ================================================================ 单数查询
     def get_facility(self, ftype) -> Optional[Facility]:

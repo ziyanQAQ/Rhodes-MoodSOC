@@ -35,7 +35,8 @@ from ui.chart import MoodChart  # noqa: E402
 from ui.dialogs import ask_operator, ask_level, ask_mood  # noqa: E402
 from ui.roster import RosterStrip  # noqa: E402
 from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
-                         default_initial_moods, load_schedule, simulate_schedule)
+                         default_initial_moods, load_schedule, load_schedule_ex,
+                         simulate_schedule)
 from mood_soc import entry_event_holders, entry_target_kind  # noqa: E402
 from mood_soc import mood_skill_summary  # noqa: E402
 from mood_soc.config import (MOOD_MAX, FacilityType, facility_max_level,  # noqa: E402
@@ -91,6 +92,11 @@ class MoodSocApp(tk.Tk):
         # 设置窗口只是把它接到下拉框上——工具栏时代它挂在工具栏里。
         self.cycles_var = tk.StringVar(value="1")
         self.settings_dlg = None               # 「设置」中心的窗口（唯一设置入口）
+        # 「导入排班」读到的附赠信息（见 mood_soc/importer.py）：
+        self.operator_pool: list = []          # 干员池 [{name, elite, level, own}]（v4 蓝图才有）
+        self.initial_global: dict = {}         # 变量初始值（v4 的 initial_global）
+        self.import_summary = ""               # 导入摘要（状态栏那一句）
+        self.import_reports: list = []         # 每个文件的导入报告（明细见 details()）
         self.entry_events = tk.BooleanVar(value=False)
         self.entry_swap_with: Optional[str] = None     # None = 默认「前一位进驻」；"any" = 自动挑最累的
         self.entry_scope = "dorm"                      # "dorm" 仅同宿舍 / "anywhere" 基建任意位置
@@ -370,14 +376,24 @@ class MoodSocApp(tk.Tk):
                 self.status.configure(text=f"示例排班载入失败：{exc}")
 
     def load_paths(self, paths):
-        """按文件集合装配排班（可能抛 ValueError，调用方展示原因）。"""
-        sch = load_schedule(paths)
+        """按文件集合装配排班（可能抛 ValueError，调用方展示原因）。
+
+        格式**自动识别**（`mood_soc/importer.py`）：本工具场景 / MAA 排班 / v3 求解输出 /
+        v4 蓝图+干员池——点一次「导入排班…」即可，不需要先选格式。
+        """
+        ld = load_schedule_ex(paths)
+        sch = ld.schedule
         # 设置中心里握着"当前排班"（面板建好后就认那一份）→ 换排班前先把它关掉，
         # 免得面板往旧 schedule 上写（各个面板都是进入分区时按最新排班重建的）。
         if self.settings_dlg is not None and self.settings_dlg.winfo_exists():
             self.settings_dlg.destroy()
         self.settings_dlg = None
         self.schedule = sch
+        # 干员池（v4 蓝图那类文件带）与变量初始值：给「干员与心情」选人用
+        self.operator_pool = list(ld.pool)
+        self.initial_global = dict(ld.initial_global)
+        self.import_summary = ld.summary()
+        self.import_reports = list(ld.reports)
         self.initial_moods.clear()
         self.current_t = Decimal("0")
         # 场景 JSON 顶层可以带进驻事件配置（换不换 / 换谁）→ 同步到界面的开关与下拉
@@ -406,12 +422,14 @@ class MoodSocApp(tk.Tk):
         self._build_shift_buttons()
         self._sync_operator_box()
         self.recompute(fit_slider=True)
+        if self.import_summary:                 # 用导入摘要盖住"重算耗时"那句
+            self.status.configure(text=self.import_summary)
 
     def import_files(self):
         paths = filedialog.askopenfilenames(
-            title="选择排班文件（可多选：12h / 6h / 6h 三个文件，或一个含多班的文件）",
+            title="选择排班 / 蓝图文件（自动识别格式；可多选：12h / 6h / 6h 三个文件也对）",
             initialdir=str(ROOT / "resources"),
-            filetypes=[("排班 / 场景 JSON", "*.json"), ("全部文件", "*.*")])
+            filetypes=[("排班 / 蓝图 JSON", "*.json"), ("全部文件", "*.*")])
         if not paths:
             return
         try:
@@ -435,7 +453,10 @@ class MoodSocApp(tk.Tk):
                                       entry_scope=self.entry_scope,
                                       entry_restore_back=self.entry_restore_back,
                                       entry_when=self.entry_when,
-                                      entry_per_shift=self.entry_per_shift or None,
+                                      # ⚠️ 原样传（不要把 `[]` 变成 None）：`None` 会让引擎
+                                      #    回退去读排班自带的 `per_shift`（导入时可能带来了
+                                      #    Fiammetta 的逐班配置），而界面里"全不勾"就该是"没有覆盖"。
+                                      entry_per_shift=list(self.entry_per_shift),
                                       idle_to_dorm=self.idle_to_dorm.get(),
                                       idle_entries=self._idle_entry_list())
         total = self._total_hours()
@@ -1034,10 +1055,19 @@ class MoodSocApp(tk.Tk):
         self.schedule = self.schedule.with_hours(hours)
         self._build_shift_buttons()
         self.recompute(fit_slider=True)
+        # 班次时长/数量变了 → 别的分区里的班次下拉、逐次表都得重建（设置窗口自己不用）
+        self._invalidate_settings("batch", "entry", "idle")
+
+    def _invalidate_settings(self, *pages: str) -> None:
+        """把设置中心里这些分区标脏（窗口没开就什么都不用做）。"""
+        dlg = self.settings_dlg
+        if dlg is not None and dlg.winfo_exists():
+            dlg.invalidate(*pages)
 
     def _on_cycles(self):
         self.cycles = int(self.cycles_var.get())
         self.recompute(fit_slider=True)
+        self._invalidate_settings("idle")      # 逐次表按周期展开，周期数一变就旧了
 
     # ================================================================== 曲线面板
     def _sync_operator_box(self):

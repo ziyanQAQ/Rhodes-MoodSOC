@@ -197,17 +197,22 @@ def _count_in_facilities(world, faction: str) -> int:
     return count
 
 
-def collect_variables(world, producers=None) -> VariableLedger:
+def collect_variables(world, producers=None, initial=None) -> VariableLedger:
     """按产出者表收集基建级变量快照。
 
     `producers`：[(skill_id, clause, 变量名, 值, 基准, 条件, 技能名, 持有者)]，
     缺省用 `skills_data.VARIABLE_PRODUCERS`。
+    `initial`：**初始值**（`{变量名: 值}`）；缺省取 `world.initial_variables`
+    （场景 JSON 的 `initial_global` / 导入 v4 蓝图时的 `layout.scenario.initial_global`）。
 
     产出者必须①在布局里、②已解锁（精英/等级门槛）、③未红脸（`mood > 0`）、
     ④条件成立（如夕「不以物喜」要求自身心情 < 12，读当前快照）。
 
     注：持有者信息来自 `operators.txt` 全量映射，因此**纯变量技能**（非心情类，
     如祐天寺若麦「勤学苦练」）也能正常产出。
+
+    ⚠️ 初始值与产出值**相加**（`VariableLedger.add`）：上游求解器把 `initial_global`
+    当"进场时就有的量"，而本项目的产出者算的是"布局里这班能产多少"——两者叠加。
     """
     if producers is None:
         from .skills_data import VARIABLE_PRODUCERS
@@ -215,6 +220,9 @@ def collect_variables(world, producers=None) -> VariableLedger:
 
     by_name = {op.name: op for op in world.all_operators()}
     lg = VariableLedger()
+    seeds = world.initial_variables if initial is None else initial
+    for name, value in (seeds or {}).items():
+        lg.add(name, to_decimal(value), "初始值（场景/文件给定）")
     for entry in producers:
         skill_id, clause, variable, value, basis, condition, skill_name, holders = entry
         for op_name, unlock_elite, unlock_level in holders:

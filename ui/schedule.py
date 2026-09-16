@@ -84,6 +84,8 @@ class Shift:
     source: str = ""
     # 进驻事件配置（models.EntryEventConfig）：来自场景 JSON 顶层，随班次一起搬运
     entry_events: Optional[object] = None
+    # 变量初始值（场景 JSON 的 `initial_global`；导入 v4 蓝图的 `scenario.initial_global`）
+    initial_global: Dict[str, Decimal] = field(default_factory=dict)
     world: BaseLayout = field(init=False, repr=False)
 
     def __post_init__(self):
@@ -92,7 +94,8 @@ class Shift:
             raise ValueError(f"班次「{self.label}」时长不能为负，收到 {self.hours}")
         # 注：hours == 0 表示"时长未知"（MAA 班次名里没带 h 时），
         # 由 `_hours_from_hints` 补齐、并由 `Schedule` 校验必须为正。
-        self.world = build_base_layout({"facilities": self.facilities})
+        self.world = build_base_layout({"facilities": self.facilities,
+                                        "initial_global": dict(self.initial_global or {})})
         if self.entry_events is not None:      # 顶层配置透传给 world
             self.world.entry_events = self.entry_events
         self._names = [o.name for o in self.world.all_operators()]
@@ -108,10 +111,24 @@ class Shift:
 
 
 def shift_from_facilities(label: str, hours, facilities: List[dict], source: str = "",
-                          entry_events=None) -> Shift:
+                          entry_events=None, initial_global=None) -> Shift:
     """由场景格式的 facilities 构建一个班次（`entry_events` 为可选进驻事件配置）。"""
     return Shift(label=label, hours=to_decimal(hours), facilities=list(facilities),
-                 source=source, entry_events=entry_events)
+                 source=source, entry_events=entry_events,
+                 initial_global=dict(initial_global or {}))
+
+
+def shifts_from_import(imp, source: str = "") -> List[Shift]:
+    """把 `importer.ImportResult` 的一个文件转成班次列表。
+
+    - 每班的 `entry_events`（换心情）：沿用该文件解析出来的配置（挂在每个班次上）；
+    - `initial_global`（变量初始值）：挂到每个班次（同一份排班共用）。
+    """
+    cfg = build_entry_event_config(imp.entry_events) if imp.entry_events else None
+    return [Shift(label=s.label, hours=s.hours if s.hours is not None else ZERO,
+                  facilities=list(s.facilities), source=source or imp.report.source,
+                  entry_events=cfg, initial_global=dict(imp.initial_global or {}))
+            for s in imp.shifts]
 
 
 def _hours_from_hints(shifts: List[Shift], cycle_hours: Optional[Decimal]) -> Decimal:
@@ -163,15 +180,11 @@ def shifts_from_scenario_file(path: Union[str, Path], hours: Optional[Sequence] 
 
 
 def shift_file_kind(path: Union[str, Path]) -> str:
-    """判断文件类型：'maa' / 'scenario'。"""
+    """判断文件类型：`maa` / `scenario` / `v3_out` / `plan_compute_v4`（自动识别）。"""
+    from mood_soc.importer import detect_format
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    if isinstance(data, dict) and isinstance(data.get("plans"), list) and data["plans"]:
-        return "maa"
-    if isinstance(data, dict) and isinstance(data.get("facilities"), list):
-        return "scenario"
-    raise ValueError(f"无法识别的排班文件：{Path(path).name}"
-                     f"（既没有 plans 也没有 facilities）")
+    return detect_format(data)
 
 
 @dataclass
@@ -243,7 +256,8 @@ class Schedule:
             raise ValueError(f"需要 {len(self.shifts)} 个时长，收到 {len(hours)} 个")
         new = [Shift(label=s.label, hours=to_decimal(h),
                      facilities=copy.deepcopy(s.facilities), source=s.source,
-                     entry_events=s.entry_events)
+                     entry_events=s.entry_events,
+                     initial_global=dict(getattr(s, "initial_global", {}) or {}))
                for s, h in zip(self.shifts, hours)]
         return Schedule(new, sum((s.hours for s in new), ZERO))
 
@@ -251,7 +265,8 @@ class Schedule:
         """替换某个班次的布局（返回新的 Schedule）。"""
         new = [Shift(label=s.label, hours=s.hours,
                      facilities=(list(facilities) if i == index else copy.deepcopy(s.facilities)),
-                     source=s.source, entry_events=s.entry_events)
+                     source=s.source, entry_events=s.entry_events,
+                     initial_global=dict(getattr(s, "initial_global", {}) or {}))
                for i, s in enumerate(self.shifts)]
         return Schedule(new, self.cycle_hours)
 
@@ -276,24 +291,52 @@ class Schedule:
 # ============================================================================
 # 装配：从若干文件到一个排班
 # ============================================================================
-def load_schedule(paths: Sequence[Union[str, Path]],
-                  cycle_hours: Optional[Decimal] = None,
-                  hours: Optional[Sequence] = None) -> Schedule:
-    """从若干排班文件装配一个 `Schedule`。
+@dataclass
+class LoadedSchedule:
+    """一次「导入排班」的结果：排班本体 + 从文件里读到的附赠信息。
 
-    - 一个 MAA 文件可能含多个 plan ⇒ 每个 plan 一个班次（按文件顺序、plan 顺序）；
-      **一个班次一个文件**（用户的 12h/6h/6h 三个文件）是最常见用法。
-    - 每班时长：**显式 `hours`（按班次顺序，可少于班次数）> 班次名提示 > 均分**。
+    - `pool`：干员池（只有 v4 蓝图+干员池那类文件才有；`[{"name","elite","level","own"}]`）
+    - `initial_global`：变量初始值（v4 的 `layout.scenario.initial_global`）
+    - `reports`：每个文件的导入报告（识别到什么格式、忽略/推断了什么）
+    """
+    schedule: Schedule
+    pool: List[dict] = field(default_factory=list)
+    initial_global: Dict[str, Decimal] = field(default_factory=dict)
+    reports: List[object] = field(default_factory=list)
+
+    def summary(self) -> str:
+        """一行导入摘要（状态栏用）。"""
+        return "；".join(r.summary() for r in self.reports)
+
+
+def load_schedule_ex(paths: Sequence[Union[str, Path]],
+                     cycle_hours: Optional[Decimal] = None,
+                     hours: Optional[Sequence] = None) -> LoadedSchedule:
+    """从若干排班文件装配 `Schedule`，并把池/变量初始值/导入报告一起返回。
+
+    - 每个文件**自动识别格式**（`mood_soc/importer.py`）：本工具场景 / MAA 排班 /
+      v3 求解输出 / v4 蓝图+干员池；
+    - 一个文件可能含多个班次（MAA 的多个 plan、v3 输出的多班 `shifts`）；
+      **一个班次一个文件**（12h/6h/6h 三个文件）同样支持；
+    - 每班时长：**显式 `hours`（按班次顺序，可少于班次数）> 文件里的时长 > 班次名提示 > 均分**；
     - 周期：默认 = 各班时长之和（自洽）；显式给 `cycle_hours` 时必须与之和相等。
     """
+    from mood_soc.importer import import_file
+
     shifts: List[Shift] = []
+    pool: List[dict] = []
+    initial: Dict[str, Decimal] = {}
+    reports: List[object] = []
     given = [to_decimal(h) for h in hours] if hours else []
     for p in paths:
-        kind = shift_file_kind(p)
-        new = (shifts_from_maa_file(p) if kind == "maa"
-               else shifts_from_scenario_file(p))
-        # 显式 hours 按顺序覆盖（一个文件可能含多个班次，就依次取）
-        for s in new:
+        imp = import_file(p)
+        reports.append(imp.report)
+        for entry in imp.pool:                      # 多文件的池取并集（先到先得）
+            if entry["name"] not in [x["name"] for x in pool]:
+                pool.append(entry)
+        initial.update(imp.initial_global or {})
+        new = shifts_from_import(imp)
+        for s in new:                                # 显式 hours 按顺序覆盖
             if given:
                 s.hours = given.pop(0)
         shifts.extend(new)
@@ -302,7 +345,18 @@ def load_schedule(paths: Sequence[Union[str, Path]],
     total = _hours_from_hints(shifts, cycle_hours)
     if cycle_hours is not None and to_decimal(cycle_hours) != total:
         raise ValueError(f"各班时长之和 {total}h ≠ 指定周期 {to_decimal(cycle_hours)}h")
-    return Schedule(shifts, total)
+    for s in shifts:                                 # 变量初始值挂到每个班次
+        if initial and not s.initial_global:
+            s.initial_global = dict(initial)
+    return LoadedSchedule(schedule=Schedule(shifts, total), pool=pool,
+                          initial_global=initial, reports=reports)
+
+
+def load_schedule(paths: Sequence[Union[str, Path]],
+                  cycle_hours: Optional[Decimal] = None,
+                  hours: Optional[Sequence] = None) -> Schedule:
+    """同 `load_schedule_ex`，只返回排班本体（旧调用点用）。"""
+    return load_schedule_ex(paths, cycle_hours=cycle_hours, hours=hours).schedule
 
 
 # ============================================================================
