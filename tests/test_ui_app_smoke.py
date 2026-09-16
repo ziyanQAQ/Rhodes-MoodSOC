@@ -347,13 +347,20 @@ class Test新增交互(unittest.TestCase):
 
     # ------------------------------------------------------- 进驻事件（换心情）
     def test_工具栏只有一个设置入口(self):
-        """工具栏只留 4 组：导入 / 设置（按钮 + 状态）/ 播放 / 回到起点。
+        """工具栏＝**3 组**（组间有分隔线）：设置类 │ 状态摘要 │ 播放控制。
+
+        设置类＝`导入排班… / 设置… / 周期数`，状态摘要＝换心情 · 闲置入宿（点它开设置），
+        播放控制＝`▶播放 / 速度 / 回到起点`。
 
         背景：合并前工具栏并列 8 个控件（班次设置… / 重置心情 / 批量设置… / 周期数 /
         换心情设置 / 闲置入宿设置…），其中"重置心情"与批量表里的「恢复导入值」重复、
         "周期数"与"班次设置"说的都是时间轴，而且每个设置都是"点开→改→应用"三步。
-        现在唯一入口是「设置…」（`ui/settings.py`），那里**改动立即生效**。
+        现在唯一设置入口是「设置…」（`ui/settings.py`），那里**改动立即生效**。
+
+        周期数是唯一的例外：它调得频，所以工具栏与「设置…」→ 时间轴**都留**，
+        但共用同一个 `app.cycles_var`，两处永远一致（下拉不是开关）。
         """
+        import tkinter as tk
         from tkinter import ttk
 
         app = self.app
@@ -375,10 +382,16 @@ class Test新增交互(unittest.TestCase):
         walk(bar)
         self.assertEqual(boxes, [], "工具栏不该有任何开关（开关都在设置中心里）")
         self.assertEqual(buttons, ["导入排班…", "设置…", "▶ 播放", "回到起点"])
-        # 工具栏只剩「播放速度」一个下拉；周期数已经搬进设置中心的「时间轴」分区
+        # 两个下拉＝周期数（左组）+ 播放速度（右组），顺序即分组的顺序
         self.assertEqual([str(c.cget("textvariable")) for c in combos],
-                         [str(app.speed_var)], "工具栏不该再有设置类下拉（周期数已进设置中心）")
-        self.assertNotIn("cycles_var", str(combos))
+                         [str(app.cycles_var), str(app.speed_var)],
+                         "左组是周期数（与设置中心共用 cycles_var），右组是播放速度")
+        self.assertEqual(str(combos[0].cget("state")), "readonly")
+        self.assertEqual(tuple(combos[0].cget("values")), ("1", "2", "3"))
+        # 三组之间两条细分隔线：别让"设置类 / 状态 / 播放"挤成一片
+        seps = [c for c in bar.winfo_children()
+                if isinstance(c, tk.Frame) and int(c.cget("width")) == 1]
+        self.assertEqual(len(seps), 2, "工具栏三组之间应有两条分隔线")
         # 下面只看状态文字：把"逐班覆盖"清掉（示例 MAA 自带的 Fiammetta 配置会带来覆盖项）
         app.entry_per_shift = []
         # 右侧那串状态只报**当前状态**（点它也能开设置）
@@ -393,6 +406,52 @@ class Test新增交互(unittest.TestCase):
         self.assertIn("换心情：与同宿舍前一位进驻者互换·没满就不换", app._entry_status())
         app.entry_events.set(False)
         app._sync_entry_label()
+
+    def test_周期数两处共用一份状态(self):
+        """周期数在工具栏与「设置…」→ 时间轴**都留**，但状态只有一份（同一个 `cycles_var`）。
+
+        哪边改都立刻生效、另一边自动跟着变（同一个 StringVar，不需要手工同步代码）；
+        周期数变了 → 总时长变、逐次表（按周期展开）标脏。
+        """
+        app = self.app
+        cycle = app.schedule.cycle_hours
+        app.cycles_box.set("2")                 # 等价于在工具栏下拉里选 2
+        app._on_cycles()                        # 下拉的绑定就是这个
+        self.assertEqual(app.cycles, 2)
+        self.assertEqual(app._total_hours(), cycle * 2)
+        self.assertEqual(app.cycles_var.get(), "2")
+        app.cycles_var.set("3")                 # 等价于在设置中心里选 3
+        app.on_cycles_changed()                 # 设置中心里的绑定就是这个
+        self.assertEqual(app.cycles, 3)
+        self.assertEqual(app._total_hours(), cycle * 3)
+        self.assertEqual(app.cycles_box.get(), "3", "工具栏下拉要跟着设置中心一起变")
+
+    def test_班次按钮只写序号与时段(self):
+        """底部班次条＝**纯切换器**：只写「序号 + 时段」，班次名只出现在看板头部。
+
+        曾经的重复显示 bug：按钮写着「1. Shift 1 · 12h（12h）」——MAA 的班次名里本来
+        就带 `12h`，按钮又补了一次时长；而且班次名在看板头部已经写着，上下各一份也算
+        同一条班次显示两遍。现在按钮上给时段更有用：一眼看出这一班从几点到几点。
+        """
+        app = self.app
+        texts = [b.cget("text") for b in app.shift_buttons]
+        # 第 3 班跨过 24h，时段末端按 `theme.fmt_clock` 的规矩带「（第2天）」
+        self.assertEqual(texts, ["1. 00:00 – 12:00",
+                                 "2. 12:00 – 18:00",
+                                 "3. 18:00 – 00:00（第2天）"])
+        for t, i in zip(texts, range(len(texts))):
+            self.assertTrue(t.startswith(f"{i + 1}. "), "按钮前面要有班次序号")
+            self.assertIn(app._shift_span_text(i), t, "按钮要写这一班的时段")
+        for t, s in zip(texts, app.schedule.shifts):
+            self.assertNotIn(s.label, t, "班次名（Shift n · Nh）只该出现在看板头部")
+            self.assertNotIn(s.label.split("·")[-1].strip(), t, "时长也不该在按钮上重复一次")
+        # 头部仍写着完整的班次身份：名字 + 时段 + 规模
+        app.set_time(Decimal("0"))
+        app.update_idletasks()
+        head = app.board.header.cget("text")
+        self.assertIn("Shift 1 · 12h", head)
+        self.assertIn("00:00 – 12:00", head)
+        self.assertIn("间房", head)
 
     def test_进驻事件开关有说明且状态可见(self):
         """工具栏右侧那串只报"当前状态"：开没开 + 换谁 + 要不要等她满。"""

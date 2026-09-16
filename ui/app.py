@@ -154,24 +154,37 @@ class MoodSocApp(tk.Tk):
 
     # ================================================================== 工具栏
     def _build_toolbar(self):
-        """工具栏＝**4 组**：导入 / 设置（按钮 + 一行状态）/ 播放 / 回到起点。
+        """工具栏＝**3 组**（组间有细分隔线）：设置类 │ 状态摘要 │ 播放控制。
 
-        设置入口只有一颗「设置…」（`ui/settings.py`）：班次与周期数、房间等级与干员、
-        换心情、闲置入宿全在里面，**改动立即生效**。这里不再并列那 5 个入口——
-        重复的（重置心情＝批量表里的"恢复导入值"）与只增加步骤的一律去掉。
+        ```
+        [导入排班…] [设置…] 周期数[1▾]  │  已开启 · 按班次 · 未开启  │  [▶播放] 速度[1x] ＝实时  [回到起点]
+        ```
+
+        - **设置类**：导入 / 设置（唯一设置入口）；**周期数**放这儿是因为它调得频，
+          与「设置…」→ 时间轴里的那一个是**同一个变量**（`self.cycles_var`），两处永远一致。
+        - **状态摘要**：换心情 · 闲置入宿（点它也能开设置）；两个 `_detail` 标签的名字与文案
+          保持原样 —— `_sync_entry_label` / `_sync_idle_label` 是唯一写入点，测试也按这两句断言。
+        - **播放控制**：播放 / 速度 / 回到起点。
         """
         bar = tk.Frame(self, bg=theme.BG)
         bar.pack(fill="x", padx=theme.PAD, pady=(theme.PAD, theme.GAP))
         self.toolbar = bar
 
+        # —— 组 1：设置类 ——
         ttk.Button(bar, text="导入排班…", style="Accent.TButton",
                    command=self.import_files).pack(side="left")
-
         ttk.Button(bar, text="设置…", command=self.open_settings).pack(side="left",
-                                                                       padx=(6, 6))
-        # 状态摘要＝原来的两行状态合成一句（点它也能开设置）。
-        # ⚠️ 两个 `_detail` 标签的名字与文案保持原样：`_sync_entry_label` / `_sync_idle_label`
-        #    是它们的唯一写入点，测试也按这两句话断言。
+                                                                       padx=(6, 0))
+        tk.Label(bar, text="周期数", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(12, 4))
+        self.cycles_box = ttk.Combobox(bar, textvariable=self.cycles_var, width=3,
+                                       state="readonly", values=("1", "2", "3"))
+        self.cycles_box.pack(side="left")
+        self.cycles_box.bind("<<ComboboxSelected>>", lambda _e: self._on_cycles())
+
+        self._toolbar_sep(bar)
+
+        # —— 组 2：状态摘要 ——
         self.entry_detail = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
                                      cursor="hand2",
                                      font=(theme.FONT_FAMILY, theme.FS_SMALL))
@@ -185,8 +198,11 @@ class MoodSocApp(tk.Tk):
         for w in (self.entry_detail, self.idle_detail):
             w.bind("<Button-1>", lambda _e: self.open_settings())
 
+        self._toolbar_sep(bar)
+
+        # —— 组 3：播放控制 ——
         play = tk.Frame(bar, bg=theme.BG)
-        play.pack(side="left", padx=(16, 0))
+        play.pack(side="left")
         self.play_btn = ttk.Button(play, text="▶ 播放", command=self.toggle_play)
         self.play_btn.pack(side="left")
         tk.Label(play, text="速度", bg=theme.BG, fg=theme.MUTED,
@@ -210,6 +226,13 @@ class MoodSocApp(tk.Tk):
         self._on_speed()
         self._sync_entry_label()
         self._sync_idle_label()
+
+    @staticmethod
+    def _toolbar_sep(bar):
+        """工具栏的**组分隔线**（一条细竖线，高度跟着这一行）。"""
+        sep = tk.Frame(bar, bg=theme.BORDER, width=1)
+        sep.pack(side="left", fill="y", padx=theme.GAP, pady=1)
+        return sep
 
     # ================================================================== 设置中心
     def open_settings(self, page: Optional[str] = None):
@@ -1138,6 +1161,13 @@ class MoodSocApp(tk.Tk):
 
     # ================================================================== 班次条
     def _build_shift_buttons(self):
+        """底部班次按钮＝**切换用**，只写「序号 + 时段」（`1. 00:00 – 12:00`）。
+
+        ⚠️ 这里**不再写班次名**：班次名（`Shift 1 · 12h`）已经在**看板头部**写着，
+        上下各写一份就是"同一条班次显示两遍"；而且 MAA 的班次名里本来就带 `12h`，
+        再补一个 `（12h）` 会变成 `Shift 1 · 12h（12h）`（曾经的重复显示 bug）。
+        按钮上给时段更有用：一眼看出"这一班从几点到几点"。
+        """
         for b in self.shift_buttons:
             b.destroy()
         self.shift_buttons.clear()
@@ -1145,9 +1175,9 @@ class MoodSocApp(tk.Tk):
             return
         tk.Label(self.shift_bar, text="班次", bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(0, 6))
-        for i, s in enumerate(self.schedule.shifts):
+        for i, _s in enumerate(self.schedule.shifts):
             b = ttk.Button(self.shift_bar,
-                           text=f"{i + 1}. {s.label}（{theme.fmt_hours(s.hours)}）",
+                           text=f"{i + 1}. {self._shift_span_text(i)}",
                            command=lambda k=i: self.set_time(self.schedule.starts[k]))
             b.pack(side="left", padx=(0, 4))
             self.shift_buttons.append(b)
