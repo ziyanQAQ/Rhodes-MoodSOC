@@ -55,10 +55,11 @@ PAGES = (
 )
 
 # 内容区固定高度：四个分区共用（切换时窗口不跳）。
-# 取"最高的那个分区"（干员与心情：等级区 + 心情区 + 干员区 + 表格 380 + 提示行）≈ 740。
+# 取"最高的那个分区"（干员与心情：等级区 + 心情区 + 干员区 + 表格 + 提示行）≈ 740。
+# 「干员与心情」的表格是**自动高度**（吃掉内容区的剩余），所以等级区排成几行都不怕。
 PAGE_H = 740
-# 「干员与心情」那张表的可视高度：设置中心里矮一点，四个分区就都能装进 PAGE_H
-BATCH_TABLE_H = 380
+# 窗口最小尺寸：内容区是固定尺寸排版，再小就会被裁（右侧房间等级那几档会看不见）
+MIN_W, MIN_H = 980, 700
 # 分区标题/说明用同一套栅格：标签列宽、控件间距都从这里取，免得各页自己凑
 LABEL_W = 12
 NAV_W = 14
@@ -92,6 +93,8 @@ class SettingsDialog(tk.Toplevel):
         super().__init__(parent, bg=theme.BG)
         self.title("设置")
         self.resizable(True, True)
+        # 内容区是固定尺寸的排版 → 窗口不能被拖到装不下（否则右侧会被裁）
+        self.minsize(MIN_W, MIN_H)
         self.app = app
         self.page: str = ""
         self.panel = None
@@ -296,7 +299,8 @@ class SettingsDialog(tk.Toplevel):
                           moods_now=app.moods_now(), current_t=app.current_t,
                           on_change=app.apply_batch,
                           pool=app.operator_pool,     # 导入 v4 蓝图时的干员池
-                          table_height=BATCH_TABLE_H)
+                          table_height="auto",        # 表格吃掉内容区剩余高度
+                          page_height=PAGE_H)
 
     def _build_entry(self) -> tk.Frame:
         app = self.app
@@ -310,8 +314,10 @@ class SettingsDialog(tk.Toplevel):
 
     def _build_idle(self) -> tk.Frame:
         app = self.app
+        # 闲置入宿的表也按内容区剩余高度算：它要跟别的分区共用同一块内容区
         return IdleToDormPanel(self.host, app.idle_to_dorm.get(), app.idle_groups(),
-                              on_change=app.apply_idle_to_dorm)
+                              on_change=app.apply_idle_to_dorm,
+                              table_height="auto", page_height=PAGE_H)
 
     # ------------------------------------------------------------------ 杂务
     def _center(self, parent) -> None:

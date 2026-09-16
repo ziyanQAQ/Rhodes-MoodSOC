@@ -18,6 +18,7 @@ from mood_soc import entry_target_kind
 from mood_soc.models import normalize_entry_when
 
 from . import theme
+from .scroll import VScroll
 
 # 「设置」中心里各分区共用的排版栅格：标签列宽（右对齐）
 LABEL_W = 12
@@ -639,9 +640,13 @@ class IdleToDormMixin:
     REBUILD_MS = 250              # 改动后的防抖：连续点几下只重算一次
 
     def _init_idle_body(self, parent, enabled: bool, groups: Sequence,
-                        on_change=None, note: str = ""):
+                        on_change=None, note: str = "", table_height="auto",
+                        page_height: int = 0):
         """把状态收好并建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。"""
         self.result = None
+        # 表格高度：显式数字（独立对话框）或 "auto"（设置中心：吃内容区剩余高度）
+        self._table_h = None if table_height == "auto" else int(table_height)
+        self._page_h = int(page_height) or 0
         # { (周期, 班次, 干员): (参与, 换谁 或 None) } —— 面板里的"当前状态"（源真源）
         self.state: dict = {}
         self._groups = list(groups)
@@ -674,6 +679,7 @@ class IdleToDormMixin:
                             "（与他互换，他换出来闲置）；改动立即生效）",
                  bg=theme.BG, fg=theme.TEXT, padx=theme.PAD, justify="left",
                  wraplength=640, anchor="w").pack(anchor="w", pady=(theme.GAP, 2))
+        self.table_height = self._resolve_table_height()
         self._build_table()
 
         if note:
@@ -682,24 +688,38 @@ class IdleToDormMixin:
                      ).pack(anchor="w", **pad)
         self._sync()
 
+    def _resolve_table_height(self) -> int:
+        """表格可视高度：没给就用**内容区剩余**（上面那些说明文字先量一遍）。
+
+        为什么 auto：逐次表的行数随周期数与候选人数浮动，固定高度要么撑爆内容区、
+        要么白留一大块。
+        """
+        if self._table_h is not None:
+            return self._table_h
+        self.update_idletasks()
+        used = sum(w.winfo_reqheight() for w in self.winfo_children())
+        # 表格之后还有一行说明（约 45px，wraplength 会折行）与内边距 → 留 96px
+        return max(220, self._page_h - used - 96)
+
     # ------------------------------------------------------------ 表格
     def _build_table(self) -> None:
         """可滚动的分组表（结构固定，内容随 `self._groups` 重建）。"""
         body = tk.Frame(self, bg=theme.BG)
         body.pack(fill="both", expand=True, padx=theme.PAD)
         self.canvas = tk.Canvas(body, bg=theme.PANEL, highlightthickness=1,
-                                highlightbackground=theme.BORDER, height=420)
-        scroll = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=scroll.set)
-        scroll.pack(side="right", fill="y")
+                                highlightbackground=theme.BORDER, height=self.table_height)
+        self.scroll = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scroll.set)
+        self.scroll.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
         self.inner = tk.Frame(self.canvas, bg=theme.PANEL)
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>",
-                        lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>",
                          lambda e: self.canvas.itemconfigure(self._win, width=e.width))
+        # 滚轮：整张表 + 行 + **滚动条本体**都能滚（见 ui/scroll.py）
+        self.vs = VScroll(self.canvas, self.scroll, self.inner, win=self._win)
         self._fill_table()
+        self.vs.refresh()          # 行建完 → 立刻重算滚动区间（别等几何事件）
         tk.Label(self, text="「宿舍01」＝第 1 间宿舍（放进它最靠前的空位，不动任何人）；"
                             "选一个人名＝与他互换（他已是满心情，换出来闲置不会掉心情）。"
                             "指定的那间那一刻已经满了 / 那个人不在宿舍或不满心情 → 跳过这一位。",
@@ -719,6 +739,7 @@ class IdleToDormMixin:
         for title, scope, rows in self._groups:
             head = tk.Frame(self.inner, bg=theme.PANEL_ALT)
             head.pack(fill="x", pady=(2, 0))
+            self.vs.join(head)
             tk.Label(head, text=title, bg=theme.PANEL_ALT, fg=theme.TEXT, anchor="w",
                      font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=6)
             for text, value in (("全选", True), ("全不选", False)):
@@ -730,6 +751,7 @@ class IdleToDormMixin:
                 bg = theme.zebra(row_i)                 # 隔行底色
                 row = tk.Frame(self.inner, bg=bg)
                 row.pack(fill="x", padx=4, pady=ROW_PAD)
+                self.vs.join(row)
                 tk.Label(row, text=name, bg=bg, fg=theme.TEXT, width=13, anchor="w",
                          font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
                 tk.Label(row, text=mood_text, bg=bg, fg=theme.MUTED, width=7,
@@ -829,9 +851,11 @@ class IdleToDormPanel(tk.Frame, IdleToDormMixin):
     """
 
     def __init__(self, master, enabled: bool, groups: Sequence,
-                 on_change=None, note: str = ""):
+                 on_change=None, note: str = "", table_height="auto",
+                 page_height: int = 0):
         super().__init__(master, bg=theme.BG)
-        self._init_idle_body(master, enabled, groups, on_change=on_change, note=note)
+        self._init_idle_body(master, enabled, groups, on_change=on_change, note=note,
+                             table_height=table_height, page_height=page_height)
 
     def destroy(self) -> None:
         """销毁时取消还没跑的重建任务（否则会对着已销毁的控件报 invalid command name）。"""

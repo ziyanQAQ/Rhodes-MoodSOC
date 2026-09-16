@@ -78,17 +78,53 @@ class Test设置中心(unittest.TestCase):
 
     # ------------------------------------------------------------- 统一大小
     def test_四个分区都装得进固定内容区(self):
-        """每个分区的**自然高度**都不超过内容区（超了就得让窗口缩放 → 切换会跳）。"""
+        """每个分区的**自然尺寸**都不超过内容区（超了就得让窗口缩放/裁剪 → 切换会跳、内容会看不见）。
+
+        ⚠️ **宽度也要量**：只量高度会漏掉「房间等级区一行塞 17 间房要 2131px」这种溢出
+        （右侧几间房的等级会被裁掉、根本改不了）。
+        """
         from ui.settings import PAGES, PAGE_H
 
         dlg = self._open()
+        host_w = dlg.host.winfo_width()
         for key, title, _desc in PAGES:
             dlg.open_page(key)
             self.app.update()
-            need = dlg.panel.winfo_reqheight()
-            self.assertLessEqual(need, PAGE_H,
-                                 f"「{title}」需要 {need}px，超过内容区 {PAGE_H}px")
+            need_w, need_h = dlg.panel.winfo_reqwidth(), dlg.panel.winfo_reqheight()
+            self.assertLessEqual(need_w, host_w,
+                                 f"「{title}」需要 {need_w}px 宽，超过内容区 {host_w}px")
+            self.assertLessEqual(need_h, PAGE_H,
+                                 f"「{title}」需要 {need_h}px 高，超过内容区 {PAGE_H}px")
             self.assertNotIn("⚠", dlg.note.cget("text"), f"「{title}」触发了装不下的提示")
+
+    def test_二十二间房也不溢出(self):
+        """极值用例：一间不落的全设施（22 间）——等级区是网格，行数会长但**不许超宽**。"""
+        import json
+        import tempfile
+        from ui.settings import PAGE_H
+
+        def fac(t, lv):
+            return {"type": t, "level": lv, "operators": []}
+
+        facs = ([fac("控制中枢", 5)] + [fac("制造站", 3) for _ in range(5)]
+                + [fac("贸易站", 3) for _ in range(5)] + [fac("发电站", 1) for _ in range(3)]
+                + [fac("宿舍", 5) for _ in range(4)]
+                + [fac("办公室", 3), fac("会客室", 2), fac("训练室", 3), fac("加工站", 1)])
+        tmp = Path(tempfile.gettempdir()) / "moodsoc_wide_scenario.json"
+        tmp.write_text(json.dumps({"facilities": facs}, ensure_ascii=False), encoding="utf-8")
+        self.app.load_paths([tmp])
+        self.app.update()
+
+        dlg = self._open("batch")
+        self.assertEqual(len(dlg.panel._level_vars), 22)
+        self.assertLessEqual(dlg.panel.winfo_reqwidth(), dlg.host.winfo_width())
+        self.assertLessEqual(dlg.panel.winfo_reqheight(), PAGE_H)
+        # 等级区排成网格：每行 5 间 → 22 间要 5 行
+        from ui.batch import LEVEL_COLS
+
+        grid = dlg.panel.level_note.master.winfo_children()[0]
+        rows = {int(w.grid_info()["row"]) for w in grid.winfo_children()}
+        self.assertEqual(max(rows) + 1, -(-22 // LEVEL_COLS))
 
     def test_切页不改窗口尺寸(self):
         from ui.settings import PAGES
@@ -204,6 +240,50 @@ class Test设置中心(unittest.TestCase):
         again = self.app.open_settings("idle")
         self.assertIs(again, dlg, "重复点「设置…」应当把已有窗口提到前面，而不是再开一个")
         self.assertEqual(again.page, "idle", "已经开着就切到指定分区")
+
+    # ------------------------------------------------------------- 滚轮
+    def test_两张表都能用滚轮滚动(self):
+        """「干员与心情」与「闲置入宿」的表：悬停在表格/行/**滚动条本体**上，滚轮都要生效。
+
+        （闲置入宿那张表原先**完全没绑滚轮**，只能拖滚动条；滚动条本体也没绑。）
+        """
+        for key in ("batch", "idle"):
+            if key == "idle":
+                # 闲置入宿的逐次表按周期展开 —— 跑 3 个周期才有得滚（否则会跳过这条断言）
+                self.app.cycles_var.set("3")
+                self.app.on_cycles_changed()
+                self.app.update()
+            dlg = self._open(key)
+            panel = dlg.panel
+            canvas = panel.canvas
+            canvas.yview_moveto(0)
+            self.app.update()
+            self.assertGreater(panel.inner.winfo_reqheight(), canvas.winfo_height(),
+                               f"{key}：这张表没能撑到需要滚动，用例白跑")
+            before = canvas.yview()
+            canvas.event_generate("<MouseWheel>", delta=-120)      # ① 表格本体
+            self.app.update()
+            self.assertNotEqual(canvas.yview(), before, f"{key}：表格上滚轮没生效")
+            row = panel.inner.winfo_children()[0]
+            mid = canvas.yview()
+            row.event_generate("<MouseWheel>", delta=-120)         # ② 表格里的行
+            self.app.update()
+            self.assertNotEqual(canvas.yview(), mid, f"{key}：行上滚轮没生效")
+            mid2 = canvas.yview()
+            panel.scroll.event_generate("<MouseWheel>", delta=-120)  # ③ 滚动条本体
+            self.app.update()
+            self.assertNotEqual(canvas.yview(), mid2, f"{key}：滚动条上滚轮没生效")
+            dlg.destroy()
+            self.app.settings_dlg = None
+
+    def test_装得下时滚轮不吃掉事件(self):
+        """内容装得下 → 滚轮返回 None（不 break），免得"滚了没反应"还挡住了别的处理。"""
+        dlg = self._open("batch")
+        panel = dlg.panel
+        if panel.inner.winfo_reqheight() <= panel.canvas.winfo_height():
+            self.assertIsNone(panel.vs.on_wheel(type("E", (), {"delta": -120})()))
+        else:
+            self.assertEqual(panel.vs.on_wheel(type("E", (), {"delta": -120})()), "break")
 
 
 @unittest.skipUnless(TK_OK, "无图形环境（Tk 不可用），跳过设置中心测试")

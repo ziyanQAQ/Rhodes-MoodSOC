@@ -36,12 +36,18 @@ from mood_soc.scenario import DEFAULT_OPERATOR_LEVEL
 
 from ui import theme
 from ui.dialogs import ask_operator, parse_mood
+from ui.scroll import VScroll
 
-# 表格默认可视高度（独立使用时的值；设置中心里传更矮的值，好让四个分区共用同一块内容区）
+# 表格默认可视高度（独立使用时的值；设置中心里传 `"auto"` → 吃掉内容区的剩余高度）
 TABLE_H = 420
+# 「房间等级」区的网格列数：内容区约 810px 宽，每格 ≈ 150px → 5 列不会超宽
+LEVEL_COLS = 5
+LEVEL_NAME_W = 9        # 房间名那一列的字符宽（如「制造站#1」）
+LEVEL_GAP = 14
+# 表格可视高度的下限（自动模式下再挤也要留这么多）
+TABLE_H_MIN = 160
 
-# 滚轮用的 bindtag：只让表格区域的滚轮生效（**不用 bind_all**，那会抢走整个窗口的滚轮）
-TABLE_TAG = "MoodBatchTable"
+# 滚轮的接线在 `ui/scroll.py`（本实例专属 bindtag；见那里的注释）
 ROW_PAD = 1
 
 
@@ -79,7 +85,7 @@ class BatchMixin:
                          imported_moods: Optional[Dict[str, Decimal]] = None,
                          moods_now: Optional[Dict[str, Decimal]] = None,
                          current_t=Decimal("0"), on_change=None, pool=None,
-                         table_height: int = TABLE_H):
+                         table_height=TABLE_H, page_height=0):
         """装好状态 + 建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
 
         `pool`：**干员池**（`[{"name","elite","level","own"}]`，来自「导入 v4 蓝图」这类
@@ -89,7 +95,9 @@ class BatchMixin:
           · 可以一键「从池中依次填入」按顺序铺满当前班次的位置。
         """
         self._on_change = on_change
-        self._table_h = int(table_height)   # 表格可视高度（设置中心里矮一点，好统一尺寸）
+        # 表格可视高度：显式数字（独立使用）或 "auto"（设置中心：吃内容区剩余高度）
+        self._table_h = None if table_height == "auto" else int(table_height)
+        self._page_h = int(page_height) or 0
         self._pool = [dict(p) for p in (pool or [])]
         self._pool_elite = {p["name"]: int(p["elite"]) for p in self._pool
                             if p.get("elite") is not None}
@@ -181,27 +189,34 @@ class BatchMixin:
         见 `mood_soc/maa.py`），而等级决定"这间房能放几个人"，改完表格行数要跟着变。
         制造站/贸易站/发电站共用 9 个建造位（上游 `layouts.v0.slots` 的 OUTPUT 槽位），
         所以这里顺带把"已用 N/9"写出来。
+
+        ⚠️ **排成网格**（每行 `LEVEL_COLS` 间房）：示例排班 17 间房，
+        挤成一行要 2131px，而内容区只有 ~810px —— 右边那几间会被**裁掉**
+        （看不见、也改不了）。网格化之后行数随房间数长，表格高度会**自动让位**
+        （`table_height="auto"`），所以不会把整页撑爆。
         """
         box = tk.LabelFrame(self, text="房间等级（决定这间房能放几个人）", bg=theme.BG,
                             fg=theme.TEXT, font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1,
                             relief="groove", labelanchor="nw")
         box.pack(fill="x", padx=theme.PAD, pady=(0, 4))
-        row = tk.Frame(box, bg=theme.BG)
-        row.pack(fill="x", padx=theme.GAP, pady=(4, 2))
+        grid = tk.Frame(box, bg=theme.BG)
+        grid.pack(fill="x", padx=theme.GAP, pady=(4, 2))
         for i, fac in enumerate(self._fac_names):
             world = self._schedule.shifts[self._shift_index].world.facilities[i]
-            label = world.display_name
-            tk.Label(row, text=f"{label} Lv", bg=theme.BG, fg=theme.MUTED,
-                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(0, 2))
+            cell = tk.Frame(grid, bg=theme.BG)
+            cell.grid(row=i // LEVEL_COLS, column=i % LEVEL_COLS, sticky="w",
+                      padx=(0, LEVEL_GAP), pady=1)
+            tk.Label(cell, text=f"{world.display_name} Lv", bg=theme.BG, fg=theme.MUTED,
+                     anchor="e", width=LEVEL_NAME_W,
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
             var = tk.StringVar(value=str(int(fac.get("level", world.level))))
-            cb = ttk.Combobox(row, textvariable=var, state="readonly", width=2,
+            cb = ttk.Combobox(cell, textvariable=var, state="readonly", width=2,
                               values=[str(lv) for lv in
                                       range(1, facility_max_level(world.ftype) + 1)])
-            cb.pack(side="left")
+            cb.pack(side="left", padx=(3, 0))
             cb.bind("<<ComboboxSelected>>",
                     lambda _e, k=i, v=var: self._on_level_change(k, v))
             self._level_vars[i] = var
-            tk.Label(row, text="　", bg=theme.BG).pack(side="left")
         used = sum(1 for i, f in enumerate(self._fac_names)
                    if self._schedule.shifts[self._shift_index].world.facilities[i].ftype
                    in OUTPUT_ROOM_TYPES)
@@ -355,37 +370,31 @@ class BatchMixin:
         body = tk.Frame(self, bg=theme.BG)
         body.pack(fill="both", expand=True, padx=theme.PAD)
         self.canvas = tk.Canvas(body, bg=theme.PANEL, highlightthickness=0,
-                                height=self._table_h, highlightbackground=theme.BORDER)
+                                height=self._table_height(),
+                                highlightbackground=theme.BORDER)
         self.scroll = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scroll.set)
         self.scroll.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
         self.inner = tk.Frame(self.canvas, bg=theme.PANEL)
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>",
-                        lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>",
                          lambda e: self.canvas.itemconfigure(self._win, width=e.width))
-        # 滚轮只在表格区域内生效（bindtags，不用 bind_all）
-        self.canvas.bind_class(TABLE_TAG, "<MouseWheel>", self._on_wheel)
-        self._join_table_tag(self.canvas)
-        self._join_table_tag(self.inner)
+        # 滚轮：整个表格区域 + 行 + **滚动条本体**都能滚（见 ui/scroll.py）
+        self.vs = VScroll(self.canvas, self.scroll, self.inner, win=self._win)
 
-    def _join_table_tag(self, widget) -> None:
-        tags = list(widget.bindtags())
-        if TABLE_TAG not in tags:
-            widget.bindtags(tuple(tags) + (TABLE_TAG,))
+    def _table_height(self) -> int:
+        """表格可视高度：显式给了就用它；`"auto"`（设置中心）就**吃掉内容区的剩余高度**。
 
-    def _on_wheel(self, event):
-        try:
-            if self.inner.winfo_reqheight() <= self.canvas.winfo_height():
-                return "break"
-        except tk.TclError:
-            return None
-        delta = getattr(event, "delta", 0)
-        steps = -int(delta / 120) if delta else (-1 if delta > 0 else 1)
-        self.canvas.yview_scroll(steps, "units")
-        return "break"
+        为什么要 auto：等级区是网格，房间多的时候会占 2~5 行 —— 固定高度要么撑爆内容区、
+        要么把等级区挤掉。让它吃剩余高度，等级区多高都不怕。
+        """
+        if self._table_h is not None:
+            return int(self._table_h)
+        self.update_idletasks()
+        used = sum(w.winfo_reqheight() for w in self.winfo_children())
+        # 再留一点给"报错行 + 内边距"（它们在表格之后才建，这里量不到；实测 22px + 余量）
+        return max(TABLE_H_MIN, int(self._page_h) - used - 56)
 
     def _sync_facilities(self) -> None:
         """把选中班次的布局拷成可改的形式。
@@ -548,11 +557,13 @@ class BatchMixin:
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
             self._rows.append({"key": (fi, si), "room": room_lbl, "op": op,
                                "entry": entry, "elite": elite, "dash": dash})
-            self._join_table_tag(row)
+            self.vs.join(row)
         if not plan:
             tk.Label(self.inner, text="（这一班没有位置）", bg=theme.PANEL, fg=theme.MUTED,
                      font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=6, pady=6)
         self._fill_rows(plan)
+        if hasattr(self, "vs"):
+            self.vs.refresh()          # 行数变了 → 重算滚动区间
         self.canvas.yview_moveto(0)
 
     def _fill_rows(self, plan) -> None:
@@ -751,12 +762,12 @@ class BatchPanel(tk.Frame, BatchMixin):
                  imported_moods: Optional[Dict[str, Decimal]] = None,
                  moods_now: Optional[Dict[str, Decimal]] = None,
                  current_t=Decimal("0"), on_change=None, pool=None,
-                 table_height: int = TABLE_H):
+                 table_height=TABLE_H, page_height=0):
         super().__init__(master, bg=theme.BG)
         self._init_batch_body(master, schedule, shift_index=shift_index,
                               initial_moods=initial_moods, imported_moods=imported_moods,
                               moods_now=moods_now, current_t=current_t, on_change=on_change,
-                              pool=pool, table_height=table_height)
+                              pool=pool, table_height=table_height, page_height=page_height)
 
     def destroy(self) -> None:
         """销毁时取消还没落地的防抖任务（否则会对着已销毁的控件报 invalid command name）。"""

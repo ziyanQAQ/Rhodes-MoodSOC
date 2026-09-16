@@ -420,8 +420,11 @@ class MoodSocApp(tk.Tk):
                 self.idle_entries[(e.cycle or 1, e.shift or 1, e.name)] = (bool(e.enabled), label)
         self._sync_idle_label()
         self._build_shift_buttons()
-        self._sync_operator_box()
+        # ⚠️ 顺序：先 `recompute`（重建 traj），再 `_sync_operator_box`（挑一个**新排班里存在**的
+        #    对点对象并刷曲线）。反过来会拿着**旧 traj** 去查新名字 —— 换成"干员集合不同"的排班
+        #    （如空蓝图 / 另一个基地）时 `red_face_spans` 直接 KeyError。
         self.recompute(fit_slider=True)
+        self._sync_operator_box()
         if self.import_summary:                 # 用导入摘要盖住"重算耗时"那句
             self.status.configure(text=self.import_summary)
 
