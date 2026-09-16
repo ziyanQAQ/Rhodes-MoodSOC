@@ -43,7 +43,7 @@ documents/
 ├── 01-架构.md              分层 / 目录结构 / 数据流 / 解析解vs数值解 / 公共 API
 ├── 02-数值规则.md          心情⇔电池 / I 的完整构成 / 设施表 / 宿舍回复 / 工休比
 ├── 03-技能系统.md          Skill / SkillEquip / SkillKind / 精英化 / 阵营联动 / 模板入口
-├── 04-特殊机制.md          ★ 34 条特殊情况 + 11 条建模假设（改代码前必读）
+├── 04-特殊机制.md          ★ 34 条特殊情况 + 12 条建模假设（改代码前必读）
 ├── 05-技能分类大纲.md       六轴 + 模板字典 M01~M17 / X01~X11 + 决策记录
 ├── 06-数据来源.md          ★ 数据查找策略（强制）+ 上游缺失清单
 ├── 07-设计史.md            架构诊断 + P1~P5 重构决策记录
@@ -94,7 +94,7 @@ documents/
    `skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `resources/*.txt` → 重跑生成脚本。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 302 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 325 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（250 条 clause 逐条造场景
     核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `resources/skill_verify_report.md`。
@@ -102,6 +102,15 @@ documents/
 13. **「导入排班」认 4 种 JSON**（本工具场景 / MAA / **v3 求解输出** / **v4 蓝图+干员池**），
     识别与转换只有一处：`mood_soc/importer.py`（别再在 `ui/` 里写第二份格式判断）。
     合同与字段对照见 `documents/10-图形界面.md` §2。
+14. **「干员与心情」的心情列＝"指定时刻那一刻的实际心情"**：改格子写的是**心情指定事件**
+    （`ui.schedule.MoodSetEvent`，只对指定周期生效、同刻跳变），只有**第 1 周期 0:00** 那一格
+    写 `initial_moods`。面板的 `_collect_moods` **只收"和刚写进去的值不同"的格子**
+    （否则"改个房间等级"会把从轨迹读出来的值当成手动设定重复落一遍）。
+15. **同刻跳变＝同一时刻两个节点**（跳变前 / 跳变后）：`_record_jump` 是**追加**而不是改写；
+    对应地 `Trajectory.mood_at` **不能**用 `if t <= ts[0]: return vals[0]` 提前返回
+    （`t = 0` 恰好就是"周期起点被事件改过"，会取到跳变**前**的值——修过的 bug）。
+16. **`Schedule.start_clock`（初始时间点）只改显示**：所有时刻标签都带这个偏移
+    （`theme.fmt_clock(..., offset=)`），**引擎数值一字不变**；别在引擎里用它做任何计算。
 
 ---
 
