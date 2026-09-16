@@ -113,9 +113,14 @@ def fmt_mood(value, places: int = 2) -> str:
     return f"{q:f}".rstrip("0").rstrip(".")
 
 
-def fmt_clock(hours, cycle: Decimal = Decimal("24")) -> str:
-    """把"周期内时刻"格式化为 `HH:MM`（支持跨周期：36.5 → `12:30（第2天）`）。"""
-    h = Decimal(str(hours))
+def fmt_clock(hours, cycle: Decimal = Decimal("24"), offset: Decimal = Decimal("0")) -> str:
+    """把"周期内时刻"格式化为 `HH:MM`（支持跨周期：36.5 → `12:30（第2天）`）。
+
+    `offset`＝**周期起点对应的钟点**（"初始时间点"，见 `Schedule.start_clock`）：
+    `offset=1` 时 `t=0` 显示 `01:00`、`t=23` 显示 `00:00（第2天）`
+    ——「从 1 点开始到第二天 1 点为一个周期」。**只影响显示**，不参与任何数值计算。
+    """
+    h = Decimal(str(hours)) + Decimal(str(offset))
     day = int(h // cycle)
     within = h - cycle * day
     hh = int(within)
@@ -126,13 +131,14 @@ def fmt_clock(hours, cycle: Decimal = Decimal("24")) -> str:
     return f"{label}（第{day + 1}天）" if day else label
 
 
-def fmt_clock_short(hours, cycle: Decimal = Decimal("24")) -> str:
+def fmt_clock_short(hours, cycle: Decimal = Decimal("24"), offset: Decimal = Decimal("0")) -> str:
     """只要 `HH:MM`（**不带**「（第N天）」）——图表横轴刻度用。
 
     为什么单独一个：横轴刻度间距只有几十像素，带上天数的标签（约 90px）必然和左右
     刻度叠在一起（末尾那条 `24:00` 尤其明显）。跨天信息改由"另起一行标第N天 + 天分界线"表达。
+    `offset` 同 `fmt_clock`（周期起点钟点）。
     """
-    h = Decimal(str(hours)) % cycle
+    h = (Decimal(str(hours)) + Decimal(str(offset))) % cycle
     hh = int(h)
     mm = int((h - hh) * 60)
     if mm == 60:                      # 舍入兜底

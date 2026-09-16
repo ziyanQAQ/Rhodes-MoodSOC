@@ -16,7 +16,7 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
-from ui.schedule import (EVENT_THRESHOLDS, Schedule, all_operator_names,
+from ui.schedule import (EVENT_THRESHOLDS, MoodSetEvent, Schedule, all_operator_names,
                          default_initial_moods, load_schedule, shift_from_facilities,
                          simulate_schedule)
 
@@ -781,6 +781,18 @@ class Test显示格式化(unittest.TestCase):
         self.assertEqual(theme.fmt_clock(D("12.5")), "12:30")
         self.assertEqual(theme.fmt_clock(D("25")), "01:00（第2天）")
 
+    def test_初始时间点只改显示(self):
+        """「初始时间点」＝周期起点对应的钟点：`offset=1` ⇒ 从 1 点到第二天 1 点为一个周期。"""
+        from ui import theme
+        self.assertEqual(theme.fmt_clock(D("0"), D("24"), D("1")), "01:00")
+        self.assertEqual(theme.fmt_clock(D("11"), D("24"), D("1")), "12:00")
+        self.assertEqual(theme.fmt_clock(D("23"), D("24"), D("1")), "00:00（第2天）")
+        self.assertEqual(theme.fmt_clock(D("24"), D("24"), D("1")), "01:00（第2天）")
+        self.assertEqual(theme.fmt_clock_short(D("6"), D("24"), D("1")), "07:00")
+        # offset 缺省仍是老口径（36h 周期跨 "第2天" 的边界不因它而变）
+        self.assertEqual(theme.fmt_clock(D("36"), D("36")), "00:00（第2天）")
+        self.assertEqual(theme.fmt_clock(D("36"), D("36"), D("1")), "01:00（第2天）")
+
     def test_心情配色单调(self):
         """心情越高越"绿"：红脸的 R 分量应显著高于满心情。"""
         from ui import theme
@@ -788,6 +800,147 @@ class Test显示格式化(unittest.TestCase):
         red_at_24 = int(theme.mood_color(D("24"))[1:3], 16)
         self.assertGreater(red_at_0, red_at_24)
         self.assertNotEqual(theme.mood_tint(D("12")), theme.mood_tint(D("24")))
+
+
+class Test心情指定事件(MoodAssertMixin, unittest.TestCase):
+    """「心情指定事件」（`MoodSetEvent`）：在 **(周期, 周期内时刻)** 把某人心情**直接置为**给定值。
+
+    界面「干员与心情」面板里的锚点就是它——"指定周期内某个时刻她的心情是多少"。
+    这里只按公开 API 断言"输入 → 轨迹"。
+    """
+
+    @staticmethod
+    def _work_sch():
+        """两班 12/12，甲 乙 都在制造站（有消耗，速率恒定、与心情无关）。"""
+        fac = [{"type": "制造站", "level": 3, "operators": ["甲", "乙"]}]
+        return Schedule([shift_from_facilities("A · 12h", 12, fac),
+                         shift_from_facilities("B · 12h", 12, fac)], D("24"))
+
+    @staticmethod
+    def _hang_sch():
+        """两班 12/12，甲 在**加工站**（挂件位：0 消耗）⇒ 不设锚点时心情恒为 24。
+
+        用它来验证"锚点之后按正常速率演化"的另一半：速率为 0 ⇒ 置值后**保持不变**，
+        于是"锚点只在指定周期触发一次"可以从标记上干净地看出来（不受红脸钳位干扰）。
+        """
+        fac = [{"type": "加工站", "level": 1, "operators": ["甲"]}]
+        return Schedule([shift_from_facilities("A · 12h", 12, fac),
+                         shift_from_facilities("B · 12h", 12, fac)], D("24"))
+
+    def test_指定时刻直接置值(self):
+        sch = self._work_sch()
+        plain = simulate_schedule(sch, cycles=1)
+        traj = simulate_schedule(sch, cycles=1,
+                                 mood_events=[MoodSetEvent("甲", D("6"), D("5"))])
+        # 锚点时刻取到的**正是设定值**（同刻跳变，不是"插值插出来的一半"）
+        self.assertMood(traj.mood_at("甲", D("6")), D("5"), "锚点时刻的心情")
+        # 锚点之前一点没受影响
+        for t in ("0", "3", "5.9"):
+            self.assertMood(traj.mood_at("甲", D(t)), plain.mood_at("甲", D(t)), f"{t}h 处")
+        # 锚点之后**只换了起点、速率不变**：6→9 的降幅 == 0→3 的降幅
+        d_before = plain.mood_at("甲", D("0")) - plain.mood_at("甲", D("3"))
+        d_after = traj.mood_at("甲", D("6")) - traj.mood_at("甲", D("9"))
+        self.assertMood(d_after, d_before, "锚点不改变速率")
+        # 别人完全不受影响
+        for t in ("3", "6", "9", "18"):
+            self.assertMood(traj.mood_at("乙", D(t)), plain.mood_at("乙", D(t)), f"乙 @ {t}h")
+
+    def test_只对指定周期触发一次(self):
+        """`cycle` 是 1 基，**只对那个周期生效**：别的周期里这条锚点不该出现。"""
+        sch = self._hang_sch()
+        traj = simulate_schedule(sch, cycles=3,
+                                 mood_events=[MoodSetEvent("甲", D("6"), D("5"), cycle=2)])
+        hits = [float(m.t) for m in traj.marks if m.kind == "moodset"]
+        self.assertEqual(hits, [30.0], "只该在第 2 周期的 6:00（绝对 30h）触发")
+        self.assertMood(traj.mood_at("甲", D("6")), D("24"), "第 1 周期不受影响")
+        self.assertMood(traj.mood_at("甲", D("29.9")), D("24"), "第 2 周期触发前")
+        self.assertMood(traj.mood_at("甲", D("30")), D("5"), "第 2 周期触发那一刻")
+        self.assertMood(traj.mood_at("甲", D("42")), D("5"), "0 消耗 ⇒ 置值后保持不变")
+        self.assertTrue(any(m.kind == "moodset" and "5" in m.label for m in traj.marks),
+                        "标记要写清设成了多少")
+
+    def test_跳变是竖直的而不是斜坡(self):
+        """同刻跳变＝**同一时刻两个节点**（跳变前 / 跳变后），跳变**之前**必须保持水平。
+
+        ⚠️ 老实现（直接改写前一个节点）会让跳变前那一小段被线性插值成斜坡：最多 15 分钟
+        （一个 `MAX_SEGMENT_HOURS`）的曲线从旧值斜着爬到新值，看起来像"提前开始置值"。
+        """
+        sch = self._work_sch()
+        plain = simulate_schedule(sch, cycles=1)
+        traj = simulate_schedule(sch, cycles=1,
+                                 mood_events=[MoodSetEvent("甲", D("6"), D("5"))])
+        at = [i for i, t in enumerate(traj.times) if t == D("6")]
+        self.assertEqual(len(at), 2, "跳变时刻应有两个节点（跳变前 / 跳变后）")
+        self.assertMood(traj.moods["甲"][at[0]], plain.mood_at("甲", D("6")), "跳变前的值")
+        self.assertMood(traj.moods["甲"][at[1]], D("5"), "跳变后的值")
+        self.assertMood(traj.mood_at("甲", D("5.9")), plain.mood_at("甲", D("5.9")),
+                        "跳变前 0.1h 不该被斜坡污染")
+
+    def test_周期超出范围不生效(self):
+        """设了第 3 周期、后来周期数改成 1 ⇒ 那条锚点不生效（也不报错）。"""
+        sch = self._hang_sch()
+        plain = simulate_schedule(sch, cycles=1)
+        traj = simulate_schedule(sch, cycles=1,
+                                 mood_events=[MoodSetEvent("甲", D("6"), D("5"), cycle=3)])
+        self.assertEqual([m for m in traj.marks if m.kind == "moodset"], [])
+        self.assertEqual(traj.times, plain.times)
+        self.assertEqual(traj.moods, plain.moods)
+
+    def test_周期起点锚点等价于初始心情(self):
+        """`(第 1 周期, 0:00)` 的锚点就是"周期起点心情"（面板会走 `initial_moods` 那条路）。"""
+        sch = self._work_sch()
+        a = simulate_schedule(sch, cycles=1, mood_events=[MoodSetEvent("甲", D("0"), D("5"))])
+        b = simulate_schedule(sch, cycles=1, initial_moods={"甲": D("5")})
+        for t in ("0", "3", "12", "24"):
+            self.assertMood(a.mood_at("甲", D(t)), b.mood_at("甲", D(t)), f"{t}h 处")
+
+    def test_锚点落在班次边界也生效(self):
+        sch = self._work_sch()
+        traj = simulate_schedule(sch, cycles=1,
+                                 mood_events=[MoodSetEvent("甲", D("12"), D("8"))])
+        self.assertMood(traj.mood_at("甲", D("12")), D("8"))
+
+    def test_数值钳位(self):
+        sch = self._hang_sch()
+        hi = simulate_schedule(sch, cycles=1, mood_events=[MoodSetEvent("甲", D("3"), D("99"))])
+        lo = simulate_schedule(sch, cycles=1, mood_events=[MoodSetEvent("甲", D("3"), D("-5"))])
+        self.assertMood(hi.mood_at("甲", D("3")), D("24"))
+        self.assertMood(lo.mood_at("甲", D("3")), D("0"))
+
+    def test_不设锚点与老口径逐位一致(self):
+        """`mood_events=None`（缺省）与 `[]` 都必须和"完全没这个参数"一样。"""
+        sch = load_schedule([SAMPLE_MAA])
+        base = simulate_schedule(sch, cycles=2, entry_events=True)
+        for events in (None, []):
+            traj = simulate_schedule(sch, cycles=2, entry_events=True, mood_events=events)
+            self.assertEqual(traj.times, base.times)
+            self.assertEqual(traj.moods, base.moods)
+
+
+class Test初始时间点(unittest.TestCase):
+    """`Schedule.start_clock`：**纯显示口径**（周期起点是几点），不参与任何数值。"""
+
+    def test_默认是零点且可改(self):
+        sch = load_schedule([SAMPLE_MAA])
+        self.assertEqual(sch.start_clock, D("0"))
+        shifted = sch.with_start_clock(D("1"))
+        self.assertEqual(shifted.start_clock, D("1"))
+        # 12:00 与 36:00 是同一件事：取模到 [0, 24)
+        self.assertEqual(sch.with_start_clock(D("25")).start_clock, D("1"))
+
+    def test_改班次时长或布局都带得走(self):
+        sch = load_schedule([SAMPLE_MAA]).with_start_clock(D("1"))
+        after_hours = sch.with_hours([D("12"), D("6"), D("6")])
+        self.assertEqual(after_hours.start_clock, D("1"))
+        facs = [{"type": "制造站", "level": 3, "operators": ["甲"]}]
+        self.assertEqual(sch.replaced_shift(0, facs).start_clock, D("1"))
+
+    def test_只改显示不改数值(self):
+        sch = load_schedule([SAMPLE_MAA])
+        a = simulate_schedule(sch, cycles=2, entry_events=True)
+        b = simulate_schedule(sch.with_start_clock(D("1")), cycles=2, entry_events=True)
+        self.assertEqual(a.times, b.times)
+        self.assertEqual(a.moods, b.moods)
 
 
 if __name__ == "__main__":

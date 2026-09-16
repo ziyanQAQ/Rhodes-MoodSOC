@@ -189,14 +189,23 @@ def shift_file_kind(path: Union[str, Path]) -> str:
 
 @dataclass
 class Schedule:
-    """一个周期内的若干班次（不变式：**各班长之和 == 周期时长**）。"""
+    """一个周期内的若干班次（不变式：**各班长之和 == 周期时长**）。
+
+    `start_clock`：**周期起点对应的钟点**（0 ~ 24，默认 0 = 00:00）。
+    它**只是显示口径**——「从 1 点开始到第二天 1 点为一个周期」就是把 `start_clock` 设成 1，
+    所有时刻标签（滑块 / 看板头部 / 曲线刻度 / 逐次表组头）按 `周期内时刻 + start_clock` 渲染；
+    引擎的数值、判定、积分**一字不变**（模型本来就是相对时间）。
+    """
     shifts: List[Shift]
     cycle_hours: Decimal = DEFAULT_CYCLE_HOURS
+    start_clock: Decimal = ZERO
 
     def __post_init__(self):
         if not self.shifts:
             raise ValueError("排班至少要有一个班次")
         self.cycle_hours = to_decimal(self.cycle_hours)
+        # 起点钟点取模到 [0, 24)：12:00 与 36:00 是同一件事，别让调用方自己去归一
+        self.start_clock = to_decimal(self.start_clock) % Decimal("24")
         for s in self.shifts:
             if s.hours <= ZERO:
                 raise ValueError(f"班次「{s.label}」的时长还没确定（为 0）")
@@ -259,7 +268,11 @@ class Schedule:
                      entry_events=s.entry_events,
                      initial_global=dict(getattr(s, "initial_global", {}) or {}))
                for s, h in zip(self.shifts, hours)]
-        return Schedule(new, sum((s.hours for s in new), ZERO))
+        return Schedule(new, sum((s.hours for s in new), ZERO), self.start_clock)
+
+    def with_start_clock(self, clock) -> "Schedule":
+        """改「周期起点钟点」（纯显示口径，返回新的 Schedule）。"""
+        return Schedule(copy.deepcopy(self.shifts), self.cycle_hours, to_decimal(clock))
 
     def replaced_shift(self, index: int, facilities: List[dict]) -> "Schedule":
         """替换某个班次的布局（返回新的 Schedule）。"""
@@ -268,7 +281,7 @@ class Schedule:
                      source=s.source, entry_events=s.entry_events,
                      initial_global=dict(getattr(s, "initial_global", {}) or {}))
                for i, s in enumerate(self.shifts)]
-        return Schedule(new, self.cycle_hours)
+        return Schedule(new, self.cycle_hours, self.start_clock)
 
     def entry_config(self):
         """本排班的进驻事件配置（取第一个班次的；MAA 排班没有则为默认值）。"""
@@ -386,15 +399,21 @@ class Trajectory:
         return self.times[-1]
 
     def mood_at(self, name: str, t) -> Decimal:
-        """时刻 t 的心情（节点之间线性插值；超界取端点值）。"""
+        """时刻 t 的心情（节点之间线性插值；超界取端点值）。
+
+        ⚠️ 正好落在**同刻跳变**（进驻事件 / 闲置入宿 / 心情指定事件）上时取**跳变后**的值：
+        轨迹在同一时刻有两个节点（跳变前 / 跳变后），`bisect_right` 自然落在后一个上。
+        ⚠️ 所以这里**不能**用 `if t <= ts[0]: return vals[0]` 提前返回 —— `t = 0` 恰好就是
+        "周期起点被事件改过"的那种情况，提前返回会取到跳变**前**的值（老 bug）。
+        """
         vals = self.moods[name]
         t = to_decimal(t)
         ts = self.times
-        if t <= ts[0]:
-            return vals[0]
-        if t >= ts[-1]:
-            return vals[-1]
         i = bisect.bisect_right(ts, t)
+        if i == 0:
+            return vals[0]
+        if i >= len(ts):
+            return vals[-1]
         t0, t1 = ts[i - 1], ts[i]
         v0, v1 = vals[i - 1], vals[i]
         if t1 == t0:
@@ -518,17 +537,19 @@ def _read_back_moods(world, moods: Dict[str, Decimal]) -> None:
 
 
 def _record_jump(times, series, names, moods, t) -> None:
-    """记一个**同刻跳变**（进驻事件）：直接改写该时刻的取值，而不是追加同刻节点。
+    """记一个**同刻跳变**（进驻事件 / 闲置入宿 / 心情指定事件）。
 
-    否则 `mood_at(t)` 会取到跳变前的旧值。
+    做法是**追加同刻的第二个节点**：`(t, 跳变前)` 已经由推进循环写下了，这里再写 `(t, 跳变后)`。
+    于是折线上这一段是**竖直**的，而 `mood_at(t)` 取到的正是**跳变后**的值
+    （`mood_at` 用 `bisect_right`，同刻节点里它落在后一个上）。
+
+    ⚠️ 不要改回"直接改写前一个节点"：那样跳变**之前**的那一小段会被插值成斜坡——
+    旧实现就有这个毛病，跳变前最多 15 分钟（一个 `MAX_SEGMENT_HOURS`）的曲线会从旧值
+    斜着爬到新值，看起来像"提前开始换心情"。
     """
-    if times[-1] == t:
-        for n in names:
-            series[n][-1] = moods[n]
-    else:
-        times.append(t)
-        for n in names:
-            series[n].append(moods[n])
+    times.append(t)
+    for n in names:
+        series[n].append(moods[n])
 
 
 def _next_event(schedule: Schedule, moods: Dict[str, Decimal], rates: Dict[str, Decimal],
@@ -584,6 +605,55 @@ def default_initial_moods(schedule: Schedule) -> Dict[str, Decimal]:
     return base
 
 
+@dataclass
+class MoodSetEvent:
+    """「**心情指定事件**」：在**某个周期的某个时刻**把某位干员的心情**直接置为**给定值。
+
+    这是"心情指定事件"的唯一载体（界面「干员与心情」面板里的锚点就是它）：
+
+    | 字段 | 含义 |
+    |---|---|
+    | `name` | 干员名 |
+    | `t` | **周期内时刻**（`0 ≤ t < 周期时长`，单位小时） |
+    | `mood` | 那一刻直接置成的值（构造时钳位到 `[0, 24]`） |
+    | `cycle` | **第几个周期**（1 基）。**只对这个周期生效**，别的周期不受影响 |
+
+    语义：那一刻她"被调到"这个心情（例如刚吃了体力药、刚被换下来休息），
+    **之后按正常速率演化**。轨迹上它是**同刻跳变**——`mood_at(t)` 取到的正是设定值。
+
+    ⚠️ 同一时刻若与进驻事件 / 闲置入宿重合，**锚点最后生效**（显式设定优先于机制推算）。
+    ⚠️ `cycle` 超出当前「周期数」范围（比如设了第 3 周期、后来周期数改成 1）时**不生效**，
+    也不会报错——面板会把这类锚点标出来。
+    """
+    name: str
+    t: Decimal
+    mood: Decimal
+    cycle: int = 1
+
+    def __post_init__(self):
+        self.t = to_decimal(self.t)
+        self.mood = _clamp_mood(to_decimal(self.mood))
+        self.cycle = int(self.cycle)
+
+    def absolute(self, cycle_hours) -> Decimal:
+        """换算成"从轨迹起点算起"的绝对时刻（`(cycle-1) * 周期 + t`）。"""
+        return to_decimal(self.t) + to_decimal(cycle_hours) * (self.cycle - 1)
+
+
+def _clamp_mood(value: Decimal) -> Decimal:
+    """心情钳位到 `[0, 24]`（与引擎其余部分同一口径）。"""
+    if value > MOOD_MAX:
+        return MOOD_MAX
+    if value < MOOD_MIN:
+        return MOOD_MIN
+    return value
+
+
+def _fmt_value(value: Decimal) -> str:
+    """`Decimal` → 短字符串（给标记文案用；本模块不依赖 `ui.theme`，它是要拉 tkinter 的）。"""
+    return format(value.normalize(), "f")
+
+
 def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       initial_moods: Optional[Dict[str, Decimal]] = None,
                       entry_events: bool = False,
@@ -595,6 +665,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       entry_per_shift: Optional[List[EntryShiftOverride]] = None,
                       idle_to_dorm: bool = False,
                       idle_entries: Optional[Sequence["IdleToDormEntry"]] = None,
+                      mood_events: Optional[Sequence[MoodSetEvent]] = None,
                       max_segment: Decimal = MAX_SEGMENT_HOURS) -> Trajectory:
     """把排班跑成"整周期心情轨迹"（事件驱动精确积分）。
 
@@ -618,6 +689,9 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         idle_entries  界面的逐人设置（`[IdleToDormEntry, ...]`，**只列改过默认的**：
                        不参与的人、或指定了交换对象的人）。给了它就**盖过** JSON 里的
                        `idle_to_dorm.per_operator`（界面口径优先）；`None` = 用 JSON。
+        mood_events   **心情指定事件**（`[MoodSetEvent, ...]`，见那个类）：在
+                       `(周期, 周期内时刻)` 把某位干员的心情**直接置为**给定值，
+                       之后按正常速率演化（同刻跳变 + 速率重算）。缺省 `None` = 没有。
         max_segment   单段最长时长（兜底安全上限）
 
     数值说明：单段内心情是精确的线性函数；误差只来自 Decimal 除法在 28 位有效数字处的
@@ -671,6 +745,20 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     marks: List[Mark] = []
     for i, s in enumerate(schedule.shifts):
         marks.append(Mark(schedule.starts[i], "shift", s.label))
+
+    # —— 心情指定事件：换算成**绝对时刻** → `{绝对时刻: {干员: 值}}` ——
+    # 只对 `1 <= cycle <= cycles` 的生效（周期数被调小后超范围的那些自然失效）；
+    # 落在 `[0, total)` 之外（例如"最后一个周期的末尾"）的忽略——它在轨迹上没有下一步可影响。
+    mood_at_time: Dict[Decimal, Dict[str, Decimal]] = {}
+    for ev in (mood_events or ()):
+        cyc = int(getattr(ev, "cycle", 1) or 1)
+        if cyc < 1 or cyc > cycles:
+            continue
+        at = to_decimal(ev.t) + schedule.cycle_hours * (cyc - 1)
+        if at < ZERO or at >= total:
+            continue
+        mood_at_time.setdefault(at, {})[ev.name] = _clamp_mood(to_decimal(ev.mood))
+    mood_times: List[Decimal] = sorted(mood_at_time)
 
     # 覆盖 [0, total] 的班次段（跨周期重复）
     segments: List[Tuple[Decimal, Decimal, int]] = []
@@ -734,7 +822,21 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
 
         t = t0
         rates = None
+        # 本段内要"踩点"的心情指定事件（严格在段内；正好在段首那个由循环顶部的检查处理）
+        seg_moods = [tt for tt in mood_times if t0 < tt < seg_end]
         while t < seg_end:
+            # —— 心情指定事件：正好落在这一刻 → **直接置值**（同刻跳变）——
+            # 放在循环顶部是为了统一处理"段首那一刻"（如班次边界、周期起点）与"段内踩点"：
+            # 两者都是"推进到 t 之后置值"，而 `_record_jump` 在 `times[-1] == t` 时改写该节点，
+            # 于是曲线在这里出现一条竖直跳变、`mood_at(t)` 取到的就是设定值。
+            if t in mood_at_time:
+                for n, v in mood_at_time[t].items():
+                    if n not in moods:
+                        continue
+                    moods[n] = v
+                    marks.append(Mark(t, "moodset", f"指定 {n} 心情={_fmt_value(v)}"))
+                _record_jump(times, series, names, moods, t)
+                rates = None                   # 心情变了 ⇒ 依赖心情的条件技能要重判
             # 速率只在"可能变了"时重算：进新班次、发生了事件（跨阈值/两人交叉/位置互换）、
             # 或走了兜底分支。纯"安全上限推进"时速率必然不变，直接复用（这是主要的提速点：
             # 重算一次全布局约 2.5ms，复用它能把 3 周期的重算从 ~1.9s 压到 ~0.2s）。
@@ -747,6 +849,12 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                 rates = rates_in_world(world, names)
             nxt, snaps = _next_event(schedule, moods, rates, t, seg_end, groups)
             event_fired = bool(snaps) or nxt < seg_end
+            # ⚠️ 不许**跨过**心情指定事件：把 nxt 截到它那一刻，并丢掉原本那个时刻的阈值吸附
+            #    （吸附是按"原 nxt"算的，截断之后不再成立——留着会把心情钉在不该钉的值上）。
+            for tt in seg_moods:
+                if t < tt < nxt:
+                    nxt, snaps, event_fired = tt, {}, True
+                    break
             if nxt - t > max_segment:          # 兜底上限截断 → 本段没有真事件
                 nxt, snaps, event_fired = t + max_segment, {}, False
             if nxt <= t:                       # 数值兜底，绝不原地打转
