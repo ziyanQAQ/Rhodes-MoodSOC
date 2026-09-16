@@ -76,8 +76,8 @@ class Test批量设置(unittest.TestCase):
             self.top.destroy()
 
     # ------------------------------------------------------------- 工具
-    def _open(self, shift_index: int = 0, moods=None, moods_now=None):
-        """建一个「批量设置」面板并挂到测试用的窗口上。
+    def _open(self, shift_index: int = 0, moods=None, moods_now=None, mood_events=None):
+        """建一个「干员与心情」面板并挂到测试用的窗口上。
 
         （面板＝设置中心「干员与心情」分区的内容本体；它自己是 Frame，
         所以这里给它一个 Toplevel 当宿主。）
@@ -93,7 +93,11 @@ class Test批量设置(unittest.TestCase):
                            imported_moods=default_initial_moods(app.schedule),
                            moods_now=(moods_now if moods_now is not None
                                       else app.traj.moods_at(Decimal("0"))),
-                           current_t=app.current_t)
+                           current_t=app.current_t,
+                           cycles=app.cycles,
+                           mood_events=(app.mood_events if mood_events is None
+                                        else mood_events),
+                           moods_at=app.moods_at_abs)
         panel.pack(fill="both", expand=True)
         app.update()
         return panel
@@ -133,13 +137,13 @@ class Test批量设置(unittest.TestCase):
         dlg = self._open(0)
         dlg._set_all(MOOD_MAX)
         dlg._mood_vars["温蒂"].set("3")          # 手改一行，验证它会被一起收走
-        changes, moods = self._apply(dlg)
+        changes, moods, _events = self._apply(dlg)
         self.assertEqual(moods, {"温蒂": Decimal("3")})   # 差集：只有手改的那一行
         self.assertEqual(app.traj.mood_at("温蒂", 0), Decimal("3"))
 
         dlg = self._open(0, moods=moods)
         dlg._set_all(Decimal("0"))
-        changes, moods = self._apply(dlg)
+        changes, moods, _events = self._apply(dlg)
         self.assertEqual(len(moods), len(app.schedule.operator_names()))
         self.assertTrue(all(v == 0 for v in moods.values()))
         self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("0"))
@@ -159,24 +163,49 @@ class Test批量设置(unittest.TestCase):
         self.assertIn("0 ~ 24", dlg.err.cget("text"))
         self.assertEqual(dlg._mood_vars["森蚺"].get(), "12.5")
 
-    def test_按当前时刻回填(self):
-        """把滑块所在时刻的**实际心情**写成新的周期起点。"""
+    def test_按这一刻回填(self):
+        """「按这一刻回填」＝ 把**当前指定时刻**的实际心情写成锚点（钉住此刻的实际值）。
+
+        视图在第 1 周期 12:00：回填后应当出现一批 `t=12` 的锚点，且 12:00 的心情
+        **一个都不变**（回填的是"此刻实际是多少"，不是"改一个数"）。
+        """
         app = self.app
         app.set_time(Decimal("12"))
         app.update()
-        dlg = self._open(0, moods_now=app.traj.moods_at(Decimal("12")))
+        dlg = self._open(0)                       # current_t=12 → 视图＝第 1 周期 12:00
+        self.assertEqual(float(dlg._view_t), 12.0)
+        before = {n: app.traj.mood_at(n, Decimal("12")) for n in dlg._table_names()}
         dlg._fill_from_now()
-        changes, moods = self._apply(dlg)
-        self.assertTrue(moods, "回填后应当有一批与导入值不同的心情")
+        changes, moods, events = self._apply(dlg)
+        self.assertTrue(events, "回填后应当有一批锚点")
+        self.assertTrue(all(e.t == Decimal("12") and e.cycle == 1 for e in events))
+        for e in events:
+            self.assertEqual(float(app.traj.mood_at(e.name, Decimal("12"))), float(before[e.name]),
+                             f"{e.name} 在 12:00 的心情不该被回填改掉")
+        self.assertEqual(moods, {}, "12:00 的锚点不该改动周期起点心情")
+        app.mood_events.clear()
+        app.recompute()
+
+    def test_周期起点视图的回填与老口径一致(self):
+        """视图停在「第 1 周期 0:00」（老口径）时，回填写的仍是**周期起点心情**。"""
+        app = self.app
+        app.set_time(Decimal("12"))
+        app.update()
+        dlg = self._open(0)
+        dlg._set_view(1, Decimal("0"))             # 手动把时刻挪回周期起点
+        before = {n: app.traj.mood_at(n, Decimal("0")) for n in dlg._table_names()}
+        dlg._fill_from_now()
+        changes, moods, events = self._apply(dlg)
+        self.assertEqual(events, [], "起点视图不产生锚点")
         for name, v in moods.items():
-            self.assertEqual(app.traj.mood_at(name, 0), v)
+            self.assertEqual(v, before[name])
         app.initial_moods.clear()
         app.recompute()
 
     def test_恢复导入值(self):
         dlg = self._open(0, moods={"塞雷娅": Decimal("6")})
         dlg._restore_imported()
-        changes, moods = self._apply(dlg)
+        changes, moods, _events = self._apply(dlg)
         self.assertEqual(moods, {})              # 全部回到导入值 → 差集为空
 
     def test_心情越界被拒(self):
@@ -197,7 +226,7 @@ class Test批量设置(unittest.TestCase):
         names = ["泡泡", "慕斯", "克洛丝", "米格鲁", "芬", "玫兰莎"]
         dlg._apply_names(names, clear_first=True)
         self.assertIn(f"已填入 {len(names)} 人", dlg.err.cget("text"))
-        changes, moods = self._apply(dlg)
+        changes, moods, _events = self._apply(dlg)
         self.assertEqual(self._ops_of(changes), names)          # 顺序不变
         world = app.schedule.shifts[0].world
         cap0 = world.facilities[0].capacity
@@ -213,14 +242,14 @@ class Test批量设置(unittest.TestCase):
         dlg._apply_names(["泡泡", "泡泡"] + ["慕斯"] * (total + 3), clear_first=True)
         self.assertIn("重名", dlg.err.cget("text"))
         self.assertIn("没有位置", dlg.err.cget("text"))
-        changes, moods = self._apply(dlg)
+        changes, moods, _events = self._apply(dlg)
         self.assertEqual(self._ops_of(changes), ["泡泡", "慕斯"])
 
     def test_清空本班次(self):
         app = self.app
         dlg = self._open(0)
         dlg._clear_shift()
-        changes, moods = self._apply(dlg)
+        changes, moods, _events = self._apply(dlg)
         self.assertEqual(self._ops_of(changes), [])
         self.assertEqual(app.schedule.shifts[0].world.facilities[0].operators, [])
 
@@ -234,7 +263,7 @@ class Test批量设置(unittest.TestCase):
         dlg._elite_vars["卡夫卡"].set("E1")
         dlg._on_elite_change("卡夫卡")
         self.assertEqual(dlg._op_text("卡夫卡"), "卡夫卡 E1")        # 表格里立刻带角标
-        changes, _moods = self._apply(dlg)
+        changes, _moods, _events = self._apply(dlg)
         self.assertEqual([n for f in changes[0] for n in f["operators"] if isinstance(n, dict)],
                          [{"name": "卡夫卡", "elite": 1}])
         self.assertEqual(app.schedule.shifts[0].world.get_operator("卡夫卡").elite, 1)
@@ -244,7 +273,7 @@ class Test批量设置(unittest.TestCase):
         self.assertEqual(again._elite["卡夫卡"], 1)
         self.assertEqual(again._elite_vars["卡夫卡"].get(), "E1")
         again._set_all_elite(2)
-        changes, _moods = self._apply(again)
+        changes, _moods, _events = self._apply(again)
         self.assertEqual([n for f in changes[0] for n in f["operators"] if isinstance(n, dict)], [])
         self.assertEqual(app.schedule.shifts[0].world.get_operator("卡夫卡").elite, 2)
 
@@ -281,11 +310,163 @@ class Test批量设置(unittest.TestCase):
         dlg.shift_var.set(labels[0])              # 切回来：第 1 班未应用的改动还在
         dlg._on_shift_change()
         self.assertEqual(dlg._fac_names[0]["operators"], ["泡泡"])
-        changes, moods = self._apply(dlg)
+        changes, moods, _events = self._apply(dlg)
         self.assertEqual(list(changes), [0])      # 只有第 1 班被改
         self.assertEqual(self._ops_of(changes), ["泡泡"])
         self.assertEqual([[o.name for o in f.operators] for f in
                           app.schedule.shifts[1].world.facilities], shift2_ops)
+
+    # ------------------------------------------------------------- 按时刻指定心情
+    def test_换时刻心情列按轨迹重算(self):
+        """指定时刻一变，心情列就是那一刻的**实际心情**（正常演化出来的，不用重输）。"""
+        app = self.app
+        dlg = self._open(0)
+        dlg._set_view(1, Decimal("0"))
+        names = list(dlg._mood_vars)
+        at0 = {n: dlg._mood_vars[n].get() for n in names}
+        dlg._set_view(1, Decimal("6"))
+        at6 = {n: dlg._mood_vars[n].get() for n in names}
+        self.assertTrue(any(at0[n] != at6[n] for n in names), "6 小时后应当有人心情变了")
+        for n, text in at6.items():
+            self.assertEqual(Decimal(text), app.traj.mood_at(n, Decimal("6")),
+                             f"{n} 在 6:00 的心情应当＝轨迹值")
+        # 干员列也跟着时刻走：6:00 落在第 1 班（12h）
+        self.assertEqual(dlg._shift_index, app.schedule.index_at(Decimal("6")))
+        # 回到起点视图 → 又是"周期起点心情"（老口径）
+        dlg._set_view(1, Decimal("0"))
+        self.assertEqual(dlg._mood_vars[names[0]].get(), at0[names[0]])
+
+    def test_改格子写锚点且只对指定周期(self):
+        """非起点视图里改格子 → 写 `(周期, 时刻, 干员)` 锚点，**不动**周期起点心情。"""
+        from ui.schedule import MoodSetEvent
+
+        app = self.app
+        app.mood_events = [MoodSetEvent("锡人", Decimal("3"), Decimal("10"), 1)]
+        dlg = self._open(0)
+        dlg._set_view(1, Decimal("6"))
+        dlg._mood_vars["森蚺"].set("9")
+        changes, moods, events = self._apply(dlg)
+        self.assertEqual(moods, {}, "非起点视图不该改周期起点心情")
+        self.assertEqual([(e.name, float(e.t), float(e.mood), e.cycle) for e in events],
+                         [("锡人", 3.0, 10.0, 1), ("森蚺", 6.0, 9.0, 1)])
+        self.assertEqual(app.traj.mood_at("森蚺", Decimal("6")), Decimal("9"))
+        # 第 2 周期同刻**不**被钉住（锚点只对指定周期生效）
+        app.cycles_var.set("2")
+        app.cycles = 2
+        app.recompute()
+        self.assertEqual([e.cycle for e in events], [1, 1])
+        # 在"第 2 周期"视图里改 → 锚点带 cycle=2（与第 1 周期那条共存）
+        dlg2 = self._open(0)
+        dlg2._set_view(2, Decimal("6"))
+        dlg2._mood_vars["森蚺"].set("4")
+        _c, _m, ev2 = self._apply(dlg2)
+        self.assertIn((2, 6.0, 4.0), [(e.cycle, float(e.t), float(e.mood)) for e in ev2])
+        app.mood_events.clear()
+        app.cycles_var.set("1")
+        app.cycles = 1
+        app.recompute()
+
+    def test_没改过的格子不会被当成手动设定(self):
+        """只被刷新过的格子不能变成锚点/起点心情（否则"改个等级"都会顺手改掉起点心情）。"""
+        app = self.app
+        dlg = self._open(0)
+        dlg._set_view(1, Decimal("6"))
+        changes, moods, events = self._apply(dlg)
+        self.assertEqual((moods, events), ({}, []))
+        dlg._on_level_change(1, dlg._level_vars[1])       # 随便动一下别的设置
+        _c, moods2, events2 = self._apply(dlg)
+        self.assertEqual((moods2, events2), ({}, []))
+
+    def test_干员列跟着时刻切班次(self):
+        """时刻挪到第 2 班 → 表格显示第 2 班的名单（两处不会各指一个时间）。"""
+        app = self.app
+        dlg = self._open(0)
+        shift2 = [[o.name for o in f.operators]
+                  for f in app.schedule.shifts[1].world.facilities]
+        dlg._set_view(1, app.schedule.starts[1])
+        self.assertEqual(dlg._shift_index, 1)
+        self.assertEqual(dlg.shift_var.get(), app.schedule.shift_labels()[1])
+        self.assertEqual([f["operators"] for f in dlg._fac_names], shift2)
+
+    def test_时刻输入与步进(self):
+        """时刻输入接受 `HH:MM`（带初始时间点），`◀/▶` 挪 15 分钟，越界按周期取模。"""
+        app = self.app
+        dlg = self._open(0)
+        dlg.view_time_var.set("13:30")
+        dlg._on_view_change()
+        self.assertEqual(dlg._view_t, Decimal("13.5"))
+        dlg._step_view(Decimal("0.25"))
+        self.assertEqual(dlg._view_t, Decimal("13.75"))
+        dlg._step_view(Decimal("-0.5"))
+        self.assertEqual(dlg._view_t, Decimal("13.25"))
+        dlg.view_time_var.set("不是时间")
+        dlg._on_view_change()
+        self.assertIn("HH:MM", dlg.err.cget("text"))
+        self.assertEqual(dlg._view_t, Decimal("13.25"), "解析失败不该改时刻")
+        # 初始时间点 01:00 ⇒ 输入 01:00 就是周期起点（面板拿的是新排班）
+        app.apply_start_clock(Decimal("1"))
+        dlg2 = self._open(0)
+        self.assertEqual(dlg2.view_time_var.get(), "01:00", "缺省视图按初始时间点显示")
+        dlg2.view_time_var.set("13:00")
+        dlg2._on_view_change()
+        self.assertEqual(dlg2._view_t, Decimal("12"))
+        app.apply_start_clock(Decimal("0"))
+
+    def test_跟随滑块(self):
+        """勾了「跟随滑块」：主界面推到哪，面板就跟到哪（连周期一起算）。"""
+        app = self.app
+        app.cycles_var.set("2")
+        app.cycles = 2
+        app.recompute()
+        dlg = self._open(0)                       # 周期数 2 → 面板里有第 2 周期
+        dlg.follow.set(True)
+        dlg._on_follow()
+        dlg.on_view_change(Decimal("19"), app.traj.moods_at(Decimal("19")))
+        self.assertEqual(dlg._view_cycle, 1)
+        self.assertEqual(dlg._view_t, Decimal("19"))
+        dlg.on_view_change(Decimal("30"), app.traj.moods_at(Decimal("30")))
+        self.assertEqual(dlg._view_cycle, 2)
+        self.assertEqual(dlg._view_t, Decimal("6"))       # 30 - 24
+        # 取消跟随 → 主界面再动也不拽走它
+        dlg.follow.set(False)
+        dlg.on_view_change(Decimal("40"), app.traj.moods_at(Decimal("40")))
+        self.assertEqual((dlg._view_cycle, dlg._view_t), (2, Decimal("6")))
+        app.cycles_var.set("1")
+        app.cycles = 1
+        app.recompute()
+
+    def test_锚点一览与清空本时刻(self):
+        app = self.app
+        dlg = self._open(0)
+        dlg._set_view(1, Decimal("6"))
+        dlg._mood_vars["森蚺"].set("9")
+        dlg._collect_moods()
+        self.assertIn("森蚺=9", dlg.anchor_note.cget("text"))
+        self.assertIn("第1周期", dlg.anchor_note.cget("text"))
+        dlg._clear_view_anchors()
+        self.assertNotIn("森蚺=9", dlg.anchor_note.cget("text"))
+        _c, _m, events = self._apply(dlg)
+        self.assertEqual(events, [])
+
+    def test_恢复导入值清掉全部锚点(self):
+        app = self.app
+        dlg = self._open(0)
+        dlg._set_view(1, Decimal("6"))
+        dlg._mood_vars["森蚺"].set("9")
+        dlg._collect_moods()
+        dlg._restore_imported()
+        _c, moods, events = self._apply(dlg)
+        self.assertEqual((moods, events), ({}, []))
+
+    def test_超出周期数的锚点会被标出来(self):
+        from ui.schedule import MoodSetEvent
+
+        app = self.app
+        dlg = self._open(0)                       # 周期数 = 1
+        dlg._events = [MoodSetEvent("森蚺", Decimal("6"), Decimal("9"), 3)]
+        dlg._sync_anchor_note()
+        self.assertIn("之外", dlg.anchor_note.cget("text"))
+        self.assertIn("周期数调大", dlg.anchor_note.cget("text"))
 
     # ------------------------------------------------------------- 端到端
     def test_设置中心里改干员与心情立即生效(self):
@@ -356,10 +537,10 @@ class Test批量设置(unittest.TestCase):
         res = panel.value()
         if res is None:                          # 报错时面板还在，能读到提示
             self.fail(f"收结果失败：{panel.err.cget('text')}")
-        changes, moods = res
+        changes, moods, events = res
         app = self.app
-        app.apply_batch(changes, moods)
-        return changes, moods
+        app.apply_batch(changes, moods, events)
+        return changes, moods, events
 
 
 if __name__ == "__main__":

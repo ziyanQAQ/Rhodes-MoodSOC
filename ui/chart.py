@@ -134,7 +134,9 @@ class MoodChart(tk.Canvas):
             self.create_line(x, y1, x, y1 + 4, fill=theme.BORDER)
             # ⚠️ 刻度**不带**「（第N天）」：带上就约 90px 宽，必然和左右刻度叠字
             #    （末尾那条 24:00 最明显）。跨天信息由下面那一行「第N天」表达。
-            self.create_text(x, y1 + 16, text=theme.fmt_clock_short(tick, sched.cycle_hours),
+            self.create_text(x, y1 + 16,
+                             text=theme.fmt_clock_short(tick, sched.cycle_hours,
+                                                        sched.start_clock),
                              fill=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL))
             tick += step_h
 
@@ -191,6 +193,15 @@ class MoodChart(tk.Canvas):
             self.create_text(x, y0 + 14, text="宿", fill=theme.OK,
                              font=(theme.FONT_FAMILY, theme.FS_SMALL))
 
+        # —— 心情指定事件（「干员与心情」里设的锚点）：短竖线 + ✎ ——
+        for mark in traj.marks:
+            if mark.kind != "moodset":
+                continue
+            x = self._tx(mark.t, x0, x1, total)
+            self.create_line(x, y1 - 12, x, y1, fill=theme.MUTED, width=2)
+            self.create_text(x, y1 - 20, text="✎", fill=theme.MUTED,
+                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
+
         self._draw_cursor()
 
     def _time_step(self, total: Decimal, span: float) -> Decimal:
@@ -242,7 +253,8 @@ class MoodChart(tk.Canvas):
                          fill=theme.TEXT, outline="", tags="hover")
         extra = self.info_provider(t) if self.info_provider else ""
         rate = self.traj.rate_at(self.name, t)
-        text = (f"{theme.fmt_clock(t, self.traj.schedule.cycle_hours)}　"
+        sched = self.traj.schedule
+        text = (f"{theme.fmt_clock(t, sched.cycle_hours, sched.start_clock)}　"
                 f"心情 {theme.fmt_mood(mood)}　速率 {theme.fmt_rate(rate)}")
         if extra:
             text += f"　{extra}"

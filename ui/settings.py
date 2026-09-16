@@ -17,8 +17,8 @@
 
 | 分区 | 内容 | 由谁实现 |
 |---|---|---|
-| **时间轴** | 周期时长 / 各班次时长 / **周期数**（1~3） | `dialogs.TimelinePanel` |
-| **干员与心情** | 房间等级 + 干员表 + 练度 + 心情（含"恢复导入值"＝原来的「重置心情」） | `batch.BatchPanel` |
+| **时间轴** | 周期时长 / 各班次时长 / **周期数**（1~3） / **初始时间点**（周期从几点开始） | `dialogs.TimelinePanel` + 本文件 |
+| **干员与心情** | 房间等级 + 干员表 + 练度 + **按时刻指定心情**（周期 / 时刻 / 锚点） | `batch.BatchPanel` |
 | **换心情** | 进驻事件（M15a）：开关 + 每班一行表 | `dialogs.EntryEventPanel` |
 | **闲置入宿** | 未满的闲置干员进宿舍：开关 + 逐次表 | `dialogs.IdleToDormPanel` |
 
@@ -39,6 +39,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+from decimal import Decimal
 from tkinter import ttk
 from typing import Dict, List, Optional
 
@@ -48,8 +49,8 @@ from .dialogs import EntryEventPanel, IdleToDormPanel, TimelinePanel
 
 # (分区键, 标题, 一句话说明)
 PAGES = (
-    ("timeline", "时间轴", "周期多长、分几班、每班几小时、跑几个周期"),
-    ("batch", "干员与心情", "房间等级 · 每个位置放谁 · 练度(E0~E2) · 周期起点心情"),
+    ("timeline", "时间轴", "周期多长、分几班、每班几小时、跑几个周期、从几点开始"),
+    ("batch", "干员与心情", "房间等级 · 每个位置放谁 · 练度(E0~E2) · 周期内任意时刻的心情"),
     ("entry", "换心情", "进驻事件 M15a：进驻那一刻与谁互换心情"),
     ("idle", "闲置入宿", "把没上班、没在宿舍、心情未满的干员安排进宿舍"),
 )
@@ -186,6 +187,10 @@ class SettingsDialog(tk.Toplevel):
         self.head.configure(text=title)
         self.note.configure(text=desc + "　（改动立即生效）")
         self._focus_active()
+        if key == "batch":
+            # 刚切回「干员与心情」：补一次"现在这一刻"，免得勾了「跟随滑块」却停在旧时刻
+            # （切走的这段时间里 `notify_view` 是不转发的，见那里）。
+            self.notify_view(self.app.current_t, self.app.moods_at_now())
 
     # —— 焦点环：Tab 只在本分区里转，别跑到看不见的那几页上去 ——
     def _focusables(self):
@@ -289,7 +294,43 @@ class SettingsDialog(tk.Toplevel):
                           values=("1", "2", "3"))
         cb.pack(side="left")
         cb.bind("<<ComboboxSelected>>", lambda _e: app.on_cycles_changed())
+        # —— 初始时间点：周期从几点开始（如 01:00 ⇒ 1 点到第二天 1 点为一个周期）——
+        # ⚠️ **纯显示口径**：滑块/看板/曲线上的时刻全按它渲染，引擎数值一字不变。
+        row, slot = setting_row(box, "初始时间点",
+                                "（周期的起点是几点；只改显示，不改数值）")
+        row.pack(fill="x", pady=(6, 0))
+        self.clock_var = tk.StringVar(value=theme.fmt_clock(app.schedule.start_clock))
+        entry = ttk.Entry(slot, textvariable=self.clock_var, width=7)
+        entry.pack(side="left")
+        entry.bind("<Return>", lambda _e: self._apply_clock())
+        entry.bind("<FocusOut>", lambda _e: self._apply_clock())
+        ttk.Button(slot, text="应用", command=self._apply_clock).pack(side="left", padx=(4, 0))
+        self.clock_msg = tk.Label(box, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
+                                  font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.clock_msg.pack(fill="x", pady=(2, 0))
         return box
+
+    def _apply_clock(self) -> None:
+        """「初始时间点」落地：解析钟点 → `app.apply_start_clock`（只改显示口径）。"""
+        from mood_soc.battery import to_decimal
+        raw = (self.clock_var.get() or "").strip().replace("：", ":")
+        try:
+            hours = (Decimal(raw.split(":", 1)[0]) + Decimal(raw.split(":", 1)[1]) / 60
+                     if ":" in raw else to_decimal(raw))
+        except Exception:
+            self.clock_msg.configure(text="写成 HH:MM（例如 01:00）或小时数（例如 1）",
+                                     fg=theme.DANGER)
+            self.clock_var.set(theme.fmt_clock(self.app.schedule.start_clock))
+            return
+        hours = hours % Decimal("24")
+        self.app.apply_start_clock(hours)
+        self.clock_var.set(theme.fmt_clock(hours))
+        nxt = theme.fmt_clock(self.app.schedule.cycle_hours, self.app.schedule.cycle_hours, hours)
+        self.clock_msg.configure(text=f"✔ 周期＝{theme.fmt_clock(hours)} → {nxt}"
+                                      f"（显示口径，数值不变）", fg=theme.OK)
+        # 逐次表的组头写的是时刻、「干员与心情」的时刻框也按它显示 → 标脏
+        # （当前页不标：它就是改动来源）
+        self.invalidate("idle", "batch")
 
     def _build_batch(self) -> tk.Frame:
         app = self.app
@@ -300,7 +341,23 @@ class SettingsDialog(tk.Toplevel):
                           on_change=app.apply_batch,
                           pool=app.operator_pool,     # 导入 v4 蓝图时的干员池
                           table_height="auto",        # 表格吃掉内容区剩余高度
-                          page_height=PAGE_H)
+                          page_height=PAGE_H,
+                          cycles=app.cycles,
+                          mood_events=app.mood_events,
+                          moods_at=app.moods_at_abs)
+
+    def notify_view(self, t_abs, moods=None) -> None:
+        """`ui/app.py` 在"滑块动了 / 重算了"之后调它 → 转发给「干员与心情」分区。
+
+        两个前提：那一页**已经建出来**、而且**正显示着**——否则每帧都去刷一张看不见的表
+        （播放时每秒几十次）。
+        """
+        page = self._pages.get("batch")
+        if page is None or not page.winfo_exists():
+            return
+        if self.page != "batch":
+            return
+        page.on_view_change(t_abs, moods)
 
     def _build_entry(self) -> tk.Frame:
         app = self.app

@@ -34,7 +34,7 @@ from ui.board import BaseBoard, elite_badge, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
 from ui.dialogs import ask_operator, ask_level, ask_mood  # noqa: E402
 from ui.roster import RosterStrip  # noqa: E402
-from ui.schedule import (Schedule, Trajectory, all_operator_names,  # noqa: E402
+from ui.schedule import (MoodSetEvent, Schedule, Trajectory, all_operator_names,  # noqa: E402
                          default_initial_moods, load_schedule, load_schedule_ex,
                          simulate_schedule)
 from mood_soc import entry_event_holders, entry_target_kind  # noqa: E402
@@ -87,6 +87,10 @@ class MoodSocApp(tk.Tk):
         self.schedule: Schedule | None = None
         self.traj: Trajectory | None = None
         self.initial_moods: dict = {}          # 手动设过的心情（覆盖布局里的值）
+        # 「心情指定事件」＝「干员与心情」面板里的**锚点**（`MoodSetEvent` 列表）：
+        # 在 (周期, 周期内时刻) 把某人心情直接置为给定值。周期起点(第1周期 0:00)的锚点
+        # 由面板写成 `initial_moods`，不进这个列表。
+        self.mood_events: list = []
         self.cycles = 1
         # 周期数是**设置中心**里的一个控件；变量挂在 app 上（唯一真源），
         # 设置窗口只是把它接到下拉框上——工具栏时代它挂在工具栏里。
@@ -484,7 +488,8 @@ class MoodSocApp(tk.Tk):
                                       #    Fiammetta 的逐班配置），而界面里"全不勾"就该是"没有覆盖"。
                                       entry_per_shift=list(self.entry_per_shift),
                                       idle_to_dorm=self.idle_to_dorm.get(),
-                                      idle_entries=self._idle_entry_list())
+                                      idle_entries=self._idle_entry_list(),
+                                      mood_events=list(self.mood_events))
         total = self._total_hours()
         if fit_slider or self.current_t > total:
             self.current_t = Decimal("0")
@@ -554,8 +559,11 @@ class MoodSocApp(tk.Tk):
         self.board.update_moods(moods, quick=quick)
         self.roster.update_moods(moods, quick=quick)
         self.chart.set_cursor(self.current_t)
-        self.time_label.configure(text=theme.fmt_clock(self.current_t, self.schedule.cycle_hours))
+        self.time_label.configure(text=self.clock_text(self.current_t))
         self._highlight_shift_button()
+        # 设置窗口开着时，把"当前时刻 + 此刻的实际心情"推给「干员与心情」分区
+        # （它按指定时刻显示各人心；勾了「跟随滑块」就跟着这里走）。
+        self._push_view_to_settings()
         # 「此刻速率 / 本班平均」也随时间走（实测 `_stats_text` 只要 0.04ms，相对滑块那次
         # 21ms 的刷新可以忽略）——否则拖滑块时图下那两行一直是旧值（曾经就是这个问题）。
         if self.curve_operator:
@@ -620,8 +628,25 @@ class MoodSocApp(tk.Tk):
     def _shift_span_text(self, idx: int) -> str:
         s = self.schedule.shifts[idx]
         start = self.schedule.starts[idx]
-        return f"{theme.fmt_clock(start, self.schedule.cycle_hours)} – " \
-               f"{theme.fmt_clock(start + s.hours, self.schedule.cycle_hours)}"
+        return f"{self.clock_text(start)} – " \
+               f"{self.clock_text(start + s.hours)}"
+
+    # ================================================================== 时刻显示
+    def clock_text(self, t) -> str:
+        """周期内时刻 → `HH:MM`（**带初始时间点**；见 `Schedule.start_clock`）。"""
+        if self.schedule is None:
+            return theme.fmt_clock(t)
+        return theme.fmt_clock(t, self.schedule.cycle_hours, self.schedule.start_clock)
+
+    def _push_view_to_settings(self) -> None:
+        """把"滑块这一刻"告诉设置中心（只有它们真开着才做，且失败不许影响主界面）。"""
+        dlg = self.settings_dlg
+        if dlg is None or not dlg.winfo_exists():
+            return
+        push = getattr(dlg, "notify_view", None)
+        if push is None:
+            return
+        push(self.current_t, self.moods_at_now())
 
     # ================================================================== 编辑
     def _editing_shift_index(self) -> int:
@@ -724,6 +749,10 @@ class MoodSocApp(tk.Tk):
         """滑块所在时刻的实际心情（设置中心用它做「按当前时刻回填」）。"""
         return self.traj.moods_at(self.current_t) if self.traj is not None else {}
 
+    def moods_at_abs(self, t) -> dict:
+        """**任意**绝对时刻的实际心情（「干员与心情」按指定时刻显示心情列用的口子）。"""
+        return self.traj.moods_at(t) if self.traj is not None else {}
+
     # ------------------------------------------------------------ 闲置入宿
     def _idle_entry_list(self):
         """把界面的逐次设置转成 `[IdleToDormEntry, ...]`——**只列改过默认的**
@@ -802,8 +831,7 @@ class MoodSocApp(tk.Tk):
                                  [t for t in targets if t != name]))
                 end = t0 + shift.hours
                 title = (f"第 {k + 1} 周期 · 第 {i + 1} 班"
-                         f"（{theme.fmt_clock(t0, self.schedule.cycle_hours)}"
-                         f"–{theme.fmt_clock(end, self.schedule.cycle_hours)}）")
+                         f"（{self.clock_text(t0)}–{self.clock_text(end)}）")
                 groups.append((title, (k + 1, i + 1), rows))
         return groups
 
@@ -851,12 +879,14 @@ class MoodSocApp(tk.Tk):
         """（旧入口，现等价于）打开设置中心的「干员与心情」分区。"""
         return self.open_settings("batch")
 
-    def apply_batch(self, changes: dict, moods: dict) -> None:
-        """「干员与心情」落地：干员改动按班次写回布局，心情整份替换周期起点。
+    def apply_batch(self, changes: dict, moods: dict, mood_events=None) -> None:
+        """「干员与心情」落地：干员改动按班次写回布局，心情整份替换周期起点 + 收下锚点。
 
         干员改动按"改过哪几班"返回（面板里可切班次，未改的不会丢）；
         心情是**周期起点**（全排班共用），面板只给"与导入值不同的那些"，
         所以这里整份替换 `initial_moods`（`恢复导入值` ⇒ 空差集 ⇒ 手动心情清空）。
+        `mood_events` 是**心情指定事件**（面板里的锚点，`MoodSetEvent` 列表）；
+        ⚠️ 原样替换（`None` 也当空列表），否则删掉的锚点会留在引擎里继续生效。
         """
         n_ops = 0
         for i in sorted(changes):
@@ -864,6 +894,7 @@ class MoodSocApp(tk.Tk):
             n_ops += sum(len(f.get("operators", [])) for f in facs)
             self.schedule = self.schedule.replaced_shift(i, facs)
         self.initial_moods = dict(moods)
+        self.mood_events = list(mood_events or ())
         self._layout_sig = None
         self.recompute()
         which = ("第 " + "、".join(str(i + 1) for i in sorted(changes)) + " 班"
@@ -871,7 +902,29 @@ class MoodSocApp(tk.Tk):
         self.status.configure(
             text=f"设置已生效：{which}"
                  + (f"（{n_ops} 个位置）" if changes else "")
-                 + f"　｜　手动起点心情 {len(moods)} 名，其余用导入值")
+                 + f"　｜　手动起点心情 {len(moods)} 名，其余用导入值"
+                 + (f"　｜　心情指定事件 {len(self.mood_events)} 条" if self.mood_events
+                    else ""))
+
+    def apply_start_clock(self, clock) -> None:
+        """「时间轴」→「初始时间点」落地：**只改显示口径**（周期起点是几点）。
+
+        引擎数值一字不变（模型本来就是相对时间），所以这里只换 `Schedule.start_clock`
+        + 强制重画一次标签；看板的"未变则不刷"签名也要作废（头部那段时段变了）。
+        """
+        if self.schedule is None:
+            return
+        self.schedule = self.schedule.with_start_clock(clock)
+        self._layout_sig = None
+        self._build_shift_buttons()        # 底部班次按钮写的是时段 → 要重建
+        self._refresh_layout()
+        self.refresh_view()
+        now = self.clock_text(self.current_t)
+        self.status.configure(text=f"周期起点＝{theme.fmt_clock(self.schedule.start_clock)}"
+                                   f"（当前时刻 {now}；只改显示口径，数值不变）")
+        # 逐次表组头写的是时刻、「干员与心情」的时刻框也按它显示 → 两个分区都标脏
+        # （当前显示的那一页不标：它就是改动来源）
+        self._invalidate_settings("idle", "batch")
 
     # ------------------------------------------------------------ 进驻事件（换心情）
     def _entry_candidates(self):
@@ -1093,7 +1146,8 @@ class MoodSocApp(tk.Tk):
     def _on_cycles(self):
         self.cycles = int(self.cycles_var.get())
         self.recompute(fit_slider=True)
-        self._invalidate_settings("idle")      # 逐次表按周期展开，周期数一变就旧了
+        # 逐次表按周期展开、干员与心情的「周期」下拉也有 1~周期数 项 → 两个分区都得重建
+        self._invalidate_settings("idle", "batch")
 
     # ================================================================== 曲线面板
     def _sync_operator_box(self):
@@ -1141,8 +1195,8 @@ class MoodSocApp(tk.Tk):
             f"（{self.schedule.shifts[idx].label}）",
             f"起点 {theme.fmt_mood(traj.mood_at(name, 0))}　"
             f"周期末 {theme.fmt_mood(traj.mood_at(name, traj.total_hours))}",
-            f"最低 {theme.fmt_mood(lo)} @ {theme.fmt_clock(lo_t, traj.schedule.cycle_hours)}"
-            f"　最高 {theme.fmt_mood(hi)} @ {theme.fmt_clock(hi_t, traj.schedule.cycle_hours)}",
+            f"最低 {theme.fmt_mood(lo)} @ {self.clock_text(lo_t)}"
+            f"　最高 {theme.fmt_mood(hi)} @ {self.clock_text(hi_t)}",
             f"红脸 {len(spans)} 段，合计 {theme.fmt_hours(total_red)}" if spans else "红脸 无",
         ]
         per = traj.min_mood_at_each_shift(name)

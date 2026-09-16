@@ -235,6 +235,72 @@ class Test设置中心(unittest.TestCase):
         self.app.on_cycles_changed()
         self.app.update()
 
+    # ------------------------------------------------------------- 初始时间点
+    def test_初始时间点只改显示(self):
+        """「时间轴 → 初始时间点」：周期从几点开始（01:00 ⇒ 1 点到第二天 1 点为一个周期）。
+
+        ⚠️ 它**只是显示口径**：所有时刻标签跟着走，轨迹数值一字不变。
+        """
+        app = self.app
+        before = (list(app.traj.times), {k: list(v) for k, v in app.traj.moods.items()})
+        dlg = self._open("timeline")
+        dlg.clock_var.set("01:00")
+        dlg._apply_clock()
+        app.update()
+        self.assertEqual(app.schedule.start_clock, Decimal("1"))
+        self.assertEqual(app.clock_text(Decimal("0")), "01:00")
+        self.assertEqual(app.clock_text(Decimal("23")), "00:00（第2天）")
+        # 滑块时刻标签 / 班次按钮的时段都跟着变
+        app.set_time(Decimal("6"))
+        app.update()
+        self.assertEqual(app.time_label.cget("text"), "07:00")
+        self.assertTrue(app.shift_buttons[0].cget("text").startswith("1. 01:00 – 13:00"))
+        # 逐次表组头（闲置入宿）也按新口径显示：组头里那一刻＝偏移后的钟点
+        title, (cyc, shf), _rows = app.idle_groups()[0]
+        start = (app.schedule.starts[shf - 1]
+                 + app.schedule.cycle_hours * (cyc - 1))
+        self.assertIn(app.clock_text(start), title)
+        self.assertIn("13:", title, "01:00 起点 ⇒ 第 2 班从 13:00 起（+1 小时）")
+        # 数值不变
+        self.assertEqual(list(app.traj.times), before[0])
+        self.assertEqual({k: list(v) for k, v in app.traj.moods.items()}, before[1])
+        # 非法输入 → 报错并还原
+        dlg.clock_var.set("上午一点")
+        dlg._apply_clock()
+        self.assertIn("HH:MM", dlg.clock_msg.cget("text"))
+        self.assertEqual(app.schedule.start_clock, Decimal("1"))
+        # 复原
+        app.apply_start_clock(Decimal("0"))
+        app.set_time(Decimal("0"))
+        app.update()
+
+    def test_跟随滑块在设置窗口里联动(self):
+        """主界面滑块一动 → 「干员与心情」的时刻跟着走；且**只在那一页显示时**才转发。"""
+        app = self.app
+        dlg = self._open("batch")
+        panel = dlg.panel
+        panel.follow.set(True)
+        panel._on_follow()
+        app.set_time(Decimal("19"))
+        app.update()
+        self.assertEqual(panel._view_cycle, 1)
+        self.assertEqual(panel._view_t, Decimal("19"))
+        self.assertEqual(panel.view_time_var.get(), "19:00")
+        # 切到别的分区：滑块再动也不转发（省掉每帧刷一张看不见的表）
+        dlg.open_page("timeline")
+        app.update()
+        app.set_time(Decimal("5"))
+        app.update()
+        self.assertEqual(panel._view_t, Decimal("19"))
+        # 切回来：补一次"现在这一刻"
+        # （注意：切走期间可能被标脏重建过 —— 那就直接断言 `dlg.panel`，重建与否都该是 5:00）
+        dlg.open_page("batch")
+        app.update()
+        self.assertEqual(dlg.panel._view_t, Decimal("5"))
+        self.assertEqual(float(dlg.panel.view_time_var.get().split(":")[0]), 5.0)
+        app.set_time(Decimal("0"))
+        app.update()
+
     def test_设置窗口是单例(self):
         dlg = self._open("timeline")
         again = self.app.open_settings("idle")

@@ -1,41 +1,49 @@
-"""ui/batch.py —— 「批量设置」对话框：**当前布局里的所有干员 + 心情，一次改完**。
+"""ui/batch.py —— 「干员与心情」面板：**当前布局里的所有干员 + 练度 + 心情，一次改完**。
 
 ## 为什么需要它
 
 看板上改一个人要「左键选人 / 右键设心情」各点一次；一份 3 班排班有 57 个位置、
-57 名干员，逐个点完要上百次点击。这个对话框把同一件事摊成一张表：
+57 名干员，逐个点完要上百次点击。这个面板把同一件事摊成一张表：
 
 | 区域 | 能做什么 |
 |---|---|
-| **心情** | 全部满心情 / 全部 0 / 统一设为 X / **按当前时刻回填** / 恢复导入值 |
+| **时刻** | 指定"看哪一周期、哪一刻"（`周期 1~3` + `HH:MM`，可 ±15 分钟，也可「跟随滑块」） |
+| **心情** | 改表格里的心情 = **在那一刻给她指定这个值**（锚点）；另有全部满 / 全部 0 / 统一设为 X / 按这一刻回填 / 恢复导入值 |
 | **干员** | **粘贴一份名单**按房间顺序填入 / 清空本班次 / 逐行点开搜索选人 |
-| **表格** | 房间 · 位次 · 干员 · 心情，一次看全、一次改完 |
+| **表格** | 房间 · 位次 · 干员 · 练度 · **该时刻的心情**，一次看全、一次改完 |
 
-## 三条口径（写清楚免得被当 bug）
+## 四条口径（写清楚免得被当 bug）
 
-1. **心情列永远是「周期起点（0:00）的心情」**：引擎里心情是跨班连续的库仑积分量，
-   一个周期只有一个起点，不存在"某一班自己的起始心情"。表格里改的是那个唯一的值，
-   `按当前时刻回填` 就是"把滑块现在这一刻当作新的起点"。
-2. **干员列只改「班次下拉里选中的那一班」**：切下拉即可逐班改，改动互不影响。
-   不做"一键套用到所有班次"——3 班（12/6/6）的人员本来就不同，一键套容易误伤。
-3. **返回值只带"和导入值不同的心情"**：`moods` 是差集，调用方整份替换 `initial_moods`
-   即可（`恢复导入值` ⇒ 空差集 ⇒ 手动心情被清空）。
+1. **心情列永远是"指定时刻那一刻的实际心情"**：时刻由上面的「周期 + 时刻」定
+   （缺省＝第 1 周期 0:00，也就是老口径的"周期起点心情"）。换时刻 ⇒ 列里的数值
+   按轨迹重算，**不是**重新输入一遍。
+2. **改某一格 ⇒ 在那一刻给她一个「心情指定事件」（锚点）**：`(周期, 时刻, 干员) → 值`，
+   引擎在那一刻把她的心情直接置成该值，之后按正常速率演化（见 `ui/schedule.py`
+   的 `MoodSetEvent`）。**第 1 周期 0:00** 那一格写的是 `initial_moods`（周期起点心情），
+   与老口径完全一致。锚点只对**指定的那个周期**生效；锚点一览写在心情区，可一键清空。
+3. **干员列只改「时刻所在的那一班」**：改时刻就会自动切到那一刻所在班次的名单
+   （也可直接在班次下拉里选，选完时刻会挪到该班起点）。不做"一键套用到所有班次"
+   ——3 班（12/6/6）的人员本来就不同，一键套容易误伤。
+4. **返回值**：`(changes, moods, mood_events)` —— `moods` 只带"和导入值不同的起点心情"
+   （差集，调用方整份替换 `initial_moods`）；`mood_events` 是全部锚点（整份替换）。
 
 界面只做"收集结果"，算仍然在 `ui/schedule.py` / `mood_soc` 里——本模块不引入新的数值逻辑。
 """
 from __future__ import annotations
 
 import tkinter as tk
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from tkinter import ttk
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from mood_soc.battery import to_decimal
 from mood_soc.config import (MOOD_MAX, MOOD_MIN, OUTPUT_ROOM_TYPES, OUTPUT_SLOT_TOTAL,
                             facility_max_level, facility_slots)
 from mood_soc.scenario import DEFAULT_OPERATOR_LEVEL
 
 from ui import theme
 from ui.dialogs import ask_operator, parse_mood
+from ui.schedule import MoodSetEvent
 from ui.scroll import VScroll
 
 # 表格默认可视高度（独立使用时的值；设置中心里传 `"auto"` → 吃掉内容区的剩余高度）
@@ -68,16 +76,15 @@ def split_names(text: str) -> List[str]:
 
 
 class BatchMixin:
-    """「批量设置」的**全部控件与逻辑**：当前布局的干员 + 练度 + 心情，一张表改完。
+    """「干员与心情」的**全部控件与逻辑**：干员 + 练度 + **按时刻显示/指定的心情**，一张表改完。
 
-    宿主有两个（共用这一份实现，免得"两套入口两套行为"）：
-    `BatchDialog`（独立对话框）与 `ui.settings` 设置中心里的「干员与心情」分区（Frame）。
+    宿主只有 `BatchPanel`（设置中心的「干员与心情」分区）；这一层单独抽出来是为了能直接测。
 
     - `changes`：**改过干员的班次** → `{班次下标: 布局}`（场景格式，可逐班喂 `replaced_shift`）
-    - `moods`：需要写进 `initial_moods` 的心情（**只含与导入值不同的项**，整份替换即可）
+    - `moods`：要写进 `initial_moods` 的**周期起点**心情（只含与导入值不同的项）
+    - `mood_events`：**锚点**（`MoodSetEvent` 列表，整份替换）——在 (周期, 时刻) 指定心情
 
-    `on_change(changes, moods)`：改完任一处就回调（设置中心用它做"改动立即生效"）；
-    独立对话框不传（由「应用」按钮一次性收）。
+    `on_change(changes, moods, mood_events)`：改完任一处就回调（设置中心用它做"改动立即生效"）。
     """
 
     def _init_batch_body(self, parent, schedule, shift_index: int = 0,
@@ -85,7 +92,8 @@ class BatchMixin:
                          imported_moods: Optional[Dict[str, Decimal]] = None,
                          moods_now: Optional[Dict[str, Decimal]] = None,
                          current_t=Decimal("0"), on_change=None, pool=None,
-                         table_height=TABLE_H, page_height=0):
+                         table_height=TABLE_H, page_height=0,
+                         cycles: int = 1, mood_events=None, moods_at=None):
         """装好状态 + 建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
 
         `pool`：**干员池**（`[{"name","elite","level","own"}]`，来自「导入 v4 蓝图」这类
@@ -93,6 +101,10 @@ class BatchMixin:
           · 会出现在"选人"搜索窗里（否则空布局里一个人都选不到）；
           · 各自的练度作为默认值（不再是清一色 E2）；
           · 可以一键「从池中依次填入」按顺序铺满当前班次的位置。
+
+        `cycles` / `mood_events`：周期数（时刻行的「周期」下拉有 1~cycles 项）与**已有锚点**；
+        `moods_at`：`(绝对时刻) -> {干员: 心情}` 的取值口子（app 给的是轨迹的 `moods_at`），
+        心情列"该时刻的实际值"就是它算出来的；`moods_now` 是它不可用时的兜底（测试里用）。
         """
         self._on_change = on_change
         # 表格可视高度：显式数字（独立使用）或 "auto"（设置中心：吃内容区剩余高度）
@@ -109,7 +121,21 @@ class BatchMixin:
         self._current_t = Decimal(str(current_t))
         self._imported: Dict[str, Decimal] = dict(imported_moods or {})
         self._now: Dict[str, Decimal] = dict(moods_now or {})
-        # 全排班的起点心情（一个干员一个值，跨班共用）
+        self._moods_at = moods_at                  # (绝对时刻) -> {干员: 心情}；可为 None
+        self._cycles = max(1, int(cycles or 1))
+        self._events: List[MoodSetEvent] = [self._as_event(e) for e in (mood_events or [])]
+        # —— 视图（表格在看哪一周期、哪一刻）——
+        # 缺省＝"现在这一刻"（滑块在哪就开在哪）；`current_t` 是 0 时退回"选中班次的起点"
+        # ——这样 `shift_index` 这个参数仍然有意义（测试与"只看某一班"都靠它）。
+        cyc = int(self._current_t // schedule.cycle_hours) + 1
+        self._view_cycle = max(1, min(cyc, self._cycles))
+        if self._current_t > 0:
+            self._view_t = self._current_t - schedule.cycle_hours * (self._view_cycle - 1)
+        else:
+            self._view_t = schedule.starts[self._shift_index]
+        # 干员列**跟着时刻**（时刻在谁那一班就显示谁），不再各指一个时间
+        self._shift_index = schedule.index_at(self._view_abs())
+        # 全排班的起点心情（一个干员一个值，跨班共用；只在"第 1 周期 0:00"那一格编辑）
         self._moods: Dict[str, Decimal] = {
             n: Decimal(str(self._imported.get(n, MOOD_MAX))) for n in schedule.operator_names()}
         for n, v in (initial_moods or {}).items():
@@ -119,8 +145,11 @@ class BatchMixin:
         self._elite: Dict[str, int] = {}                 # 干员 → 精英化（0/1/2），默认 2
         self._elite_vars: Dict[str, tk.StringVar] = {}   # 干员 → 练度下拉
         self._draft: Dict[int, List[dict]] = {}      # 改过的班次：下标 → 工作副本
+        self._fac_index: int = -1                    # 当前载入 `_fac_names` 的是哪一班
         self._rows: List[dict] = []                  # 行控件（结构没变时复用）
         self._mood_vars: Dict[str, tk.StringVar] = {}
+        # 「这一格刚才是我们写的什么值」——`_collect_moods` 靠它区分"用户改过"与"只是刷新过"
+        self._shown: Dict[str, Optional[Decimal]] = {}
         self._cells: List[Tuple[int, int]] = []      # 表格里的 (设施下标, 位次)
         self._notify_job = None                      # 心情输入的防抖任务（改动即时生效用）
 
@@ -133,7 +162,7 @@ class BatchMixin:
                            values=self._labels, width=20)
         box.pack(side="left")
         box.bind("<<ComboboxSelected>>", lambda _e: self._on_shift_change())
-        tk.Label(head, text="干员改动只作用于这一班；心情是周期起点，全排班共用",
+        tk.Label(head, text="干员改动只作用于这一班（跟着上面「时刻」走）",
                  bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(8, 0))
 
@@ -248,12 +277,47 @@ class BatchMixin:
 
     # ================================================================ 心情区
     def _build_mood_bar(self) -> None:
-        box = tk.LabelFrame(self, text="心情（周期起点 0:00 的心情，与班次无关）", bg=theme.BG,
-                            fg=theme.TEXT, font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1,
+        box = tk.LabelFrame(self, text="心情（指定周期内任意时刻的心情；改哪一格＝那一刻给她这个值）",
+                            bg=theme.BG, fg=theme.TEXT,
+                            font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1,
                             relief="groove", labelanchor="nw")
         box.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, 4))
+
+        # —— 第一行：视图（哪一周期、哪一刻）——
+        view = tk.Frame(box, bg=theme.BG)
+        view.pack(fill="x", padx=theme.GAP, pady=(4, 2))
+        tk.Label(view, text="周期", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+        self.view_cycle_var = tk.StringVar(value=str(self._view_cycle))
+        cyc_box = ttk.Combobox(view, textvariable=self.view_cycle_var, state="readonly",
+                               width=3, values=[str(i + 1) for i in range(self._cycles)])
+        cyc_box.pack(side="left", padx=(3, 10))
+        cyc_box.bind("<<ComboboxSelected>>", lambda _e: self._on_view_change())
+        tk.Label(view, text="时刻", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+        self.view_time_var = tk.StringVar(value=self._view_clock())
+        entry = ttk.Entry(view, textvariable=self.view_time_var, width=7)
+        entry.pack(side="left", padx=(3, 2))
+        entry.bind("<Return>", lambda _e: self._on_view_change())
+        entry.bind("<FocusOut>", lambda _e: self._on_view_change())
+        ttk.Button(view, text="◀", width=3,
+                   command=lambda: self._step_view(Decimal("-0.25"))).pack(side="left")
+        ttk.Button(view, text="▶", width=3,
+                   command=lambda: self._step_view(Decimal("0.25"))).pack(side="left",
+                                                                       padx=(2, 0))
+        ttk.Button(view, text="回到周期起点",
+                   command=lambda: self._set_view(self._view_cycle, Decimal("0"))
+                   ).pack(side="left", padx=(6, 0))
+        self.follow = tk.BooleanVar(value=False)
+        tk.Checkbutton(view, text="跟随滑块", variable=self.follow, bg=theme.BG,
+                       activebackground=theme.BG, highlightthickness=0,
+                       command=self._on_follow).pack(side="left", padx=(10, 0))
+        ttk.Button(view, text="清空本时刻", command=self._clear_view_anchors).pack(
+            side="left", padx=(6, 0))
+
+        # —— 第二行：一键动作（都作用在"这一刻"）——
         row = tk.Frame(box, bg=theme.BG)
-        row.pack(fill="x", padx=theme.GAP, pady=(4, 2))
+        row.pack(fill="x", padx=theme.GAP, pady=(2, 2))
         ttk.Button(row, text="全部满心情 24", command=lambda: self._set_all(MOOD_MAX)
                    ).pack(side="left")
         ttk.Button(row, text="全部 0", command=lambda: self._set_all(MOOD_MIN)).pack(
@@ -261,20 +325,241 @@ class BatchMixin:
         self.uniform = tk.StringVar(value="24")
         ttk.Entry(row, textvariable=self.uniform, width=5).pack(side="left", padx=(10, 2))
         ttk.Button(row, text="全部设为这个值", command=self._set_uniform).pack(side="left")
-        ttk.Button(row, text="按当前时刻回填", command=self._fill_from_now).pack(
+        ttk.Button(row, text="按这一刻回填", command=self._fill_from_now).pack(
             side="left", padx=(10, 0))
         ttk.Button(row, text="恢复导入值", command=self._restore_imported).pack(
             side="left", padx=(6, 0))
-        tk.Label(box, text="「按当前时刻回填」= 把滑块现在这一刻的实际心情写成新的周期起点"
-                           "（调参最省事的一键）。",
+
+        # —— 第三行 + 提示：锚点一览 ——
+        self.anchor_note = tk.Label(box, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
+                                    justify="left", wraplength=760,
+                                    font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.anchor_note.pack(fill="x", padx=theme.GAP)
+        tk.Label(box, text="「按这一刻回填」= 把此刻的实际心情写成指定值（第 1 周期 0:00 就是"
+                           "改写周期起点）；只对上面选中的那个周期生效。",
                  bg=theme.BG, fg=theme.MUTED, anchor="w",
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(fill="x", padx=theme.GAP,
                                                                pady=(0, 6))
+        self._sync_anchor_note()
 
-    def _set_all(self, value: Decimal) -> None:
-        for n in self._moods:
-            self._moods[n] = Decimal(value)
+    # ---------------------------------------------------------------- 视图（周期 + 时刻）
+    @staticmethod
+    def _as_event(ev) -> MoodSetEvent:
+        """容忍"字典 / 对象"两种写法（`MoodSetEvent` 是 dataclass，测试里也常直接给）。"""
+        if isinstance(ev, MoodSetEvent):
+            return ev
+        return MoodSetEvent(ev["name"], ev["t"], ev["mood"], ev.get("cycle", 1))
+
+    @property
+    def _cycle_hours(self) -> Decimal:
+        return self._schedule.cycle_hours
+
+    def _view_abs(self, cycle: int = None, t: Decimal = None) -> Decimal:
+        """视图时刻换算成"从轨迹起点算起"的绝对时刻。"""
+        cyc = self._view_cycle if cycle is None else int(cycle)
+        tt = self._view_t if t is None else Decimal(str(t))
+        return self._cycle_hours * (cyc - 1) + tt
+
+    def _view_clock(self) -> str:
+        """视图时刻 → `HH:MM`（带「初始时间点」的显示口径，见 `Schedule.start_clock`）。"""
+        return theme.fmt_clock(self._view_t, self._cycle_hours, self._schedule.start_clock)
+
+    def _is_start_view(self) -> bool:
+        """视图是不是「第 1 周期 0:00」——那一格写的是 `initial_moods`（周期起点心情）。"""
+        return self._view_cycle == 1 and self._view_t == Decimal("0")
+
+    def _parse_view_clock(self, text: str) -> Optional[Decimal]:
+        """把用户输入的钟点解析成"周期内时刻"（接受 `HH:MM` / `H` / `H.MM`）。"""
+        raw = (text or "").strip().replace("：", ":")
+        if not raw:
+            return None
+        try:
+            if ":" in raw:
+                hh, mm = raw.split(":", 1)
+                hours = Decimal(hh or "0") + Decimal(mm or "0") / Decimal(60)
+            else:
+                hours = to_decimal(raw)
+        except (InvalidOperation, ValueError, ArithmeticError):
+            return None
+        # 输入的是**钟点**（带初始时间点）→ 减掉起点、按周期取模，回到"周期内时刻"
+        t = (hours - self._schedule.start_clock) % self._cycle_hours
+        return t
+
+    def _set_view(self, cycle, t, follow: bool = False, rebuild: bool = True) -> None:
+        """换视图（周期 + 周期内时刻）：必要时**把班次也切到那一刻所在的那一班**。"""
+        cycle = max(1, min(int(cycle), self._cycles))
+        t = Decimal(str(t)) % self._cycle_hours
+        self._view_cycle, self._view_t = cycle, t
+        self.view_cycle_var.set(str(cycle))
+        self.view_time_var.set(self._view_clock())
+        if not follow:
+            self.follow.set(False)
+        if rebuild:
+            self._sync_shift_from_view(refresh=True)
+
+    def _on_view_change(self) -> None:
+        """时刻输入框 / 周期下拉改了：解析 → 换视图（并停掉"跟随滑块"）。"""
+        self._collect_moods()               # 先把旧视图里改过的格子收进来
+        t = self._parse_view_clock(self.view_time_var.get())
+        if t is None:
+            self._error("时刻要写成 HH:MM（例如 01:30 或 13:00）")
+            self.view_time_var.set(self._view_clock())
+            return
+        try:
+            cycle = int(self.view_cycle_var.get())
+        except (TypeError, ValueError):
+            cycle = self._view_cycle
+        self.err.configure(text="")
+        self._set_view(cycle, t)
+
+    def _step_view(self, delta: Decimal) -> None:
+        """`◀ / ▶`：在**同一周期内**挪 15 分钟（跨过末尾就从周期开头接上）。"""
+        self._collect_moods()
+        self._set_view(self._view_cycle, self._view_t + delta)
+
+    def _on_follow(self) -> None:
+        """「跟随滑块」：勾上就跟着主界面的时刻走（取消＝停在原地自己定）。"""
+        if not self.follow.get():
+            return
+        self._collect_moods()
+        self._set_view_from_abs(self._current_t)
+
+    def _set_view_from_abs(self, t_abs) -> None:
+        """按**绝对时刻**定位视图（跟随滑块用：周期与周期内时刻一起算出来）。"""
+        t_abs = Decimal(str(t_abs))
+        cyc = int(t_abs // self._cycle_hours) + 1
+        cyc = max(1, min(cyc, self._cycles))
+        self._view_cycle = cyc
+        self._view_t = (t_abs - self._cycle_hours * (cyc - 1)) % self._cycle_hours
+        self.view_cycle_var.set(str(cyc))
+        self.view_time_var.set(self._view_clock())
+        self._sync_shift_from_view(refresh=True)
+
+    def _sync_shift_from_view(self, refresh: bool = False) -> None:
+        """干员列跟着视图走：切到"这一刻所在的那一班"，然后重建表格。
+
+        `refresh=True` 时顺带把心情列刷成该时刻的实际值（换时刻的核心动作）。
+        ⚠️ "载入的布局是不是这一班"要看 `self._fac_index`，不能只看 `_shift_index`
+        ——调用方可能刚把它设成目标值，那样就漏掉 `_sync_facilities()`，
+        表格会停留在上一班的布局（曾经就这样：切班次后干员列没跟着换）。
+        """
+        idx = self._schedule.index_at(self._view_abs())
+        if idx != self._fac_index:
+            self._shift_index = idx
+            self.shift_var.set(self._labels[idx])
+            self._sync_facilities()
+            self._rebuild_rows()
+        if refresh:
+            # ⚠️ 结构没变时**只刷心情列**，不要再走一次 `_rebuild_rows()`：它会给 50 行
+            #    重新 `configure` + 新建 `StringVar`，而"跟随滑块"每帧都要走这里（实测
+            #    每帧多花几十毫秒，播放就掉帧）。只有"换了一班"才需要重建那些行。
+            self._refresh_mood_cells()
+            self._sync_anchor_note()
+
+    # ---------------------------------------------------------------- 锚点（心情指定事件）
+    def _events_at_view(self) -> List[MoodSetEvent]:
+        return [e for e in self._events
+                if e.cycle == self._view_cycle and e.t == self._view_t]
+
+    def _anchor_of(self, name: str) -> Optional[Decimal]:
+        for e in self._events_at_view():
+            if e.name == name:
+                return e.mood
+        return None
+
+    def _set_anchor(self, name: str, value: Decimal) -> None:
+        """写（或覆盖）某个干员在**当前视图时刻**的锚点。"""
+        if self._is_start_view():
+            self._moods[name] = value          # 第 1 周期 0:00 ＝ 周期起点心情
+            return
+        self._events = [e for e in self._events
+                        if not (e.name == name and e.cycle == self._view_cycle
+                                and e.t == self._view_t)]
+        self._events.append(MoodSetEvent(name, self._view_t, value, self._view_cycle))
+
+    def _write_view_mood(self, name: str, value: Decimal) -> None:
+        """把"这一刻的心情"写成指定值（起点视图走 `initial_moods`，其余走锚点）。"""
+        self._set_anchor(name, Decimal(str(value)))
+
+    def _drop_anchor(self, name: str) -> None:
+        self._events = [e for e in self._events
+                        if not (e.name == name and e.cycle == self._view_cycle
+                                and e.t == self._view_t)]
+
+    def _clear_view_anchors(self) -> None:
+        """清掉**这一刻**的锚点（起点视图＝把手动起点心情退回导入值）。"""
+        self._collect_moods()
+        if self._is_start_view():
+            for n in list(self._moods):
+                self._moods[n] = Decimal(str(self._imported.get(n, MOOD_MAX)))
+        n = len(self._events_at_view())
+        self._events = [e for e in self._events if e not in self._events_at_view()]
+        self.err.configure(text=(f"已清空这一刻的 {n} 条锚点" if n else "这一刻本来没有锚点"))
         self._refresh_mood_cells()
+        self._sync_anchor_note()
+        self._notify()
+
+    def _clear_all_anchors(self) -> None:
+        """清掉**全部**锚点（`恢复导入值` 用：连周期起点心情一起退回导入值）。"""
+        for n in list(self._moods):
+            self._moods[n] = Decimal(str(self._imported.get(n, MOOD_MAX)))
+        self._events = []
+
+    def _table_names(self) -> List[str]:
+        """表格里出现过的干员名。"""
+        return [n for n in self._mood_vars if n]
+
+    def _bulk_names(self) -> List[str]:
+        """一键动作的作用范围：**周期起点**对全排班的人都有意义（老口径也是这个范围）；
+        其余时刻只对"表格里这些位置"有意义（那一刻她得在基建里）。"""
+        return list(self._moods) if self._is_start_view() else self._table_names()
+
+    def _view_moods(self) -> Dict[str, Decimal]:
+        """**这一刻的实际心情**。
+
+        - **周期起点（第 1 周期 0:00）**：用显式起点心情（`self._moods`）——这正是引擎在
+          周期起点用的那组值（缺省＝导入值），也就是老口径的"周期起点心情"；
+        - **其余时刻**：由轨迹算出来的**实际值**（锚点已生效在轨迹里），
+          所以换时刻就能看到各人心情按正常演化变成多少。
+        """
+        if self._is_start_view():
+            return {n: v for n, v in self._moods.items()}
+        if self._moods_at is not None:
+            try:
+                got = self._moods_at(self._view_abs())
+            except Exception:                     # 没轨迹 / 还没算完 → 退到兜底值
+                got = None
+            if got:
+                return {n: Decimal(str(v)) for n, v in got.items()}
+        return dict(self._now)
+
+    def _sync_anchor_note(self) -> None:
+        """锚点一览（按绝对时刻排序）：让人知道"哪一刻被指定过、指定成了多少"。"""
+        if not hasattr(self, "anchor_note"):
+            return
+        if not self._events:
+            self.anchor_note.configure(text="锚点：无（列里显示的是一路演化出来的实际心情）",
+                                       fg=theme.MUTED)
+            return
+        items = []
+        stale = 0
+        for e in sorted(self._events, key=lambda e: (e.cycle, e.t, e.name)):
+            if e.cycle > self._cycles:
+                stale += 1
+                continue
+            clock = theme.fmt_clock(e.t, self._cycle_hours, self._schedule.start_clock)
+            items.append(f"第{e.cycle}周期 {clock} {e.name}={theme.fmt_mood(e.mood)}")
+        text = "锚点：" + "、".join(items) if items else "锚点：无（当前周期数下都不生效）"
+        if stale:
+            text += f"　⚠ {stale} 条落在周期 {self._cycles} 之外（把周期数调大才生效）"
+        self.anchor_note.configure(text=text, fg=theme.MUTED)
+
+    # ---------------------------------------------------------------- 一键动作
+    def _set_all(self, value: Decimal) -> None:
+        for n in self._bulk_names():
+            self._write_view_mood(n, value)
+        self._refresh_mood_cells()
+        self._sync_anchor_note()
         self.err.configure(text="")
         self._notify()
 
@@ -286,21 +571,34 @@ class BatchMixin:
         self._set_all(v)
 
     def _fill_from_now(self) -> None:
-        if not self._now:
+        """把**这一刻的实际心情**写成指定值（起点视图＝把这一刻当作新的周期起点）。
+
+        数值本来是"一路演化出来的"，这里只是把它**钉下来**变成显式设定：
+        改排班/改时刻之后它就不会跟着飘了。
+        """
+        moods = self._view_moods()
+        if not moods:
             self._error("还没有轨迹可以回填（先导入排班）")
             return
-        for n in self._moods:
-            if n in self._now:
-                self._moods[n] = Decimal(str(self._now[n]))
+        n = 0
+        for name in self._bulk_names():
+            if name in moods:
+                self._write_view_mood(name, moods[name])
+                n += 1
         self._refresh_mood_cells()
-        self.err.configure(text=f"已按 {theme.fmt_clock(self._current_t)} 的实际心情回填")
+        self._sync_anchor_note()
+        where = "周期起点" if self._is_start_view() else f"第 {self._view_cycle} 周期 {self._view_clock()}"
+        self.err.configure(text=f"已把 {where} 的实际心情写成指定值（{n} 名）")
         self._notify()
 
     def _restore_imported(self) -> None:
-        for n in self._moods:
-            self._moods[n] = Decimal(str(self._imported.get(n, MOOD_MAX)))
+        """退回导入值：**清掉全部锚点 + 手动起点心情**（真正回到刚导入的状态）。"""
+        n = len(self._events)
+        self._clear_all_anchors()
         self._refresh_mood_cells()
-        self.err.configure(text="")
+        self._sync_anchor_note()
+        self.err.configure(text=f"已恢复导入值（清掉 {n} 条锚点与手动起点心情）"
+                                if n else "已恢复导入值")
         self._notify()
 
     # ================================================================ 干员区
@@ -403,6 +701,7 @@ class BatchMixin:
         （不然"改完第 1 班顺手去看第 2 班"就把第 1 班的改动冲掉了）。
         """
         idx = self._shift_index
+        self._fac_index = idx          # "现在载入的是哪一班的布局"（切班次/换时刻的判据）
         if idx in self._draft:
             self._fac_names = self._draft[idx]
             return
@@ -571,14 +870,18 @@ class BatchMixin:
         self._mood_vars.clear()
         self._elite_vars.clear()
         self._cells = [(fi, si) for fi, si, _n, _r in plan]
+        view_moods = self._view_moods()
         for r, (fi, si, name, room) in zip(self._rows, plan):
             r["room"].configure(text=room)
             elite = self._elite_of(name) if name else 2
             r["op"].configure(text=self._op_text(name),
                               fg=(theme.TEXT if name else theme.MUTED))
             if name:
-                var = tk.StringVar(value=theme.fmt_mood(self._moods.get(name, MOOD_MAX)))
+                shown = view_moods.get(name, self._moods.get(name, MOOD_MAX))
+                shown = Decimal(str(shown))
+                var = tk.StringVar(value=theme.fmt_mood(shown))
                 self._mood_vars[name] = var
+                self._shown[name] = parse_mood(theme.fmt_mood(shown))
                 var.trace_add("write", lambda *_a: self._notify_later())   # 改动即时生效
                 r["entry"].configure(textvariable=var)
                 if not r["entry"].winfo_manager():
@@ -610,19 +913,49 @@ class BatchMixin:
         return label
 
     def _refresh_mood_cells(self) -> None:
+        """把**这一刻的实际心情**刷进表格（起点视图＝周期起点心情）。
+
+        `self._shown` 记下"我们刚写进去的值"，`_collect_moods` 靠它区分"用户改过"与"只是刷新"。
+        """
+        moods = self._view_moods()
         for name, var in self._mood_vars.items():
-            var.set(theme.fmt_mood(self._moods.get(name, MOOD_MAX)))
+            v = moods.get(name)
+            if v is None:                      # 这一刻她不在基建里（没排班）→ 显示导入/起点值
+                v = self._moods.get(name, MOOD_MAX)
+            v = Decimal(str(v))
+            var.set(theme.fmt_mood(v))
+            self._shown[name] = parse_mood(theme.fmt_mood(v))
 
     # ================================================================ 交互
     def _on_shift_change(self) -> None:
-        """切班次：先把表格里的心情收进来，再换布局重建行。"""
+        """切班次：把时刻挪到**这一班的起点**（心情列跟着那一刻重算）。
+
+        为什么不是"只换干员、时刻不动"：干员列由时刻驱动（见模块 docstring 第 3 条），
+        两处各指一个时间会出现"看的是 13:00 的心情、改的却是第 1 班的干员"这种错位。
+        """
         self._collect_moods()
         label = self.shift_var.get()
         if label in self._labels:
-            self._shift_index = self._labels.index(label)
+            # 时刻挪到这一班的起点 → 干员列自然跟着换（`_fac_index` 会看到差别）
+            self._set_view(self._view_cycle, self._schedule.starts[self._labels.index(label)])
+            return
         self._sync_facilities()
         self._rebuild_rows()
         self.err.configure(text="")
+
+    def on_view_change(self, t_abs, moods: Optional[Dict[str, Decimal]] = None) -> None:
+        """宿主（`ui/app.py`）在"滑块动了 / 重算了"之后调它：刷新这一刻的实际心情。
+
+        没勾「跟随滑块」时**只刷数值、不动视图**（用户自己定的时刻不能被主界面拽走）。
+        """
+        self._current_t = Decimal(str(t_abs))
+        if moods:
+            self._now = {k: Decimal(str(v)) for k, v in moods.items()}
+        if self.follow.get():
+            self._set_view_from_abs(self._current_t)
+        else:
+            self._refresh_mood_cells()
+        self._sync_anchor_note()
 
     def _pick_operator(self, fac_index: int, slot_index: int) -> None:
         self._collect_moods()
@@ -712,18 +1045,33 @@ class BatchMixin:
 
     # ================================================================ 收结果
     def _collect_moods(self) -> None:
-        """把表格里的心情文字收回 `self._moods`（不合法就保留原值，交给 `_ok` 报错）。"""
+        """把**用户改过**的心情格子收进结果（写锚点 / 起点心情）。
+
+        ⚠️ 只收"和我们刚写进去的不一样"的格子：表格里的值本来就是从轨迹读出来的，
+        无差别回收会把"进驻事件在那一刻改过的心情"当成用户的手动设定重复落一遍
+        （改个房间等级都会顺手改掉周期起点心情——那是个很隐蔽的 bug）。
+        解析不了的值（用户正在输入）跳过，交给 `value()` / `err` 报错。
+        """
         for name, var in self._mood_vars.items():
             v = parse_mood(var.get())
-            if v is not None:
-                self._moods[name] = v
+            if v is None:
+                continue
+            if v == self._shown.get(name):
+                continue                       # 没动过 → 别当成手动设定
+            self._write_view_mood(name, v)
+        self._sync_anchor_note()
 
     def _error(self, text: str) -> None:
         self.err.configure(text=text)
         self.bell()
 
     def value(self):
-        """收成 `(changes, moods)`；有非法输入时返回 `None`（并在 `err` 里写原因）。"""
+        """收成 `(changes, moods, mood_events)`；有非法输入时返回 `None`（并在 `err` 里写原因）。
+
+        - `changes`：改过干员的班次 → `{班次下标: 布局}`
+        - `moods`：周期起点心情（只含与导入值不同的项）
+        - `mood_events`：心情指定事件（锚点）整份
+        """
         bad = [n for n, var in self._mood_vars.items() if parse_mood(var.get()) is None]
         if bad:
             self._error("心情要在 0 ~ 24 之间（检查：" + "、".join(bad[:4]) +
@@ -735,7 +1083,7 @@ class BatchMixin:
                        for f in facs] for i, facs in self._draft.items()}
         moods = {n: v for n, v in self._moods.items()
                  if Decimal(str(self._imported.get(n, MOOD_MAX))) != v}
-        return changes, moods
+        return changes, moods, list(self._events)
 
     # ================================================================ 窗口杂务
     def _center(self, parent) -> None:
@@ -755,19 +1103,21 @@ class BatchMixin:
 
 
 class BatchPanel(tk.Frame, BatchMixin):
-    """「批量设置」内容本体（设置中心「干员与心情」分区；`value()` 收结果、`on_change` 即时生效）。"""
+    """「干员与心情」内容本体（设置中心的「干员与心情」分区；`value()` 收结果、`on_change` 即时生效）。"""
 
     def __init__(self, master, schedule, shift_index: int = 0,
                  initial_moods: Optional[Dict[str, Decimal]] = None,
                  imported_moods: Optional[Dict[str, Decimal]] = None,
                  moods_now: Optional[Dict[str, Decimal]] = None,
                  current_t=Decimal("0"), on_change=None, pool=None,
-                 table_height=TABLE_H, page_height=0):
+                 table_height=TABLE_H, page_height=0,
+                 cycles: int = 1, mood_events=None, moods_at=None):
         super().__init__(master, bg=theme.BG)
         self._init_batch_body(master, schedule, shift_index=shift_index,
                               initial_moods=initial_moods, imported_moods=imported_moods,
                               moods_now=moods_now, current_t=current_t, on_change=on_change,
-                              pool=pool, table_height=table_height, page_height=page_height)
+                              pool=pool, table_height=table_height, page_height=page_height,
+                              cycles=cycles, mood_events=mood_events, moods_at=moods_at)
 
     def destroy(self) -> None:
         """销毁时取消还没落地的防抖任务（否则会对着已销毁的控件报 invalid command name）。"""
