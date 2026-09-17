@@ -71,9 +71,6 @@ V4_SAMPLE = RES / "import_v4_input.json"
 #: 样例文件全集（测试与文档用一次列全，免得各写一份）。
 SAMPLES = (MAA_SAMPLE, V3_SAMPLE_3SHIFTS, V3_SAMPLE_NO_MAA, V3_SAMPLE_36H, V4_SAMPLE)
 
-#: 上游生成器的**原始 CSV 快照**（`data/resources/*.csv`；参考/留档，代码不读）。
-CSV_SNAPSHOTS = (RES / "operator_names.csv",)
-
 #: 示例场景目录（`scenarios/`：demo.json + maa_shift1/2/3.json）。
 SCENARIOS = ROOT / "scenarios"
 
@@ -85,5 +82,5 @@ __all__ = [
     "SKILLS_DATA", "OPERATOR_NAMES_DATA",
     "REQUIREMENTS_DOCX", "SKILL_VERIFY_REPORT", "OUTPUT_CONTRACT_MD", "V4_EXAMPLE_MD",
     "MAA_SAMPLE", "V3_SAMPLE_3SHIFTS", "V3_SAMPLE_NO_MAA", "V3_SAMPLE_36H", "V4_SAMPLE",
-    "SAMPLES", "CSV_SNAPSHOTS",
+    "SAMPLES",
 ]

@@ -1,149 +1,65 @@
-"""mood_soc/config.py —— 全局常量与数据表（纯配置层，无业务逻辑）。
+"""mood_soc/config.py —— **计算规则常量与公式** + 领域基元的字段出口。
 
-集中管理所有"魔法数字"，其余模块只从这里读取、不自行硬编码，
-从而便于统一调整，也符合"低耦合"的设计原则。
+## 这一层是什么
 
-数值与规则来源：《resources/心情消耗回复和工休时间.docx》。
+上半部分的"领域基元"（设施类型 / 容量 / 心情上下限 / 默认练度）已下沉到
+`data/domain.py`（游戏给的事实归数据包），本模块只 re-export 一次，
+历史写法 `from mood_soc.config import FacilityType` 继续可用。
 
-精度策略：所有数值常量均为 decimal.Decimal，做十进制精确运算；
-本模块导入时统一设置全局 Decimal 上下文（28 位有效数字、四舍五入）。
+本模块**自己负责**的是"怎么算"：
+
+| 内容 | 依据 |
+|---|---|
+| 基础消耗 `BASE_CONSUMPTION`（1.0/h）与挂件位 0/h | `resources/心情消耗回复和工休时间.docx` 第 4 段 + 用户口径 |
+| 制造站/贸易站的按人数减免（−0.05/人，上限 −0.1） | docx（灰色字体部分） |
+| 控制中枢全局减免（满员 −0.25，按人数线性折算） | docx + 上游 `controlData.basicCostBuff = -5` |
+| 宿舍回复 `1.5 + 0.1×等级 + 0.0004×氛围` | docx |
+| 设施集合 room1 / room2 / room3 | 上游 `gamedata_const.json → termDescriptionDict` |
+| 建造位总量（OUTPUT = 9） | 上游 `layouts.v0.slots` |
+
+数值与规则的完整口径见 `documents/02-数值规则.md`。
+
+精度策略：本模块的数值常量一律 `decimal.Decimal`，做十进制精确运算；
+导入时统一设置全局 Decimal 上下文（28 位有效数字、四舍五入）。
 """
 from decimal import ROUND_HALF_UP, Decimal, getcontext
-from enum import Enum
 
 # 全局十进制上下文：28 位有效数字 + 四舍五入，保证除法结果确定且精度足够。
 getcontext().prec = 28
 getcontext().rounding = ROUND_HALF_UP
 
+from data.domain import (  # noqa: E402  （放在设置 Decimal 上下文之后）
+    ACTIVITY_ROOM_FACILITIES,
+    DEFAULT_ELITE,
+    DEFAULT_OPERATOR_LEVEL,
+    FACILITY_LABELS,
+    FACILITY_MAX_COUNT,
+    FACILITY_SLOTS_BY_LEVEL,
+    FACILITY_TO_ROOM_TYPE,
+    MOOD_MAX,
+    MOOD_MIN,
+    FacilityType,
+    facility_max_count,
+    facility_max_level,
+    facility_slots,
+    parse_facility_type,
+)
+
 
 # ============================================================================
-# 一、心情电池基本参数
+# 一、干员工作时的基础心情消耗速率（点 / 小时）
 # ============================================================================
-MOOD_MAX = Decimal("24")          # 心情上限：等价于电池满容量（SOC = 100%）
-MOOD_MIN = Decimal("0")           # 心情下限：红脸 / 空电池
-
-# 干员工作时、无任何增减情况下的基础心情消耗速率（点 / 小时）
 BASE_CONSUMPTION = Decimal("1")
 
-
-# ============================================================================
-# 二、控制中枢（简称"中枢"）
-# ============================================================================
-CC_SLOTS = 5                    # 中枢最多可进驻的干员数量
-CC_REDUCTION_FULL = Decimal("0.25")  # 中枢放满干员后，全局获得的心情消耗减免
+# 控制中枢：最多可进驻的人数（与 data.domain.FACILITY_SLOTS_BY_LEVEL 的最高级一致）
+CC_SLOTS = 5
+# 中枢放满干员后，全局获得的心情消耗减免
+CC_REDUCTION_FULL = Decimal("0.25")
 
 
 # ============================================================================
-# 三、设施类型
+# 二、min_level_for_slots：塞进 N 个人至少需要几级
 # ============================================================================
-class FacilityType(str, Enum):
-    """设施类型。value 使用 ascii 便于序列化；中文名见 FACILITY_LABELS。
-
-    与上游 `building_data.json → rooms` 的 roomType 一一对应（见 FACILITY_TO_ROOM_TYPE）。
-    """
-    CONTROL_CENTER = "control_center"   # 控制中枢
-    MANUFACTURING = "manufacturing"     # 制造站
-    TRADING = "trading"                 # 贸易站
-    POWER = "power"                     # 发电站
-    RECEPTION = "reception"             # 会客室
-    OFFICE = "office"                   # 办公室（上游 roomType = HIRE）
-    TRAINING = "training"               # 训练室
-    WORKSHOP = "workshop"               # 加工站
-    DORMITORY = "dormitory"             # 宿舍
-    PRIVATE = "private"                 # 活动室（上游 roomType = PRIVATE，category = CUSTOM_P）
-
-
-FACILITY_LABELS = {
-    FacilityType.CONTROL_CENTER: "控制中枢",
-    FacilityType.MANUFACTURING: "制造站",
-    FacilityType.TRADING: "贸易站",
-    FacilityType.POWER: "发电站",
-    FacilityType.RECEPTION: "会客室",
-    FacilityType.OFFICE: "办公室",
-    FacilityType.TRAINING: "训练室",
-    FacilityType.WORKSHOP: "加工站",
-    FacilityType.DORMITORY: "宿舍",
-    FacilityType.PRIVATE: "活动室",
-}
-
-# 本项目设施枚举 ↔ 上游 roomType（用于对照上游 rooms / 技能 roomType 字段）
-FACILITY_TO_ROOM_TYPE = {
-    FacilityType.CONTROL_CENTER: "CONTROL",
-    FacilityType.MANUFACTURING: "MANUFACTURE",
-    FacilityType.TRADING: "TRADING",
-    FacilityType.POWER: "POWER",
-    FacilityType.RECEPTION: "MEETING",
-    FacilityType.OFFICE: "HIRE",
-    FacilityType.TRAINING: "TRAINING",
-    FacilityType.WORKSHOP: "WORKSHOP",
-    FacilityType.DORMITORY: "DORMITORY",
-    FacilityType.PRIVATE: "PRIVATE",
-}
-
-# ============================================================================
-# 设施容量（**上游权威数据**，勿凭印象改）
-#
-# 来源：Kengxxiao/ArknightsGameData → zh_CN/gamedata/excel/building_data.json
-#       · rooms[roomType].maxCount                —— 该类型最多可建几个房间
-#       · rooms[roomType].phases[等级-1].maxStationedNum —— 该等级可进驻人数
-# 快照 commit：0ef7f952dfd018392200157a5c79a6511ba69122（客户端 2.7.71）
-#
-# 复核方式（documents/06-数据来源.md）：
-#   python -c "import json;d=json.load(open('…/building_data.json',encoding='utf-8'));
-#              print({k:(v['maxCount'],[p['maxStationedNum'] for p in v['phases']])
-#                     for k,v in d['rooms'].items()})"
-# ============================================================================
-FACILITY_MAX_COUNT = {
-    FacilityType.CONTROL_CENTER: 1,
-    FacilityType.MANUFACTURING: 5,
-    FacilityType.TRADING: 5,
-    FacilityType.POWER: 3,
-    FacilityType.RECEPTION: 1,
-    FacilityType.OFFICE: 1,
-    FacilityType.TRAINING: 1,
-    FacilityType.WORKSHOP: 1,
-    FacilityType.DORMITORY: 4,
-    FacilityType.PRIVATE: 6,          # 活动室：最多 6 间，但不能进驻（maxStationedNum = 0）
-}
-
-FACILITY_SLOTS_BY_LEVEL = {
-    FacilityType.CONTROL_CENTER: (1, 2, 3, 4, 5),
-    FacilityType.MANUFACTURING: (1, 2, 3),
-    FacilityType.TRADING: (1, 2, 3),
-    FacilityType.POWER: (1, 1, 1),
-    FacilityType.RECEPTION: (2, 2, 2),
-    FacilityType.OFFICE: (1, 1, 1),
-    FacilityType.TRAINING: (2, 2, 2),   # ①训练位 + ②协助位
-    FacilityType.WORKSHOP: (1, 1, 1),
-    FacilityType.DORMITORY: (5, 5, 5, 5, 5),
-    FacilityType.PRIVATE: (0, 0, 0),    # 活动室不可进驻
-}
-
-# 上游 `roomsWithoutRemoveStaff = ["PRIVATE"]`：活动室的使用者不会被"撤下干员"逻辑移除，
-# 且在多数技能里被**显式排除**（「基建内（不包含副手及活动室使用者）」出现 23 次）。
-ACTIVITY_ROOM_FACILITIES = (FacilityType.PRIVATE,)
-
-
-def facility_max_count(ftype) -> int:
-    """该设施类型最多可建几个房间（-1/未收录视为不限）。"""
-    return FACILITY_MAX_COUNT.get(ftype, -1)
-
-
-def facility_slots(ftype, level: int = 1) -> int:
-    """该设施在指定等级可进驻的人数（超出等级上限时取最后一个）。"""
-    table = FACILITY_SLOTS_BY_LEVEL.get(ftype)
-    if not table:
-        return 0
-    idx = min(max(int(level), 1), len(table)) - 1
-    return table[idx]
-
-
-# 各类型最高等级（= 上游 `rooms[].phases` 的条数；控制中枢/宿舍 5 级，其余 3 级）
-def facility_max_level(ftype) -> int:
-    """该设施的最高等级（上游 `rooms[].phases` 的形态数）。"""
-    return len(FACILITY_SLOTS_BY_LEVEL.get(ftype) or ()) or 1
-
-
 def min_level_for_slots(ftype, count: int) -> int:
     """要塞进 `count` 个人，**至少**需要几级（放不下就返回最高等级）。
 
@@ -158,7 +74,7 @@ def min_level_for_slots(ftype, count: int) -> int:
 
 
 # ============================================================================
-# 建造位总量（上游 `layouts.v0.slots` 的 `category == "OUTPUT"` 槽位）
+# 三、建造位总量（上游 `layouts.v0.slots` 的 `category == "OUTPUT"` 槽位）
 #
 # 上游事实（building_data.json，客户端 2.7.71）：
 #   · `rooms.MANUFACTURE.maxCount = 5`、`rooms.TRADING.maxCount = 5`、`rooms.POWER.maxCount = 3`；
@@ -170,7 +86,7 @@ OUTPUT_SLOT_TOTAL = 9
 
 
 # ============================================================================
-# 各设施的基础心情消耗速率（点 / 小时）
+# 四、各设施的基础心情消耗速率（点 / 小时）
 #
 # 口径（docx 第 4 段「干员工作时…每小时基础消耗速率 1 点」）：
 #   · **常规生产设施 = 1.0/h**：制造站 / 贸易站 / 发电站 / 办公室 / 会客室 / 控制中枢；
@@ -186,7 +102,7 @@ OUTPUT_SLOT_TOTAL = 9
 # 能数到它。挂件不需要休息，所以给它们算心情消耗没有意义。
 #
 # 推论：那 9 条写「进驻训练室协助位时，心情每小时消耗 +1」的训练室技能**不生效**
-# （已从 `data/moods_skills.txt` 撤出，`skills_registry.txt` 保留登记与原因）。
+# （已从 `data/moods_skills.txt` 撤出，`data/skills_registry.txt` 保留登记与原因）。
 #
 # 与 docx 第 4 段**不冲突**：那说的是常规生产设施"上岗生产"的稳态消耗，
 # 挂件位不属于上岗生产。
@@ -211,25 +127,10 @@ def base_consumption(ftype) -> Decimal:
     return BASE_CONSUMPTION_BY_FACILITY.get(ftype, BASE_CONSUMPTION)
 
 
-# 中文名 -> 类型，用于解析用户输入
-_FACILITY_BY_LABEL = {label: t for t, label in FACILITY_LABELS.items()}
-
-
-def parse_facility_type(name):
-    """把字符串（英文枚举值或中文名）解析为 FacilityType，失败返回 None。"""
-    if isinstance(name, FacilityType):
-        return name
-    key = str(name).strip()
-    try:
-        return FacilityType(key)
-    except ValueError:
-        return _FACILITY_BY_LABEL.get(key)
-
-
 # ============================================================================
-# 四、制造站 / 贸易站的设施基础心情减免（文档中的"X"，灰色字体部分）
+# 五、制造站 / 贸易站的设施基础心情减免（文档中的"X"，灰色字体部分）
 #
-# 规则：根据当前制造站进驻人数，
+# 规则：根据当前进驻人数，
 #   1 名 -> 无减免（不显示）
 #   2 名 -> 0.05
 #   3 名 -> 0.1
@@ -251,7 +152,7 @@ def facility_mood_reduction(ftype, operator_count):
 
 
 # ============================================================================
-# 设施集合（权威来源：官方术语表 gamedata_const.json → termDescriptionDict）
+# 六、设施集合（权威来源：官方术语表 gamedata_const.json → termDescriptionDict）
 #   cc.c.room1「部分设施」  = 发电站、人力办公室、会客室
 #   cc.c.room2「其他设施」  = room1 + 制造站 + 贸易站
 #   cc.c.room3「工作场所」  = room2 + 控制中枢 + 训练室
@@ -278,7 +179,7 @@ def cc_reduction(cc_operator_count):
 
 
 # ============================================================================
-# 五、宿舍（回复）
+# 七、宿舍（回复）
 #
 # 宿舍回复 = 白字（宿舍等级）+ 绿字（氛围 + 干员后勤技能）
 #   白字 = 1.5 + 0.1 × 宿舍等级
@@ -311,3 +212,23 @@ def dormitory_recovery(level, atmosphere=None):
     return (DORM_BASE_RECOVERY_BASE
             + DORM_BASE_RECOVERY_PER_LEVEL * level
             + DORM_ATMOSPHERE_COEF * atmosphere)
+
+
+__all__ = [
+    # —— 领域基元（来自 data.domain，re-export 保持历史 import 路径）——
+    "MOOD_MAX", "MOOD_MIN", "FacilityType",
+    "FACILITY_LABELS", "FACILITY_TO_ROOM_TYPE",
+    "FACILITY_MAX_COUNT", "FACILITY_SLOTS_BY_LEVEL", "ACTIVITY_ROOM_FACILITIES",
+    "DEFAULT_ELITE", "DEFAULT_OPERATOR_LEVEL",
+    "facility_max_count", "facility_slots", "facility_max_level", "parse_facility_type",
+    "min_level_for_slots",
+    # —— 计算规则 ——
+    "BASE_CONSUMPTION", "CC_SLOTS", "CC_REDUCTION_FULL",
+    "OUTPUT_ROOM_TYPES", "OUTPUT_SLOT_TOTAL",
+    "TRAINING_BASE_CONSUMPTION", "BASE_CONSUMPTION_BY_FACILITY", "base_consumption",
+    "FACILITY_REDUCTION_STEP", "FACILITY_REDUCTION_MAX", "REDUCTION_BY_STAFF_TYPES",
+    "facility_mood_reduction",
+    "PARTIAL_WORK_FACILITIES", "WORK_FACILITIES", "ALL_WORKPLACE_FACILITIES", "cc_reduction",
+    "DORM_LEVEL_TABLE", "DORM_BASE_RECOVERY_BASE", "DORM_BASE_RECOVERY_PER_LEVEL",
+    "DORM_ATMOSPHERE_COEF", "dormitory_recovery",
+]

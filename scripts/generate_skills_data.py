@@ -583,7 +583,7 @@ def render(skills_by_key, default_operators, equips, traits, factions, var_produ
     # 数据包只依赖数据包：技能框架在 `data/skill_model.py`、条件函数在 `data/conditions.py`。
     # ⚠️ 绝不要在这里写 `from mood_soc.skills import ...` —— 那是计算包的门面，
     #    会把 rules/models 拖进数据包，重新制造「生成脚本无法重新生成自己」的死锁。
-    lines.append('from mood_soc.config import FacilityType')
+    lines.append('from data.domain import FacilityType')
     lines.append('from data.skill_model import Skill, SkillEquip, SkillKind')
     lines.append('from data.conditions import (')
     for _name in CONDITIONS:

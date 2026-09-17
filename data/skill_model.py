@@ -10,8 +10,8 @@ data/skills_data.py                 ← 生成物：SKILLS / SKILL_EQUIPS / DEFA
 mood_soc/skills.py                  ← 兼容门面：把上面这些再 re-export 一次
 ```
 
-⚠️ **本模块只允许依赖 `mood_soc/config.py`**（常量与设施枚举）。它**不能** import
-`mood_soc.rules` / `mood_soc.models`，否则生成物就会把计算层拖进数据包，重新变成环。
+⚠️ **本模块只允许依赖 `data/domain.py`**（领域基元：设施枚举与心情上下限）。它**不能** import
+`mood_soc.*`（那是计算包），否则生成物就会把计算层拖进数据包，重新变成环。
 
 ## 约定（重要）：技能 value 的符号语义
 
@@ -40,7 +40,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Callable, Optional, Tuple
 
-from mood_soc.config import FacilityType
+from data.domain import FacilityType
 
 
 class SkillKind(str, Enum):

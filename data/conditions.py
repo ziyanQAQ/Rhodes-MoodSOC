@@ -8,9 +8,9 @@
 而且数据包反向依赖计算包。现在条件函数住在数据包里，生成物只 import 本模块：
 
 ```
-mood_soc/config  ←  data/conditions  ←  data/skills_data
-                          ↑
-              mood_soc/skills（re-export，保持历史 import 路径可用）
+data/domain  ←  data/conditions  ←  data/skills_data
+                    ↑
+        mood_soc/skills（re-export，保持历史 import 路径可用）
 ```
 
 ## 鸭子类型契约（别在这里 import 计算层）
@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from mood_soc.config import MOOD_MAX, FacilityType
+from data.domain import MOOD_MAX, FacilityType
 
 
 def _cond_mood_below_18(ctx) -> bool:

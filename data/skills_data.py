@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from mood_soc.config import FacilityType
+from data.domain import FacilityType
 from data.skill_model import Skill, SkillEquip, SkillKind
 from data.conditions import (
     _cond_mood_below_18,
