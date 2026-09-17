@@ -39,6 +39,7 @@ from ui.schedule import (MoodSetEvent, Schedule, Trajectory, all_operator_names,
                          simulate_schedule)
 from mood_soc import entry_event_holders, entry_target_kind  # noqa: E402
 from mood_soc import mood_skill_summary  # noqa: E402
+from mood_soc.battery import to_decimal  # noqa: E402
 from mood_soc.config import (MOOD_MAX, FacilityType, facility_max_level,  # noqa: E402
                              facility_slots)
 from mood_soc.models import IdleToDormEntry, normalize_entry_when  # noqa: E402
@@ -95,6 +96,9 @@ class MoodSocApp(tk.Tk):
         # 周期数是**设置中心**里的一个控件；变量挂在 app 上（唯一真源），
         # 设置窗口只是把它接到下拉框上——工具栏时代它挂在工具栏里。
         self.cycles_var = tk.StringVar(value="1")
+        # 「跟随滑块」（「干员与心情」的时刻跟不跟主界面滑块）也是 app 上的唯一真源：
+        # 那一页会被标脏重建（改时长/周期数时），状态放面板里就会"切个页回来勾选没了"。
+        self.follow_slider = tk.BooleanVar(value=False)
         self.settings_dlg = None               # 「设置」中心的窗口（唯一设置入口）
         # 「导入排班」读到的附赠信息（见 mood_soc/importer.py）：
         self.operator_pool: list = []          # 干员池 [{name, elite, level, own}]（v4 蓝图才有）
@@ -1139,8 +1143,17 @@ class MoodSocApp(tk.Tk):
         return self.open_settings("timeline")
 
     def apply_shift_hours(self, hours) -> None:
-        """「时间轴」落地：改各班时长（面板已保证"各班长之和 == 周期"）。"""
+        """「时间轴」落地：改各班时长（面板已保证"各班长之和 == 周期"）。
+
+        ⚠️ **时长没变就直接返回**：本函数会 `recompute(fit_slider=True)`，而后者会
+        **把当前时刻重置为 0:00** 并重算一整轮。`TimelinePanel` 构建时也会校验一次并回调，
+        不做这个判据的话，"打开时间轴页"就会把主界面时刻冲成 00:00（实测过），
+        「跟随滑块」看起来就像在乱跳。
+        """
         if self.schedule is None or not hours:
+            return
+        now = [to_decimal(h) for h in hours]
+        if now == [s.hours for s in self.schedule.shifts]:
             return
         self.schedule = self.schedule.with_hours(hours)
         self._build_shift_buttons()

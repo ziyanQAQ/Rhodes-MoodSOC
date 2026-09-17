@@ -344,7 +344,9 @@ class SettingsDialog(tk.Toplevel):
                           page_height=PAGE_H,
                           cycles=app.cycles,
                           mood_events=app.mood_events,
-                          moods_at=app.moods_at_abs)
+                          moods_at=app.moods_at_abs,
+                          # 「跟随滑块」的开关状态存在 app 上：这一页被标脏重建也不会丢勾选
+                          follow_var=app.follow_slider)
 
     def notify_view(self, t_abs, moods=None) -> None:
         """`ui/app.py` 在"滑块动了 / 重算了"之后调它 → 转发给「干员与心情」分区。

@@ -95,7 +95,8 @@ class BatchMixin:
                          moods_now: Optional[Dict[str, Decimal]] = None,
                          current_t=Decimal("0"), on_change=None, pool=None,
                          table_height=TABLE_H, page_height=0,
-                         cycles: int = 1, mood_events=None, moods_at=None):
+                         cycles: int = 1, mood_events=None, moods_at=None,
+                         follow_var=None):
         """装好状态 + 建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
 
         `pool`：**干员池**（`[{"name","elite","level","own"}]`，来自「导入 v4 蓝图」这类
@@ -107,8 +108,11 @@ class BatchMixin:
         `cycles` / `mood_events`：周期数（时刻行的「周期」下拉有 1~cycles 项）与**已有锚点**；
         `moods_at`：`(绝对时刻) -> {干员: 心情}` 的取值口子（app 给的是轨迹的 `moods_at`），
         心情列"该时刻的实际值"就是它算出来的；`moods_now` 是它不可用时的兜底（测试里用）。
+        `follow_var`：「跟随滑块」的变量——**由宿主给**（`app.follow_slider`，唯一真源），
+        否则这一页被标脏重建时勾选就丢了（切个页回来勾选没了，实测过）。
         """
         self._on_change = on_change
+        self.follow = follow_var if follow_var is not None else tk.BooleanVar(value=False)
         # 表格可视高度：显式数字（独立使用）或 "auto"（设置中心：吃内容区剩余高度）
         self._table_h = None if table_height == "auto" else int(table_height)
         self._page_h = int(page_height) or 0
@@ -161,10 +165,10 @@ class BatchMixin:
         tk.Label(head, text="　班次", bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
         self.shift_var = tk.StringVar(value=self._labels[self._shift_index])
-        box = ttk.Combobox(head, textvariable=self.shift_var, state="readonly",
-                           values=self._labels, width=20)
-        box.pack(side="left")
-        box.bind("<<ComboboxSelected>>", lambda _e: self._on_shift_change())
+        self._shift_box = ttk.Combobox(head, textvariable=self.shift_var, state="readonly",
+                                      values=self._labels, width=20)
+        self._shift_box.pack(side="left")
+        self._shift_box.bind("<<ComboboxSelected>>", lambda _e: self._on_shift_change())
         tk.Label(head, text="干员改动只作用于这一班（跟着上面「时刻」走）",
                  bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(8, 0))
@@ -333,20 +337,23 @@ class BatchMixin:
         entry.pack(side="left", padx=(3, 2))
         entry.bind("<Return>", lambda _e: self._on_view_change())
         entry.bind("<FocusOut>", lambda _e: self._on_view_change())
-        ttk.Button(view, text="◀", width=3,
-                   command=lambda: self._step_view(Decimal("-0.25"))).pack(side="left")
-        ttk.Button(view, text="▶", width=3,
-                   command=lambda: self._step_view(Decimal("0.25"))).pack(side="left",
-                                                                       padx=(2, 0))
-        ttk.Button(view, text="回到周期起点",
-                   command=lambda: self._set_view(self._view_cycle, Decimal("0"))
-                   ).pack(side="left", padx=(6, 0))
-        self.follow = tk.BooleanVar(value=False)
+        left = ttk.Button(view, text="◀", width=3,
+                          command=lambda: self._step_view(Decimal("-0.25")))
+        left.pack(side="left")
+        right = ttk.Button(view, text="▶", width=3,
+                           command=lambda: self._step_view(Decimal("0.25")))
+        right.pack(side="left", padx=(2, 0))
+        home = ttk.Button(view, text="回到周期起点",
+                          command=lambda: self._set_view(self._view_cycle, Decimal("0")))
+        home.pack(side="left", padx=(6, 0))
         tk.Checkbutton(view, text="跟随滑块", variable=self.follow, bg=theme.BG,
                        activebackground=theme.BG, highlightthickness=0,
                        command=self._on_follow).pack(side="left", padx=(10, 0))
         ttk.Button(view, text="清空本时刻", command=self._clear_view_anchors).pack(
             side="left", padx=(6, 0))
+        # 「跟随滑块」打开时这些控件只读（时刻由主界面滑块说了算）
+        self._view_widgets = [cyc_box, entry, left, right, home, self._shift_box]
+        self._sync_view_widgets()
 
         # —— 第二行：一键动作（都作用在"这一刻"）——
         row = tk.Frame(box, bg=theme.BG)
@@ -368,14 +375,36 @@ class BatchMixin:
                                     justify="left", wraplength=760,
                                     font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.anchor_note.pack(fill="x", padx=theme.GAP)
-        tk.Label(box, text="「按这一刻回填」= 把此刻的实际心情写成指定值（第 1 周期 0:00 就是"
-                           "改写周期起点）；只对上面选中的那个周期生效。",
-                 bg=theme.BG, fg=theme.MUTED, anchor="w",
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(fill="x", padx=theme.GAP,
-                                                               pady=(0, 6))
+        # 这一行同时兼职「跟随中」的提示（两句话互斥，不额外占高度 —— 内容区是定高的）
+        self.mood_hint = tk.Label(box, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
+                                  font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.mood_hint.pack(fill="x", padx=theme.GAP, pady=(0, 6))
         self._sync_anchor_note()
 
     # ---------------------------------------------------------------- 视图（周期 + 时刻）
+    def _sync_view_widgets(self) -> None:
+        """「跟随滑块」打开时，时刻相关控件**只读**（时刻由主界面滑块说了算）+ 换提示语。
+
+        为什么要禁用而不是"允许手改、手改就取消跟随"：跟随时每一帧都会把时刻框写一遍，
+        手动输进去的值立刻被覆盖 —— 与其让人"输了没反应"，不如明确置灰。
+        """
+        if not hasattr(self, "_view_widgets"):
+            return
+        following = bool(self.follow.get())
+        readonly = {self._shift_box, self._view_widgets[0]}      # 这两个本来就是 readonly
+        for w in self._view_widgets:
+            try:
+                w.configure(state=("disabled" if following else
+                                   ("readonly" if w in readonly else "normal")))
+            except tk.TclError:
+                pass
+        if hasattr(self, "mood_hint"):
+            self.mood_hint.configure(
+                text=("跟随中：时刻跟着主界面滑块走（取消勾选后可以手动指定时刻）。"
+                      if following else
+                      "「按这一刻回填」= 把此刻的实际心情写成指定值（第 1 周期 0:00 就是"
+                      "改写周期起点）；只对上面选中的那个周期生效。"))
+
     @staticmethod
     def _as_event(ev) -> MoodSetEvent:
         """容忍"字典 / 对象"两种写法（`MoodSetEvent` 是 dataclass，测试里也常直接给）。"""
@@ -425,14 +454,20 @@ class BatchMixin:
         self._view_cycle, self._view_t = cycle, t
         self.view_cycle_var.set(str(cycle))
         self.view_time_var.set(self._view_clock())
-        if not follow:
+        if not follow and self.follow.get():
+            # 手动指定时刻 ＝ 明确不要跟随了（不再静默取消：提示行会写出来）
             self.follow.set(False)
+            self._sync_view_widgets()
         if rebuild:
             self._sync_shift_from_view(refresh=True)
 
     def _on_view_change(self) -> None:
-        """时刻输入框 / 周期下拉改了：解析 → 换视图（并停掉"跟随滑块"）。"""
-        self._collect_moods()               # 先把旧视图里改过的格子收进来
+        """时刻输入框 / 周期下拉改了：解析 → 换视图。
+
+        ⚠️ **值没变就什么都不做**：这个回调还挂在 `<FocusOut>` 上，而"点一下输入框再点别处"
+        会带着**同样的时刻**进来。老实现无条件走 `_set_view`（默认会取消「跟随滑块」），
+        于是"什么都没改，勾选却自己掉了"——实测过。这里先比对，相同就直接返回。
+        """
         t = self._parse_view_clock(self.view_time_var.get())
         if t is None:
             self._error("时刻要写成 HH:MM（例如 01:30 或 13:00）")
@@ -442,6 +477,10 @@ class BatchMixin:
             cycle = int(self.view_cycle_var.get())
         except (TypeError, ValueError):
             cycle = self._view_cycle
+        cycle = max(1, min(cycle, self._cycles))
+        if (cycle, t) == (self._view_cycle, self._view_t):
+            return                          # 没改（焦点进出也会走到这里）→ 零副作用
+        self._collect_moods()               # 先把旧视图里改过的格子收进来
         self.err.configure(text="")
         self._set_view(cycle, t)
 
@@ -451,7 +490,12 @@ class BatchMixin:
         self._set_view(self._view_cycle, self._view_t + delta)
 
     def _on_follow(self) -> None:
-        """「跟随滑块」：勾上就跟着主界面的时刻走（取消＝停在原地自己定）。"""
+        """「跟随滑块」：勾上就跟着主界面的时刻走（取消＝停在原地自己定）。
+
+        开关状态本身存在 `app.follow_slider` 上（宿主给的变量），所以这一页被重建、
+        切到别的分区再回来，勾选都还在。这里只负责"立刻跟到现在这一刻"+ 控件置灰。
+        """
+        self._sync_view_widgets()
         if not self.follow.get():
             return
         self._collect_moods()
@@ -1158,13 +1202,14 @@ class BatchPanel(tk.Frame, BatchMixin):
                  moods_now: Optional[Dict[str, Decimal]] = None,
                  current_t=Decimal("0"), on_change=None, pool=None,
                  table_height=TABLE_H, page_height=0,
-                 cycles: int = 1, mood_events=None, moods_at=None):
+                 cycles: int = 1, mood_events=None, moods_at=None, follow_var=None):
         super().__init__(master, bg=theme.BG)
         self._init_batch_body(master, schedule, shift_index=shift_index,
                               initial_moods=initial_moods, imported_moods=imported_moods,
                               moods_now=moods_now, current_t=current_t, on_change=on_change,
                               pool=pool, table_height=table_height, page_height=page_height,
-                              cycles=cycles, mood_events=mood_events, moods_at=moods_at)
+                              cycles=cycles, mood_events=mood_events, moods_at=moods_at,
+                              follow_var=follow_var)
 
     def destroy(self) -> None:
         """销毁时取消还没落地的防抖任务（否则会对着已销毁的控件报 invalid command name）。"""

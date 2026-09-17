@@ -253,7 +253,13 @@ class TimelinePanel(tk.Frame):
         self.msg = tk.Label(self, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.msg.pack(fill="x", pady=(theme.GAP, 0))
+        # ⚠️ 构建时只**报告有效性**、不回调"改动"：`_validate()` 末尾会 `_notify()`，而
+        #    `on_change` 是"用户改了时长"的落地口子（`app.apply_shift_hours` → 重算 +
+        #    **把当前时刻重置为 0:00**）。构建时也回调的话，"打开时间轴页"就会把主界面
+        #    时刻冲成 00:00（实测过）——「跟随滑块」看起来像在乱跳，还白重算一轮。
+        self._building = True
         self._validate()
+        self._building = False
 
     def _even(self) -> None:
         try:
@@ -295,6 +301,8 @@ class TimelinePanel(tk.Frame):
     def _notify(self) -> None:
         if self.on_validity is not None:
             self.on_validity(self.valid)
+        if getattr(self, "_building", False):
+            return                    # 构建时只报有效性（见 `__init__` 末尾的说明）
         if self._on_change is not None and self.valid:
             self._on_change(self.value())
 
