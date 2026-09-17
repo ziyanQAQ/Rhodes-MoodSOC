@@ -94,7 +94,7 @@ documents/
    `skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `resources/*.txt` → 重跑生成脚本。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 325 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 329 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（250 条 clause 逐条造场景
     核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `resources/skill_verify_report.md`。
@@ -106,6 +106,10 @@ documents/
     （`ui.schedule.MoodSetEvent`，只对指定周期生效、同刻跳变），只有**第 1 周期 0:00** 那一格
     写 `initial_moods`。面板的 `_collect_moods` **只收"和刚写进去的值不同"的格子**
     （否则"改个房间等级"会把从轨迹读出来的值当成手动设定重复落一遍）。
+    ⚠️ **`StringVar.trace_add("write")` 对程序化 `var.set()` 也触发**：刷新必须走 `_set_cell`
+    （**先登记 `_shown` 再写**）→ `_on_cell_write`（与 `_shown` 相等就 return）→ `_notify`
+    的结果签名去重，三条缺一条就会变成"刷新→重算→刷新"的**自激回路**（实测空闲 CPU ~75%、
+    空转 2 秒重算 6 次 —— 就是"设置干员与心情卡顿严重"）。见 `documents/10-图形界面.md` §7.1 第 9 条。
 15. **同刻跳变＝同一时刻两个节点**（跳变前 / 跳变后）：`_record_jump` 是**追加**而不是改写；
     对应地 `Trajectory.mood_at` **不能**用 `if t <= ts[0]: return vals[0]` 提前返回
     （`t = 0` 恰好就是"周期起点被事件改过"，会取到跳变**前**的值——修过的 bug）。
