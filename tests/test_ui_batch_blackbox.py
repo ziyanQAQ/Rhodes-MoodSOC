@@ -523,6 +523,32 @@ class Test批量设置(unittest.TestCase):
         app.mood_events.clear()
         app.recompute()
 
+    def test_时刻没变时零副作用(self):
+        """时刻没变就不该动任何东西（`<FocusOut>` 会带着同样的时刻进来）。
+
+        老 bug：无条件走 `_set_view`（默认会取消「跟随滑块」）⇒ "什么都没改，勾选却自己掉了"。
+        """
+        app = self.app
+        dlg = self._open(0)
+        sent = []
+        dlg._on_change = lambda *a: sent.append(a)
+        dlg.follow.set(True)
+        dlg._on_follow()
+        dlg._set_view(1, Decimal("6"))
+        self.assertFalse(dlg.follow.get(), "手动指定时刻＝取消跟随")
+        dlg.view_time_var.set("06:00")
+        dlg._on_view_change()
+        self.assertEqual((dlg._view_cycle, dlg._view_t), (1, Decimal("6")))
+        self._pump(app, 1.0)
+        self.assertEqual(sent, [], "值没变不该有任何通知")
+        # 周期下拉与时刻一起比对：改了周期才算改
+        dlg.view_cycle_var.set("1")
+        dlg._on_view_change()
+        self.assertEqual(dlg._view_t, Decimal("6"))
+        app.initial_moods.clear()
+        app.mood_events.clear()
+        app.recompute()
+
     # ------------------------------------------------------------- 端到端
     def test_设置中心里改干员与心情立即生效(self):
         """`app.open_settings("batch")`：面板里一改，布局与起点心情**立刻**落地、状态栏给回执。

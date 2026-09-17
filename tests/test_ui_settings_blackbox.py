@@ -301,6 +301,86 @@ class Test设置中心(unittest.TestCase):
         app.set_time(Decimal("0"))
         app.update()
 
+    def test_跟随滑块开关不会自己掉(self):
+        """「跟随滑块」的三条回归（都实测踩过）：
+
+        ① 点一下时刻输入框再点别处（`<FocusOut>`，**值一个字符都没改**）不许取消勾选；
+        ② 切到别的分区再切回来，勾选还在，并且立刻补到"现在这一刻"；
+        ③ 勾选状态存在 `app.follow_slider` 上 —— 那一页被标脏重建也丢不了。
+        """
+        app = self.app
+        dlg = self._open("batch")
+        panel = dlg.panel
+        self.assertIs(panel.follow, app.follow_slider, "开关状态应当就是 app 上的那个变量")
+        panel.follow.set(True)
+        panel._on_follow()
+        app.set_time(Decimal("13"))
+        app.update()
+        self.assertEqual(panel._view_t, Decimal("13"))
+        # ① 焦点进出（值没变）
+        panel._on_view_change()
+        self.assertTrue(panel.follow.get(), "值没变时不该取消勾选")
+        self.assertEqual(panel._view_t, Decimal("13"))
+        # ② 切页再回来
+        dlg.open_page("timeline")
+        app.update()
+        app.set_time(Decimal("20"))
+        app.update()
+        dlg.open_page("batch")
+        app.update()
+        self.assertTrue(dlg.panel.follow.get(), "切页回来勾选不该丢")
+        self.assertEqual(dlg.panel._view_t, Decimal("20"), "切回来要补到这一刻")
+        dlg.panel.follow.set(False)
+        dlg.panel._on_follow()
+        app.set_time(Decimal("0"))
+        app.update()
+
+    def test_跟随时时刻控件只读(self):
+        """勾上「跟随滑块」→ 周期/时刻/◀▶/回到起点/班次下拉全部只读（避免"输了又被覆盖"）。"""
+        app = self.app
+        dlg = self._open("batch")
+        panel = dlg.panel
+        entry, cyc = panel._view_widgets[1], panel._view_widgets[0]
+        self.assertEqual(str(entry.cget("state")), "normal")
+        panel.follow.set(True)
+        panel._on_follow()
+        for w in panel._view_widgets:
+            self.assertEqual(str(w.cget("state")), "disabled", f"{w} 应当只读")
+        self.assertIn("跟随中", panel.mood_hint.cget("text"))
+        panel.follow.set(False)
+        panel._on_follow()
+        self.assertEqual(str(entry.cget("state")), "normal")
+        self.assertEqual(str(cyc.cget("state")), "readonly")
+        self.assertIn("按这一刻回填", panel.mood_hint.cget("text"))
+        app.set_time(Decimal("0"))
+        app.update()
+
+    def test_切到时间轴页不改主界面时刻(self):
+        """进「时间轴」页只是**看/改时长**，不该顺手把主界面时刻重置成 0:00、也不该白重算。
+
+        （原因：`TimelinePanel` 构建时会校验一次并回调 `on_change` → `apply_shift_hours`
+        → `recompute(fit_slider=True)`；现在构建时不回调「改动」，而且时长没变时直接返回。）
+        """
+        app = self.app
+        app.set_time(Decimal("13"))
+        app.update()
+        before = (list(app.traj.times), {k: list(v) for k, v in app.traj.moods.items()})
+        dlg = self._open("timeline")
+        app.update()
+        self.assertEqual(app.current_t, Decimal("13"), "切页不该改动当前时刻")
+        self.assertEqual(list(app.traj.times), before[0])
+        self.assertEqual({k: list(v) for k, v in app.traj.moods.items()}, before[1])
+        # 时长真的改了才回调
+        for i, v in enumerate(("8", "8", "8")):
+            dlg.timeline.rows[i].set(v)
+        app.update()
+        self.assertEqual(app.schedule.shifts[0].hours, Decimal("8"))
+        for i, v in enumerate(("12", "6", "6")):
+            dlg.timeline.rows[i].set(v)
+        app.update()
+        app.set_time(Decimal("0"))
+        app.update()
+
     def test_设置窗口是单例(self):
         dlg = self._open("timeline")
         again = self.app.open_settings("idle")
