@@ -138,23 +138,27 @@ class Test批量设置(unittest.TestCase):
     # ------------------------------------------------------------- 不在基建
     def test_不在基建那一段自动列出本班未排班的人(self):
         """「不在基建」段 = 全排班人员 − **本班次在岗的人**；每行都给得出心情、可改。"""
-        from ui.batch import DETACHED_FI, DETACHED_ROOM
+        from ui.batch import DETACHED_FI
 
         app = self.app
         dlg = self._open(0)
         shift = app.schedule.shifts[0]
         auto = dlg._detached_all()
         self.assertEqual(set(auto), set(app.schedule.operator_names()) - set(shift.operators))
-        # 段首那一行写段名，后面每人一行
-        keys = [r["key"] for r in dlg._rows]
-        self.assertEqual(keys[-len(auto) - 1], (DETACHED_FI, 0))
-        self.assertEqual(dlg._rows[-len(auto) - 1]["room"].cget("text"), DETACHED_ROOM)
+        # 段首那一行是**分组卡片**（通栏写段名 + 一句口径），后面每人一行
+        bench_rows = [r for r in dlg._rows if r["kind"] == dlg.KIND_BENCH]
+        self.assertEqual([r["name"] for r in bench_rows], list(auto))
+        card = [r for r in dlg._rows if r["kind"] == dlg.KIND_ROOM
+                and r["key"][1] == DETACHED_FI]
+        self.assertEqual(len(card), 1)
+        self.assertIn("不在基建", card[0]["room"].cget("text"))
         # 这些人在表格里能改心情（写的是**周期起点**）
         name = auto[0]
         dlg._mood_vars[name].set("9")
         app.update()
         dlg._collect_moods()
         self.assertEqual(dlg._moods[name], Decimal("9"))
+        self.assertTrue(all(r["key"][1] == DETACHED_FI for r in bench_rows))
 
     def test_走人不占位置(self):
         """「不在基建」的人**不占进驻位**：段里的行没有位次号、也不进 `_cells`。"""
@@ -179,8 +183,7 @@ class Test批量设置(unittest.TestCase):
         name = elsewhere[0]
         text = dlg._detached_elsewhere(name)
         self.assertTrue(text.startswith("其他班："))
-        row = next(r for r in dlg._rows if r["key"][0] == DETACHED_FI
-                   and r["op"].cget("text").startswith(name))
+        row = next(r for r in dlg._rows if r["kind"] == dlg.KIND_BENCH and r["name"] == name)
         self.assertEqual(row["dash"].cget("text"), text)
         # 两个班都没排到的人 → 没有"其他班"标记（真正的不在基建）
         for other in dlg._detached_all():

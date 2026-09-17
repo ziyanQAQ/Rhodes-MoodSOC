@@ -673,7 +673,9 @@ class IdleToDormMixin:
                  text="规则：先看宿舍有没有空位，有空位就直接放进去（氛围高的宿舍优先）；\n"
                       "没空位就与宿舍里【心情已满】的那位互换——她进宿舍恢复，那位换出来闲置\n"
                       "（他已经是满心情，闲置不会掉心情）。宿舍里连一个满心情的都没有时，"
-                      "这一班就不动。",
+                      "这一班就不动。\n"
+                      "候选＝没在上班、也不在宿舍、心情还没满的人：**挂件位**（加工站/训练室）、"
+                      "本班**未排班**的人，以及「干员与心情」里**「不在基建」名单**上的人。",
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=600,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
                                                                 pady=(0, theme.GAP))

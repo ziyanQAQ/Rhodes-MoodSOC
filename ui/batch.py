@@ -54,7 +54,12 @@ LEVEL_COLS = 5
 LEVEL_NAME_W = 9        # 房间名那一列的字符宽（如「制造站#1」）
 LEVEL_GAP = 14
 # 表格可视高度的下限（自动模式下再挤也要留这么多）
-TABLE_H_MIN = 160
+TABLE_H_MIN = 96
+#: 表格区里**不参与伸缩**的高度（实测"搜索栏 + 表头 + 事后才建的那几行"）。
+#: ⚠️ 由实测反推：`_table_height()` 是在建表格**之前**跑的，那时下面这几块还没建出来，
+#:    量不到；少扣 1px 就会让整页超 `PAGE_H`（超了内容被裁、切页时窗口跳）。改表格上方
+#:    的控件（加一行说明、加大字号…）之后要重新量一遍这两个数。
+TABLE_CHROME = 55
 # 心情输入的防抖（毫秒）：一次落地＝宿主那边一整轮重算（0.23~1.2s），别设得太短
 NOTIFY_DEBOUNCE_MS = 500
 # 「不在基建」那一段在表格里的**设施下标哨兵**：该段的行统一用这个值当 key 的第一项。
@@ -69,8 +74,21 @@ DETACHED_HINT = ("══ 本班没排到位置：这一刻她不消耗也不回�
 # （实测「干员与心情」因此从 816px 涨到 1247px，超宽被裁）。口径说明都走这个值。
 HINT_WRAP = 700
 
+# 表格的**列定义**（表头与每一行共用，保证等宽对齐）：
+# `(标题, 宽度, 拉伸, 对齐)`。房间/段名那一列吃掉剩余宽度，其余定宽右对齐 → 数值列成一条线。
+TABLE_COLUMNS = (
+    ("房间", 15, True, "w"),
+    ("位次", 4, False, "center"),
+    ("干员", 0, True, "w"),        # 宽度 0 + 拉伸 = 占满中间
+    ("练度", 5, False, "center"),
+    ("心情", 7, False, "e"),
+    ("说明", 0, True, "w"),        # 「不在基建」那段的"她在别的班在哪"
+)
+
 # 滚轮的接线在 `ui/scroll.py`（本实例专属 bindtag；见那里的注释）
 ROW_PAD = 1
+#: 分组卡片上方的留白（让"每一间房"成为视觉上一块，而不是一长条流水）
+PAD_CARD_TOP = 6
 
 
 def split_names(text: str) -> List[str]:
@@ -176,6 +194,7 @@ class BatchMixin:
         self._detached_edited = False                # 用户动过名单没有（没动就不往结果里塞）
         self._detached_auto: List[str] = []
         self._rows: List[dict] = []                  # 行控件（结构没变时复用）
+        self._hover_row = None                       # 指针当前所在的行（悬停高亮）
         self._mood_vars: Dict[str, tk.StringVar] = {}
         # 「这一格刚才是我们写的什么值」——`_collect_moods` 靠它区分"用户改过"与"只是刷新过"
         self._shown: Dict[str, Optional[Decimal]] = {}
@@ -197,15 +216,21 @@ class BatchMixin:
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(8, 0))
 
         self._sync_facilities()          # 先把工作副本准备好（等级/容量区要用）
-        self._build_mood_bar()
-        self._build_level_bar()
-        self._build_op_bar()
-        self._build_table()
+        self._build_mood_bar()           # ① 心情区（行数固定）
+        self._build_level_bar()          # ② 房间等级区（**行数随房间数变**）
+        self._build_op_bar()             # ③ 干员区（固定）
+        # ⚠️ 表格**必须最后建**：它是唯一伸缩的一块，高度＝`PAGE_H` − 上面三块 − 报错行
+        #    （`_table_height()` 量的就是"已经建出来的兄弟控件总高"）。若放在等级区之前建，
+        #    量到的"已用高度"就少了整个等级区（多房间时最多差 ~200px）→ 整页超 `PAGE_H`
+        #    被裁、切页时窗口一跳（踩过）。
+        self._build_table()              # ④ 表格（吃掉剩余高度）
 
         self.err = tk.Label(self, text="", bg=theme.BG, fg=theme.DANGER, anchor="w",
                             justify="left", wraplength=HINT_WRAP,
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.err.pack(fill="x")
+        # 房间数一变（换排班 / 改等级）等级区行数就变 → 表格高度要跟着重算
+        self.bind("<Configure>", lambda _e: self._fit_table_height(), add="+")
         self._rebuild_rows()
 
     def _notify(self) -> None:
@@ -911,8 +936,45 @@ class BatchMixin:
 
     # ================================================================ 表格
     def _build_table(self) -> None:
+        """表格区 = **搜索栏 + 表头（固定）+ 可滚动主体**（三块共用一个列定义）。
+
+        为什么要表头与等宽列：以前每一行是自己 pack 出来的，数值列歪歪扭扭、也没有表头，
+        61 行看下来很累。现在列宽由 `TABLE_COLUMNS` 统一给（grid），表头写一次列名。
+        """
+        tk.Label(self, text="表格", bg=theme.BG, fg=theme.TEXT,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL, "bold")).pack(anchor="w",
+                                                                        padx=theme.PAD,
+                                                                        pady=(theme.PAD, 0))
+        bar = tk.Frame(self, bg=theme.BG)
+        bar.pack(fill="x", padx=theme.PAD)
+        tk.Label(bar, text="搜索", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+        self.filter = tk.StringVar(value="")
+        self.filter_box = ttk.Entry(bar, textvariable=self.filter, width=18)
+        self.filter_box.pack(side="left", padx=(6, 4))
+        self.filter.trace_add("write", lambda *_a: self._on_filter_change())
+        self.filter_box.bind("<Escape>", lambda _e: self.filter.set(""))
+        self.filter_note = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
+                                    font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.filter_note.pack(side="left", padx=(2, 0))
+        # ⚠️ 这一行别写长：工具栏的**自然宽度**会顶到设置中心的内容区（超了就被裁）。
+        #    实测超过 ~816px 就红（2026-09 踩过一次）。完整说明写进 documents/10-图形界面.md。
+        tk.Label(bar, text="滚轮＝3 行　Shift＝整页　Ctrl＝10 行　PgUp/PgDn＝翻页",
+                 bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="right")
+
         body = tk.Frame(self, bg=theme.BG)
-        body.pack(fill="both", expand=True, padx=theme.PAD)
+        body.pack(fill="both", expand=True, padx=theme.PAD, pady=(2, 0))
+        # 表头与主体**用同一套列定义**，因此天然对齐（表头不滚动，始终可见）
+        head = tk.Frame(body, bg=theme.HEADER_BG, highlightbackground=theme.BORDER,
+                        highlightthickness=1)
+        head.pack(fill="x")
+        self._setup_columns(head)
+        for ci, (title, width, _stretch, anchor) in enumerate(TABLE_COLUMNS):
+            tk.Label(head, text=title, bg=theme.HEADER_BG, fg=theme.MUTED,
+                     width=(width or 8), anchor=anchor, padx=4,
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL, "bold")
+                     ).grid(row=0, column=ci, sticky="ew", padx=1, pady=2)
         self.canvas = tk.Canvas(body, bg=theme.PANEL, highlightthickness=0,
                                 height=self._table_height(),
                                 highlightbackground=theme.BORDER)
@@ -927,6 +989,16 @@ class BatchMixin:
         # 滚轮：整个表格区域 + 行 + **滚动条本体**都能滚（见 ui/scroll.py）
         self.vs = VScroll(self.canvas, self.scroll, self.inner, win=self._win)
 
+    @staticmethod
+    def _setup_columns(frame: tk.Widget) -> None:
+        """给一行（或表头）配好列宽/拉伸（与 `TABLE_COLUMNS` 一一对应）。"""
+        frame.columnconfigure(1, minsize=30)
+        frame.columnconfigure(3, minsize=40)
+        frame.columnconfigure(4, minsize=52)
+        for ci, (_t, _w, stretch, _a) in enumerate(TABLE_COLUMNS):
+            if stretch:
+                frame.columnconfigure(ci, weight=1)
+
     def _table_height(self) -> int:
         """表格可视高度：显式给了就用它；`"auto"`（设置中心）就**吃掉内容区的剩余高度**。
 
@@ -937,8 +1009,28 @@ class BatchMixin:
             return int(self._table_h)
         self.update_idletasks()
         used = sum(w.winfo_reqheight() for w in self.winfo_children())
-        # 再留一点给"报错行 + 内边距"（它们在表格之后才建，这里量不到；实测 22px + 余量）
-        return max(TABLE_H_MIN, int(self._page_h) - used - 56)
+        # 再扣两块**量不到**的：① 报错行（在表格之后才建，留 30px 余量）；
+        # ② 表格区内部的搜索栏 + 表头（`TABLE_CHROME`）。见那两个常量的注释。
+        # 剩下多少就给表格多少 —— 房间特别多时（22 间 → 等级区 200px）真的没有余量了，
+        # 这时宁可表格矮一点（有滚动条，照样能用），也不要让整页顶出 `PAGE_H`（会被裁）。
+        return max(TABLE_H_MIN, int(self._page_h) - used - 30 - TABLE_CHROME)
+
+    def _fit_table_height(self) -> None:
+        """`"auto"` 模式下**重新按当前内容**给表格定高（换排班/改等级后房间数会变）。
+
+        ⚠️ 只在建的时候算一次是不够的：等级区的行数随房间数变（22 间房要 4 行 ≈ +200px），
+        固定高度会撑着整页超出 `PAGE_H`（内容被裁、切页时窗口跳）。所以面板每次尺寸变化
+        都重算一遍——高度算错也不会死循环（值不变就不 configure）。
+        """
+        if self._table_h is not None or not hasattr(self, "canvas"):
+            return
+        target = self._table_height()
+        try:
+            if int(self.canvas.cget("height")) != target:
+                self.canvas.configure(height=target)
+                self.vs.refresh(settle=False)
+        except (tk.TclError, ValueError):
+            pass
 
     def _sync_facilities(self) -> None:
         """把选中班次的布局拷成可改的形式。
@@ -996,28 +1088,89 @@ class BatchMixin:
         """房间显示名（用模型侧的 `display_name`，如"制造站#2"）。"""
         return self._schedule.shifts[self._shift_index].world.facilities[fac_index].display_name
 
-    def _row_plan(self) -> List[Tuple[int, int, str, str]]:
-        """表格要画哪些行 → `[(设施下标, 位次, 干员名, 房间名或 "")]`（房间名只在该组首行）。
+    def _room_header(self, fac_index: int) -> str:
+        """房间分组卡片的标题：`制造站#1 · Lv3 · 3/3 人`（人数按工作副本）。"""
+        fac = self._fac_names[fac_index]
+        ops = len([n for n in fac.get("operators", []) if n])
+        cap = self._slot_count(fac, fac_index)
+        return f"{self._room_name(fac_index)} · Lv{int(fac.get('level', 1))} · {ops}/{cap} 人"
 
-        最后一段是**「不在基建」**（`DETACHED_FI = -1`）：既不在工作设施、也不在宿舍的人，
-        每个一行（`位次` 只是行号，没有"位置"含义）。
+    #: 行计划里的三类行：房间分组标题 / 一个位置 / 一个「不在基建」的人
+    KIND_ROOM = "room"
+    KIND_SLOT = "slot"
+    KIND_BENCH = "bench"
+
+    def _row_plan(self) -> List[tuple]:
+        """表格要画哪些行 → `[(kind, 设施下标, 位次, 干员名, 标签)]`。
+
+        - `KIND_ROOM`：**房间分组卡片**（一行通栏，写 `制造站#1 · Lv3 · 3/3 人`）；
+        - `KIND_SLOT`：一个位置的干员（`设施下标` / `位次` 有意义）；
+        - `KIND_BENCH`：**「不在基建」那一段**的人（`设施下标 = DETACHED_FI`）。
         """
-        plan: List[Tuple[int, int, str, str]] = []
+        plan: List[tuple] = []
         for fi, fac in enumerate(self._fac_names):
             ops = list(fac.get("operators", []))
-            first = True
+            rows = []
             for si in range(self._slot_count(fac, fi)):
                 name = ops[si] if si < len(ops) else ""
                 if not name and not self.show_empty.get():
                     continue
-                plan.append((fi, si, name, self._room_name(fi) if first else ""))
-                first = False
+                rows.append((self.KIND_SLOT, fi, si, name, ""))
+            if not rows:
+                continue
+            plan.append((self.KIND_ROOM, fi, 0, "", self._room_header(fi)))
+            plan.extend(rows)
         detached = self._detached_all()
-        if detached:
-            plan.append((DETACHED_FI, 0, "", DETACHED_ROOM))     # 段首：写一次段名
-            for i, name in enumerate(detached):
-                plan.append((DETACHED_FI, i + 1, name, ""))
-        return plan
+        rows = [(self.KIND_BENCH, DETACHED_FI, i + 1, n, "") for i, n in enumerate(detached)]
+        rows = [r for r in rows if self._match_filter(r[3], "")]
+        if rows:
+            plan.append((self.KIND_ROOM, DETACHED_FI, 0, "", DETACHED_TITLE))
+            plan.extend(rows)
+        if not self._filter_text():
+            return plan
+        return [r for r in plan
+                if r[0] == self.KIND_ROOM
+                or self._match_filter(r[3], self._row_filter_label(r))]
+
+    # ---------------------------------------------------------------- 过滤
+    def _filter_text(self) -> str:
+        return (self.filter.get() if hasattr(self, "filter") else "").strip().lower()
+
+    def _match_filter(self, name: str, label: str = "") -> bool:
+        """这一行是否匹配搜索框（匹配**干员名**或**房间/说明**；空搜索=全匹配）。"""
+        q = self._filter_text()
+        if not q:
+            return True
+        return q in (name or "").lower() or q in (label or "").lower()
+
+    def _row_filter_label(self, row) -> str:
+        kind, fi, _si, _name, label = row
+        if kind == self.KIND_BENCH:
+            return f"{DETACHED_ROOM} {DETACHED_TITLE}"
+        return f"{label} {self._room_name(fi) if fi >= 0 else ''}"
+
+    def _visible_names(self) -> List[str]:
+        """搜索框过滤之后**还看得见**的干员（一键动作只作用于他们。
+
+        ⚠️ 不过滤的话，"搜了某人、点『全部 24』"会把看不见的人一起改掉——违反直觉。
+        """
+        return [r[3] for r in self._row_plan()
+                if r[0] in (self.KIND_SLOT, self.KIND_BENCH) and r[3]]
+
+    def _on_filter_change(self) -> None:
+        """搜索框输入 → 只重画表格（**不动心情状态**，所以不需要重算）。"""
+        self._collect_moods()
+        self._rebuild_rows()
+        self._sync_filter_note()
+
+    def _sync_filter_note(self) -> None:
+        if not hasattr(self, "filter_note"):
+            return
+        if not self._filter_text():
+            self.filter_note.configure(text="（空＝全部；输名字或房间名即过滤）")
+            return
+        n = len(self._visible_names())
+        self.filter_note.configure(text=f"匹配 {n} 人　（Esc 清空）")
 
     # ---------------------------------------------------------------- 练度缺省
     def _elite_of(self, name: str) -> int:
@@ -1043,10 +1196,7 @@ class BatchMixin:
         text = var.get().strip()          # "E0"/"E1"/"E2"
         self._elite[name] = int(text[1:]) if len(text) == 2 and text[1:].isdigit() else 2
         self._mark_dirty()                # 练度也要写回布局（否则这一班不会被提交）
-        for r in self._rows:
-            if r["op"].cget("text").startswith(name):
-                r["op"].configure(text=self._op_text(name))
-                break
+        self._repaint_op_names({name})
         self._notify()
 
     def _set_all_elite(self, elite: int) -> None:
@@ -1060,13 +1210,24 @@ class BatchMixin:
         self.err.configure(text=f"已把本班次全部干员设为 E{elite}（点「应用」才生效）")
         self._notify()
 
+    def _repaint_op_names(self, names=None) -> None:
+        """刷新"干员"那一列的显示名（练度角标变了就要跟着变）。
+
+        `names=None` = 全部；分组卡片行没有 `op` 控件，跳过。
+        """
+        wanted = None if names is None else set(names)
+        for r in self._rows:
+            op, who = r.get("op"), r.get("name")
+            if op is None or not who:
+                continue
+            if wanted is not None and who not in wanted:
+                continue
+            op.configure(text=self._op_text(who))
+
     def _refresh_elite_cells(self) -> None:
         for name, var in self._elite_vars.items():
             var.set(f"E{self._elite_of(name)}")
-        for r in self._rows:
-            op = r["op"].cget("text").split(" ")[0]
-            if op in self._elite:
-                r["op"].configure(text=self._op_text(op))
+        self._repaint_op_names(set(self._elite))
 
     def _op_spec(self, name: str):
         """写回场景的干员写法：满练（E2 且等级为缺省）就用纯名字，否则写成对象。
@@ -1086,74 +1247,162 @@ class BatchMixin:
     def _rebuild_rows(self) -> None:
         """按计划画表格；**结构没变就只换内容**（切班次/换人是最常见的路径，
         重建 50 行要 ~290ms，复用只要几毫秒——与看板 `_structure_signature` 同一套思路）。
+
+        三种行共用一套列定义（`TABLE_COLUMNS`）：
+
+        | 行 | 长什么样 |
+        |---|---|
+        | 房间分组卡片 | 通栏底色条：`制1 制造站 · Lv3 · 3/3 人` |
+        | 位置的干员 | `制造站#1 | 1 | 泡泡 | E2 | 24` |
+        | 「不在基建」的人 | 淡绿底：`不在基建 | 歌蕾蒂娅 | — | 24 | 其他班：2中 ×` |
         """
         plan = self._row_plan()
-        if [(p[0], p[1]) for p in plan] == [r["key"] for r in self._rows]:
+        sig = [(r[0], r[1], r[2]) for r in plan]
+        if sig == [r["key"] for r in self._rows]:
             self._fill_rows(plan)
+            self._sync_filter_note()
             return
         for w in self.inner.winfo_children():
             w.destroy()
         self._rows = []
-        for row_i, (fi, si, name, room) in enumerate(plan):
-            detached = fi == DETACHED_FI
-            header = detached and not name          # 「不在基建」的段首行
-            bg = theme.zebra(row_i)                     # 隔行底色：一行一行看得清
+        for row_i, (kind, fi, si, name, label) in enumerate(plan):
+            # 「房间分组卡片」＝ 通栏小标题行；「不在基建」的段首行也是通栏的
+            card = kind == self.KIND_ROOM
+            home_card = card and fi == DETACHED_FI
+            home = fi == DETACHED_FI                       # 「不在基建」那一段
+            bg = (theme.OK_SOFT if home else
+                  theme.PANEL_ALT if card else theme.zebra(row_i))
+            fg = theme.OK if card else theme.TEXT
             row = tk.Frame(self.inner, bg=bg)
-            row.pack(fill="x", padx=4, pady=ROW_PAD)
-            room_lbl = tk.Label(row, text=room, bg=bg,
-                                fg=(theme.OK if detached else theme.TEXT), width=11,
-                                anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL))
-            room_lbl.pack(side="left")
-            tk.Label(row, text="" if detached else f"{si + 1}", bg=bg, fg=theme.MUTED,
-                     width=3, anchor="w",
-                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
-            op = self._op_label(row, fi, si, name, bg=bg,
-                                detached_header=header)
-            op.pack(side="left", fill="x", expand=True)
-            entry = ttk.Entry(row, width=6)
-            elite = ttk.Combobox(row, state="readonly", width=3,
-                                 values=[f"E{i}" for i in range(3)])
-            elite.bind("<<ComboboxSelected>>", lambda _e, n=name: self._on_elite_change(n))
-            dash = tk.Label(row, text="—", bg=bg, fg=theme.MUTED, width=8,
-                            font=(theme.FONT_FAMILY, theme.FS_SMALL))
-            remove_btn = ttk.Button(row, text="×", width=2,
-                                    command=lambda n=name: self._undetach_operator(n))
-            if header:
-                # 段首那句口径：本班 vs 整段的区别（列少的地方挤一挤，但不改变列数）
-                tk.Label(row, text=DETACHED_HINT, bg=bg, fg=theme.MUTED, anchor="w",
-                         font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left",
-                                                                        padx=(6, 4))
-            self._rows.append({"key": (fi, si), "room": room_lbl, "op": op, "header": header,
-                               "entry": entry, "elite": elite, "dash": dash,
-                               "remove": remove_btn})
+            row.pack(fill="x", padx=4, pady=(PAD_CARD_TOP if card else ROW_PAD,
+                                             ROW_PAD))
+            self._setup_columns(row)
+            r = {"key": (kind, fi, si), "kind": kind, "bg": bg, "name": name, "op": None,
+                 "entry": None, "elite": None, "dash": None, "remove": None}
+            if card:
+                # 通栏卡片：`[粗体] 制1 制造站#1 · Lv3 · 3/3 人`（不在基建那段再补一句口径）
+                room_lbl = tk.Label(row, text=(f"{'不在基建' if home else self._fac_tag(fi)}"
+                                               f"　{label}"), bg=bg, fg=fg, anchor="w",
+                                    font=(theme.FONT_FAMILY, theme.FS_SMALL, "bold"))
+                room_lbl.grid(row=0, column=0, columnspan=len(TABLE_COLUMNS), sticky="w",
+                              padx=(2, 0))
+                if home_card:
+                    tk.Label(row, text=DETACHED_HINT, bg=bg, fg=theme.MUTED, anchor="w",
+                             font=(theme.FONT_FAMILY, theme.FS_SMALL)
+                             ).grid(row=1, column=0, columnspan=len(TABLE_COLUMNS),
+                                    sticky="w", padx=(2, 0))
+                r["room"] = room_lbl
+            else:
+                r["pos"] = tk.Label(row, text=(f"{si + 1}" if kind == self.KIND_SLOT else ""),
+                                    bg=bg, fg=theme.MUTED, width=TABLE_COLUMNS[1][1],
+                                    anchor=TABLE_COLUMNS[1][3],
+                                    font=(theme.FONT_FAMILY, theme.FS_SMALL))
+                r["pos"].grid(row=0, column=1, sticky="ew", padx=1)
+                r["op"] = self._op_label(row, fi, si, name, bg=bg)
+                r["op"].grid(row=0, column=2, sticky="ew", padx=1)
+                r["elite"] = ttk.Combobox(row, state="readonly", width=3,
+                                          values=[f"E{i}" for i in range(3)])
+                r["elite"].bind("<<ComboboxSelected>>",
+                                lambda _e, n=name: self._on_elite_change(n))
+                r["elite"].grid(row=0, column=3, sticky="ew", padx=1)
+                r["entry"] = ttk.Entry(row, width=6)
+                r["entry"].grid(row=0, column=4, sticky="ew", padx=1)
+                r["dash"] = tk.Label(row, text="—", bg=bg, fg=theme.MUTED, anchor="w",
+                                     font=(theme.FONT_FAMILY, theme.FS_SMALL))
+                r["remove"] = ttk.Button(row, text="×", width=2,
+                                         command=lambda n=name: self._undetach_operator(n))
+            self._bind_hover(row, r)
+            self._rows.append(r)
             self.vs.join(row)
         if not plan:
             tk.Label(self.inner, text="（这一班没有位置）", bg=theme.PANEL, fg=theme.MUTED,
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=6, pady=6)
+        elif not any(r["kind"] == self.KIND_SLOT for r in self._rows):
+            tk.Label(self.inner, text="（没有匹配的行 —— 清空搜索框可看全部）",
+                     bg=theme.PANEL, fg=theme.MUTED,
                      font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=6, pady=6)
         self._fill_rows(plan)
         if hasattr(self, "vs"):
             self.vs.refresh()          # 行数变了 → 重算滚动区间
         self.canvas.yview_moveto(0)
+        self._sync_filter_note()
+
+    def _fac_tag(self, fac_index: int) -> str:
+        """房间分组卡片左侧的短标记（`制1` / `宿3` / `中`…），与看板/全员一览同一套。"""
+        fac = self._schedule.shifts[self._shift_index].world.facilities[fac_index]
+        counts = sum(1 for f in self._schedule.shifts[self._shift_index].world.facilities
+                     if f.ftype == fac.ftype)
+        ordinal = 0
+        if counts > 1:
+            ordinal = 1 + len([f for f in self._schedule.shifts[self._shift_index]
+                               .world.facilities[:fac_index] if f.ftype == fac.ftype])
+        return facility_tag(fac, ordinal)
+
+    def _bind_hover(self, row: tk.Frame, r: dict) -> None:
+        """悬停高亮：指针在哪一行，那一行底色就变浅蓝（"我正指着哪一行"）。
+
+        ⚠️ 要绑**行和它的每个子控件**：指针从行移进子控件时，Tk 会先给行发 `<Leave>`、
+        再给子控件发 `<Enter>`；只绑行的话会闪一下。所以 `_unhover` 先问一句
+        "指针还在不在这一行的范围里"，在就不撤。
+        ⚠️ 程序化重建（销毁子控件）时 `winfo_containing` 会抛 TclError → 延后一帧执行。
+        """
+        if r["kind"] == self.KIND_BENCH:
+            return                              # 「不在基建」那段保持淡绿底，不做悬停
+        def enter(_e=None):
+            self._hover_row = row
+            self._paint_row(r, theme.HOVER)
+        def leave(_e=None):
+            if self._hover_row is row:
+                self._hover_row = None
+            row.after_idle(lambda: self._unhover(row, r))
+        widgets = [w for w in (row, r.get("room"), r.get("pos"), r.get("op"),
+                               r.get("elite"), r.get("entry"), r.get("dash"),
+                               r.get("remove")) if w is not None]
+        for w in widgets:
+            w.bind("<Enter>", enter, add="+")
+            w.bind("<Leave>", leave, add="+")
+
+    def _unhover(self, row: tk.Frame, r: dict) -> None:
+        """指针确实离开这一行了才撤回高亮。"""
+        try:
+            if not row.winfo_exists():
+                return
+            x, y = row.winfo_pointerxy()
+            left, top = row.winfo_rootx(), row.winfo_rooty()
+            if left <= x < left + row.winfo_width() and top <= y < top + row.winfo_height():
+                return                      # 指针还在这一行里（只是移到了子控件上）
+        except tk.TclError:
+            return
+        self._paint_row(r, r.get("bg") or theme.PANEL)
+
+    @staticmethod
+    def _paint_row(r: dict, bg: str) -> None:
+        """把一行（含它的子控件）刷成某个底色。"""
+        for key in ("room", "pos", "op", "dash"):
+            w = r.get(key)
+            if w is not None:
+                try:
+                    w.configure(bg=bg)
+                except tk.TclError:
+                    pass
 
     def _fill_rows(self, plan) -> None:
         """把计划写进行控件（心情输入框按干员名重新绑定，空位显示 —）。
 
-        「不在基建」那一段（`fi == DETACHED_FI`）没有练度下拉（练度对他们无意义），
-        换成一个「×」按钮：把她移出**显式**名单。
+        「不在基建」那一段（`kind == KIND_BENCH`）没有练度下拉（练度对他们无意义），
+        换成一个「×」按钮：把她移出**显式**名单；最后那列写"她在别的班在哪"。
         """
         self._mood_vars.clear()
         self._elite_vars.clear()
-        self._cells = [(fi, si) for fi, si, _n, _r in plan if fi != DETACHED_FI]
+        self._cells = [(fi, si) for kind, fi, si, _n, _l in plan if kind == self.KIND_SLOT]
         view_moods = self._view_moods()
-        for r, (fi, si, name, room) in zip(self._rows, plan):
-            detached = fi == DETACHED_FI
-            r["room"].configure(text=room)
+        for r, (kind, fi, si, name, label) in zip(self._rows, plan):
+            if kind == self.KIND_ROOM:
+                continue                       # 卡片标题在建的时候已经写好了
+            bench = kind == self.KIND_BENCH
             elite = self._elite_of(name) if name else 2
-            r["op"].configure(text=(DETACHED_TITLE if r.get("header") else self._op_text(name)),
-                              fg=(theme.TEXT if name else theme.MUTED),
-                              cursor=("arrow" if detached else "hand2"))
-            if not detached and r["op"].cget("text") != self._op_text(name):
-                r["op"].configure(text=self._op_text(name))
+            r["op"].configure(text=self._op_text(name), cursor="hand2",
+                              fg=(theme.TEXT if name else theme.MUTED))
             if name:
                 shown = view_moods.get(name, self._moods.get(name, MOOD_MAX))
                 shown = Decimal(str(shown))
@@ -1163,45 +1412,35 @@ class BatchMixin:
                 # ⚠️ 用 `_on_cell_write` 而不是直接 `_notify_later`：程序化刷新也会触发 write
                 var.trace_add("write", lambda *_a, n=name: self._on_cell_write(n))
                 r["entry"].configure(textvariable=var)
-                if not r["entry"].winfo_manager():
-                    r["entry"].pack(side="left", padx=(6, 4))
-                if detached:
-                    # 「不在基建」那一段：没有练度下拉（对她无意义），换成一个「×」；
-                    # `—` 列改成"她在别的班在哪"（本班没排到 ≠ 整份排班都不在基建）。
+                if bench:
+                    # 练度下拉收掉（对她无意义），换成「×」；末列写"她在别的班在哪"
                     if r["elite"].winfo_manager():
-                        r["elite"].pack_forget()
+                        r["elite"].grid_remove()
                     if not r["remove"].winfo_manager():
-                        r["remove"].pack(side="left", padx=(0, 4))
+                        r["remove"].grid(row=0, column=3, sticky="w", padx=1)
                     r["dash"].configure(text=(self._detached_elsewhere(name) or "—"))
                     if not r["dash"].winfo_manager():
-                        r["dash"].pack(side="left", padx=(6, 4))
+                        r["dash"].grid(row=0, column=5, sticky="ew", padx=1)
                 else:
-                    if r["dash"].winfo_manager():
-                        r["dash"].pack_forget()
                     if r["remove"].winfo_manager():
-                        r["remove"].pack_forget()
+                        r["remove"].grid_remove()
+                    if r["dash"].winfo_manager():
+                        r["dash"].grid_remove()
                     ev = tk.StringVar(value=f"E{elite}")        # 练度：决定技能能不能生效
                     self._elite_vars[name] = ev
                     r["elite"].configure(textvariable=ev)
                     if not r["elite"].winfo_manager():
-                        r["elite"].pack(side="left", padx=(0, 4))
+                        r["elite"].grid(row=0, column=3, sticky="ew", padx=1)
             else:
-                for w in ("entry", "elite", "remove"):
-                    if r[w].winfo_manager():
-                        r[w].pack_forget()
-                if not r["dash"].winfo_manager():
-                    r["dash"].pack(side="left", padx=(6, 4))
-
+                for key in ("entry", "elite", "remove", "dash"):
+                    if r[key].winfo_manager():
+                        r[key].grid_remove()
+                if not r["dash"].winfo_manager() and not bench:
+                    r["dash"].grid(row=0, column=5, sticky="ew", padx=1)
 
     def _op_label(self, row, fac_index: int, slot_index: int, name: str,
-                  bg: str = theme.PANEL, detached_header: bool = False) -> tk.Label:
-        """干员单元格：可点的文字（点开搜索窗换人 / 选人 / 清空）。
-
-        「不在基建」的**段首行**（`detached_header`）不是干员，只是段名 + 一句口径说明。
-        """
-        if detached_header:
-            return tk.Label(row, text=DETACHED_TITLE, bg=bg, fg=theme.OK, anchor="w",
-                            font=(theme.FONT_FAMILY, theme.FS_SMALL, "bold"))
+                  bg: str = theme.PANEL) -> tk.Label:
+        """干员单元格：可点的文字（点开搜索窗换人 / 选人 / 清空）。"""
         label = tk.Label(row, text=(name or "（空位 · 点这里选人）"), bg=bg,
                          fg=(theme.TEXT if name else theme.MUTED), anchor="w", cursor="hand2",
                          font=(theme.FONT_FAMILY, theme.FS_SMALL))

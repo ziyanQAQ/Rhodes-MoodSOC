@@ -24,6 +24,9 @@ DANGER = "#dc2626"
 DANGER_SOFT = "#fdecec"
 SHIFT_BAND = ("#f7f8fa", "#eef1f5")   # 班次交替底色（让"几班"一眼可辨）
 RED_FACE_BAND = "#fdecec"             # 红脸区间底色
+OK_SOFT = "#eefaf1"                   # 绿色的浅底（「不在基建」那一段、成功提示）
+HOVER = "#eaf1ff"                     # 指针所在行的悬停底色（表格里"我正指着哪一行"）
+HEADER_BG = "#eef1f5"                 # 表头底色
 
 # 心情 → 颜色（0 红脸 → 24 满）
 _MOOD_STOPS = (

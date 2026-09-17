@@ -691,6 +691,7 @@ class Session:
         traj = self.traj
         if self.schedule is None or traj is None:
             return []
+        bench = set(self.bench_names())          # 「不在基建」的人（含名单点名的）
         groups = []
         for k in range(max(1, cycles)):
             for i, shift in enumerate(self.schedule.shifts):
@@ -713,7 +714,15 @@ class Session:
                         continue
                     if mood >= MOOD_MAX:
                         continue
-                    cands.append((mood, name, fac.display_name if fac else "未排班"))
+                    # `where`：本班未排班的人分两种 —— 「不在基建」名单点名的、
+                    # 与"只是这一班没排到"的（后者可能在别的班上班，文案要区别开）
+                    if fac is not None:
+                        where = fac.display_name
+                    elif name in bench:
+                        where = "不在基建"
+                    else:
+                        where = "未排班"
+                    cands.append((mood, name, where))
                 if not cands:
                     continue
                 cands.sort(key=lambda row: (row[0], row[1]))

@@ -1,13 +1,16 @@
-"""ui/scroll.py —— 竖向滚动的**统一做法**（Canvas + Scrollbar + 滚轮）。
+"""ui/scroll.py —— 竖向滚动的**统一做法**（Canvas + Scrollbar + 滚轮 + 键盘）。
 
 界面里有几处"内容可能比可视区高"的表：看板、全员一览、干员与心情表、闲置入宿表。
-它们的滚动都要做对同样三件事：
+它们的滚动都要做对同样四件事：
 
 1. **滚轮只在指针位于这块表上时生效**——不能用 `bind_all`（那会抢走整个窗口的滚轮，
    悬停在曲线上滚一下看板也跟着滚，见 `documents/10-图形界面.md` §7.1）；
 2. **滚动条本体也要能滚**（鼠标停在滚动条上滚滚轮，人的预期是也可以滚）；
 3. **滚不动就别吃掉事件**——内容装得下时 `return None`，让事件继续传下去，
-   免得出现"滚了没反应"的错觉。
+   免得出现"滚了没反应"的错觉；
+4. **一次滚动要够快**（`UNITS_PER_NOTCH = 3` 行）：61 行的表按 1 行/格要从头滚到尾
+   60+ 次；3 行/格是"能快速上下浏览"的底线，再配 `Shift`（整页）/ `Ctrl`（10 行）
+   与 `PageUp/PageDown/Home/End`。
 
 做法是给这块表的控件挂一个**本实例专属的 bindtag**（`MoodVScroll<id>`），
 再用 `bind_class(那个 tag, "<MouseWheel>", ...)` 接事件。
@@ -21,6 +24,13 @@ from typing import Optional
 
 # 每实例一个 tag 的前缀（真正的 tag = 前缀 + id(self)）
 TAG_PREFIX = "MoodVScroll"
+
+#: 一次滚轮事件滚几行（**全局口径**：所有可滚动表共用）。
+#: 为什么是 3：1 行/格时 61 行的表要滚 60+ 次才到底（"滚不动"的体感），
+#: 3 行/格一次能看清跳了几行，又不会跳过内容。
+UNITS_PER_NOTCH = 3
+#: `Ctrl+滚轮` 的加速档（一次 10 行）
+FAST_UNITS = 10
 
 
 class VScroll:
@@ -42,13 +52,20 @@ class VScroll:
 
     def __init__(self, canvas: tk.Canvas, scrollbar: Optional[object] = None,
                  inner: Optional[tk.Widget] = None, win: Optional[int] = None,
-                 base_tag: str = TAG_PREFIX):
+                 base_tag: str = TAG_PREFIX, units_per_notch: int = UNITS_PER_NOTCH,
+                 keyboard: bool = True):
         self.canvas = canvas
         self.scrollbar = scrollbar
         self.inner = inner
         self.win = win                      # canvas.create_window(...) 的 item id
+        self.units_per_notch = max(1, int(units_per_notch))
         self.tag = f"{base_tag}{id(self)}"
         canvas.bind_class(self.tag, "<MouseWheel>", self.on_wheel)
+        if keyboard:
+            # 键盘也能滚（鼠标停在表上就能用，不必先点一下）：整页 / 首尾
+            for seq, handler in (("<Prior>", self.page_up), ("<Next>", self.page_down),
+                                 ("<Home>", self.to_top), ("<End>", self.to_bottom)):
+                canvas.bind_class(self.tag, seq, handler)
         # 内容高度变化 → 刷新滚动区间（调用方也可以自己绑，这里是兜底）
         if inner is not None:
             inner.bind("<Configure>", lambda _e: self.refresh(settle=False), add="+")
@@ -110,25 +127,86 @@ class VScroll:
 
     @staticmethod
     def _steps(event) -> int:
-        """一次滚轮事件该滚几格（Windows 是 ±120 的倍数；X11 用 Button-4/5）。"""
+        """一次滚轮事件的方向与格数（Windows 是 ±120 的倍数；X11 用 Button-4/5）。"""
         delta = getattr(event, "delta", 0) or 0
         if delta:
             return -int(delta / 120) or (1 if delta > 0 else -1)
         num = getattr(event, "num", 0)
         return -1 if num == 4 else (1 if num == 5 else 0)
 
+    def _units(self, event) -> int:
+        """这次要滚几行：默认 `units_per_notch` 行；`Shift` = 整页；`Ctrl` = `FAST_UNITS` 行。
+
+        `Shift` 优先于 `Ctrl`（两者都按住时按"整页"理解，页比 10 行更符合直觉）。
+        """
+        steps = self._steps(event)
+        if not steps:
+            return 0
+        state = getattr(event, "state", 0) or 0
+        if state & 0x0001:                       # Shift
+            return self._page_lines() * (1 if steps > 0 else -1)
+        if state & 0x0004:                       # Control
+            return FAST_UNITS * (1 if steps > 0 else -1)
+        return steps * self.units_per_notch
+
+    def _page_lines(self) -> int:
+        """一屏大约几行（拿可视高度除以单行高度；算不出来就退回 10）。"""
+        row_h = self._row_height()
+        try:
+            visible = max(self.canvas.winfo_height(), 1)
+        except tk.TclError:
+            visible = 1
+        return max(3, visible // max(row_h, 1) - 1)
+
+    def _row_height(self) -> int:
+        """单行高度（取内层第一个子控件；取不到就当 24px）。"""
+        if self.inner is None:
+            return 24
+        try:
+            kids = self.inner.winfo_children()
+            if kids:
+                return max(kids[0].winfo_reqheight(), 1)
+        except tk.TclError:
+            pass
+        return 24
+
     def on_wheel(self, event):
         """滚轮处理：滚不动就**不吃事件**（返回 None）。"""
         if self.fits():
             return None
-        steps = self._steps(event)
-        if not steps:
+        units = self._units(event)
+        if not units:
             return None
+        return self._scroll_lines(units)
+
+    def _scroll_lines(self, lines: int):
+        """按**行**滚（而不是按像素）：滚起来"一格一格"，视觉稳。"""
         try:
-            self.canvas.yview_scroll(steps, "units")
+            self.canvas.yview_scroll(int(lines), "units")
+        except tk.TclError:
+            return None
+        return "break"
+
+    # ------------------------------------------------------------------ 键盘
+    def page_up(self, _event=None):
+        return self._scroll_lines(-self._page_lines())
+
+    def page_down(self, _event=None):
+        return self._scroll_lines(self._page_lines())
+
+    def to_top(self, _event=None):
+        try:
+            self.canvas.yview_moveto(0.0)
+        except tk.TclError:
+            return None
+        return "break"
+
+    def to_bottom(self, _event=None):
+        try:
+            self.canvas.yview_moveto(1.0)
         except tk.TclError:
             return None
         return "break"
 
 
-__all__ = ["VScroll", "TAG_PREFIX"]
+__all__ = ["VScroll", "TAG_PREFIX", "UNITS_PER_NOTCH", "FAST_UNITS"]
