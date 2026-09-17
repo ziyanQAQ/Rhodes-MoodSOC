@@ -191,6 +191,110 @@ class Test整周期轨迹快照(unittest.TestCase):
         self.assertGreater(q(s.mood_at("泡泡", D("24"))), q(s.mood_at("泡泡", D("12"))))
 
 
+class Test不在基建(unittest.TestCase):
+    """**「不在基建」的人**（既不在工作设施、也不在宿舍）：平线 + 不参与技能计数。
+
+    他们由两处产生：
+      - **自动**：整个排班都没排到位置的人，或"某一班没排到"的人（面板那一段会自动列）；
+      - **显式**：场景 JSON 顶层 `"detached": [...]`（名单里的人）。
+    数值上他们**心情整段恒定**（不消耗也不回复），且**不进任何技能计数**
+    （计数读的是 `world.facilities` 里的进驻者）。
+    """
+
+    LAYOUT = {"facilities": [
+        {"type": "控制中枢", "level": 5, "operators": ["玛恩纳", "重岳", "维什戴尔",
+                                                      "路人1", "路人2"]},
+        {"type": "制造站", "level": 3, "operators": ["泡泡", "黍", "路人甲"]},
+    ], "detached": ["板凳甲", "板凳乙"]}
+
+    def test_名单里的图线是平线且心情可设(self):
+        s = Session()
+        s.load_layout(self.LAYOUT)
+        self.assertEqual(s.bench_names(), ["板凳甲", "板凳乙"])
+        self.assertIn("板凳甲", s.traj.names)
+        s.set_initial_mood("板凳甲", 7)
+        s.recompute()
+        for t in (0, 6, 12, 24, 48):
+            self.assertEqual(q(s.mood_at("板凳甲", D(t))), D("7"), f"@{t}")
+        self.assertEqual(s.rate_at("板凳甲", D(12)), D("0"))
+
+    def test_不影响别人(self):
+        """加/不加「不在基建」名单，**其它人的数值一字不变**（含技能计数类技能）。"""
+        with_bench = Session()
+        with_bench.load_layout(self.LAYOUT)
+        without = Session()
+        plain = dict(self.LAYOUT)
+        plain.pop("detached")
+        without.load_layout(plain)
+        for name in ("泡泡", "黍", "路人甲", "路人1", "玛恩纳"):
+            for t in (D("0"), D("8"), D("24")):
+                self.assertEqual(q(with_bench.mood_at(name, t)), q(without.mood_at(name, t)),
+                                 f"{name}@{t}")
+        # 净速率也一样（重岳「孤光共照」按"岁"计数：板凳上的人不该被数进去）
+        for name in ("泡泡", "玛恩纳"):
+            self.assertEqual(with_bench.rate_at(name, D(0)), without.rate_at(name, D(0)), name)
+
+    def test_不在基建的人不进基建计数(self):
+        """把一个人放到「不在基建」= **同时从进驻位上摘下来**，于是不再被任何计数数到。"""
+        s = Session()
+        s.load_layout({"facilities": [
+            {"type": "控制中枢", "level": 5,
+             "operators": ["陈", "星熊", "诗怀雅", "路人1", "路人2"]},
+        ]})
+        before = s.rate_at("陈", D(0))          # 龙门近卫局 3 人 → 中枢全体回复 0.15
+        s.add_detached("路人1")                 # 默认连位置一起摘
+        after = s.rate_at("陈", D(0))
+        self.assertEqual(s.bench_names(), ["路人1"])
+        # 中枢只剩 4 人：减免从 0.25 降到 0.20，且陈的「德才兼备」仍按 3 名龙门算 → 速率变了
+        self.assertNotEqual(before, after)
+        # 摘下来的人不再出现在任何房间的进驻列表里（count_of_type/base_operators 也数不到）
+        world = s.schedule.shifts[0].world
+        self.assertIsNone(world.facility_of("路人1"))
+        self.assertNotIn("路人1", [o.name for o in world.base_operators()])
+        self.assertEqual(q(s.mood_at("路人1", D(12))), q(s.mood_at("路人1", D(0))))
+
+    def test_JSON往返(self):
+        """导出场景 → 再导入：`detached` 原样回来（键与 `facilities` 同层、向后兼容）。"""
+        from api.ops import handle
+        s = Session()
+        handle(s, "load_schedule", {"facilities": [
+            {"type": "制造站", "level": 3, "operators": ["泡泡"]}],
+            "detached": ["板凳甲"]})
+        ex = handle(s, "export_schedule")
+        scenario = ex["shifts"][0]["scenario"]
+        self.assertEqual(scenario["detached"], ["板凳甲"])
+        s2 = Session()
+        handle(s2, "load_schedule", scenario)
+        self.assertEqual(s2.bench_names(), ["板凳甲"])
+        self.assertIn("板凳甲", s2.operator_names())
+
+    def test_老文件没有这个键(self):
+        """**向后兼容**：场景 JSON 里没有 `detached` ⇒ 空名单，一切照旧。"""
+        s = Session()
+        s.load_layout({"facilities": [
+            {"type": "制造站", "level": 3, "operators": ["泡泡", "黍", "路人甲"]}]})
+        self.assertEqual(s.detached, [])
+        self.assertEqual(s.bench_names(), [])          # 全员都在岗 → 没有"不在基建"的人
+        self.assertEqual(s.not_in_shift(0), [])
+
+    def test_某班没排到的人自动算不在基建(self):
+        """多班里"本班没排到位置"的人，被 `not_in_shift` 自动列出（界面那一段的来源）。"""
+        from store.schedule import Schedule, Shift
+        shifts = [
+            Shift("A", D("12"), [{"type": "制造站", "level": 3,
+                                  "operators": ["泡泡", "黍", "路人甲"]}]),
+            Shift("B", D("12"), [{"type": "制造站", "level": 3,
+                                  "operators": ["泡泡", "黍", "路人乙"]}]),
+        ]
+        s = Session()
+        s.schedule = Schedule(shifts, D("24"))
+        s.recompute()
+        self.assertEqual(s.not_in_shift(0), ["路人乙"])     # 第 1 班缺路人乙
+        self.assertEqual(s.not_in_shift(1), ["路人甲"])     # 第 2 班缺路人甲
+        # 两个班都不在的人（显式名单）才算"整份排班的不在基建"
+        self.assertEqual(s.bench_names(), [])
+
+
 class Test三条路同数(unittest.TestCase):
     """引擎直调 / Session / api op —— 三条路的数值必须逐位相同。"""
 

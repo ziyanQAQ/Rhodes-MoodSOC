@@ -135,6 +135,93 @@ class Test批量设置(unittest.TestCase):
         dlg = self._open(0, moods={"塞雷娅": Decimal("6")})
         self.assertEqual(dlg._mood_vars["塞雷娅"].get(), "6")
 
+    # ------------------------------------------------------------- 不在基建
+    def test_不在基建那一段自动列出本班未排班的人(self):
+        """「不在基建」段 = 全排班人员 − **本班次在岗的人**；每行都给得出心情、可改。"""
+        from ui.batch import DETACHED_FI, DETACHED_ROOM
+
+        app = self.app
+        dlg = self._open(0)
+        shift = app.schedule.shifts[0]
+        auto = dlg._detached_all()
+        self.assertEqual(set(auto), set(app.schedule.operator_names()) - set(shift.operators))
+        # 段首那一行写段名，后面每人一行
+        keys = [r["key"] for r in dlg._rows]
+        self.assertEqual(keys[-len(auto) - 1], (DETACHED_FI, 0))
+        self.assertEqual(dlg._rows[-len(auto) - 1]["room"].cget("text"), DETACHED_ROOM)
+        # 这些人在表格里能改心情（写的是**周期起点**）
+        name = auto[0]
+        dlg._mood_vars[name].set("9")
+        app.update()
+        dlg._collect_moods()
+        self.assertEqual(dlg._moods[name], Decimal("9"))
+
+    def test_走人不占位置(self):
+        """「不在基建」的人**不占进驻位**：段里的行没有位次号、也不进 `_cells`。"""
+        from ui.batch import DETACHED_FI
+
+        dlg = self._open(0)
+        self.assertTrue(all(fi != DETACHED_FI for fi, _si in dlg._cells))
+
+    def test_添加干员把它移出位置并写进名单(self):
+        """「＋ 添加干员…」的效果：从所有班次的位置上摘下来 + 进「不在基建」名单。
+
+        这里直接调 `_detach_operator`（等价于点完搜索窗选人的结果），不走模态框。
+        """
+        app = self.app
+        dlg = self._open(0)
+        who = app.schedule.shifts[0].operators[0]          # 本班在岗的一个人
+        dlg._detach_operator(who)
+        self.assertIn(who, dlg._detached)
+        self.assertTrue(dlg._detached_edited)
+        # 本班的工作副本里已经没有他了
+        self.assertNotIn(who, [n for f in dlg._fac_names for n in f.get("operators", [])])
+        self.assertIn(who, dlg._detached_all())
+        # 收结果 → 落地 → 会话的名单也更新了
+        changes, _m, _e, detached = dlg.value()
+        app.apply_batch(changes, _m, _e, detached)
+        app.update()
+        self.assertIn(who, app.detached)
+
+    def test_移除按钮把它移出名单(self):
+        """行尾「×」＝移出**显式**名单（位置不自动恢复，提示会说明这一点）。"""
+        app = self.app
+        dlg = self._open(0)
+        who = app.schedule.shifts[0].operators[0]
+        dlg._detach_operator(who)
+        self.assertIn(who, dlg._detached)
+        dlg._undetach_operator(who)
+        self.assertNotIn(who, dlg._detached)
+        self.assertTrue(dlg._detached_edited)
+
+    def test_没动过名单就不覆盖(self):
+        """`detached` 只有用户**动过**才交出去（`None` = 别抹掉导入带来的名单）。"""
+        dlg = self._open(0)
+        self.assertIsNone(dlg.value()[3])
+        dlg._detach_operator(self.app.schedule.shifts[0].operators[0])
+        self.assertIsNotNone(dlg.value()[3])
+
+    def test_切换班次时自动名单跟着变(self):
+        """干员列跟着「时刻/班次」走 → 「不在基建」那一段也要跟着换。"""
+        app = self.app
+        dlg = self._open(0)
+        first = set(dlg._detached_all())
+        dlg._set_view(1, app.schedule.starts[1])          # 挪到第 2 班
+        app.update()
+        second = set(dlg._detached_all())
+        self.assertNotEqual(first, second)
+        self.assertEqual(second,
+                         set(app.schedule.operator_names())
+                         - set(app.schedule.shifts[1].operators))
+
+    def test_不加名单时数值一字不变(self):
+        """只"看得见"不算改动：打开面板不动任何东西 ⇒ 起点心情差集为空。"""
+        dlg = self._open(0)
+        changes, moods, events, detached = dlg.value()
+        self.assertEqual(moods, {})
+        self.assertEqual(events, [])
+        self.assertIsNone(detached)
+
     # ------------------------------------------------------------- 心情批量
     def test_全部满心情与全部零(self):
         """两个一键：全部 24 / 全部 0 → 覆盖**整个排班**的干员（不只当前班次）。"""

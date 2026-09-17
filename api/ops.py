@@ -149,21 +149,37 @@ def op_operator_names(session: Session, args: dict) -> dict:
 
 
 def op_operator_detail(session: Session, args: dict) -> dict:
-    """某人的详情：所在房间、练度、解锁的心情技能数、此刻速率/心情。"""
+    """某人的详情：所在房间、练度、解锁的心情技能数、此刻速率/心情。
+
+    「不在基建」的人（既不在工作设施、也不在宿舍）也查得到：`in_base=false`、
+    `facility=null`、速率 0、心情恒等于起点值（见 `set_detached`）。
+    """
     _require_session(session)
     name = args.get("name")
     _require(name=name)
     idx = int(args.get("shift_index", 1)) - 1
     idx = min(max(idx, 0), len(session.shifts()) - 1)
+    t = parse_time(args.get("at", 0), session.schedule.cycle_hours)
     op = session.operator_obj(name, idx)
     if op is None:
-        raise ValueError(f"排班里没有干员「{name}」")
+        if name not in session.operator_names():
+            raise ValueError(f"排班里没有干员「{name}」"
+                             f"（也不在「不在基建」名单里；要加请用 set_detached）")
+        return {
+            "name": name, "in_base": False, "facility": None,
+            "detached": True, "elite": None, "level": None,
+            "skills_unlocked": 0, "skills_locked": [], "training_text": "",
+            "mood": _num(session.mood_at(name, t)), "rate": 0,
+            "red_face_spans": [],
+            "note": "既不在工作设施、也不在宿舍：心情整段不变，不参与任何技能计数",
+        }
     fac = session.shifts()[idx].world.facility_of(name)
     from mood_soc.rules import mood_skill_summary
     unlocked, locked = mood_skill_summary(op)
-    t = parse_time(args.get("at", 0), session.schedule.cycle_hours)
     return {
         "name": name,
+        "in_base": fac is not None,
+        "detached": False,
         "facility": fac.display_name if fac else None,
         "elite": op.elite,
         "level": op.level,
@@ -549,8 +565,9 @@ def op_set_detached(session: Session, args: dict) -> dict:
     """**「不在基建」名单**（既不在工作设施、也不在宿舍的干员）。
 
     - `names`（必需）：整份替换的名单数组（`[]` = 清空）；支持 `{"name": "某人"}` 写法；
-    - `add` / `remove`：增量写法（可选，与 `names` 二选一）；
-    - `with_moods`：顺便把 `moods` 里的心情设成**周期起点**值：
+    - `add` / `remove`：增量写法（可选，与 `names` 二选一）——
+      `add` 默认**连位置一起摘**（`remove_from_slots` 可关）；
+    - `moods`：顺便把这些人的心情设成**周期起点**值：
       `{"names": ["某人"], "moods": {"某人": 12}}`。
 
     语义：这些人在整条轨迹里**心情恒定**（净速率 0），且**不参与任何技能计数**
@@ -564,7 +581,8 @@ def op_set_detached(session: Session, args: dict) -> dict:
         session.set_detached([n.get("name") if isinstance(n, dict) else n for n in names])
     if args.get("add"):
         for n in (args["add"] if isinstance(args["add"], (list, tuple)) else [args["add"]]):
-            session.add_detached(n.get("name") if isinstance(n, dict) else n)
+            session.add_detached(n.get("name") if isinstance(n, dict) else n,
+                                 remove_from_slots=args.get("remove_from_slots", True))
     if args.get("remove"):
         for n in (args["remove"] if isinstance(args["remove"], (list, tuple)) else [args["remove"]]):
             session.remove_detached(n.get("name") if isinstance(n, dict) else n)

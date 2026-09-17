@@ -223,6 +223,9 @@ class Schedule:
     cycle_hours: Decimal = DEFAULT_CYCLE_HOURS
     start_clock: Decimal = ZERO
     detached: List[str] = field(default_factory=list)
+    #: 内部用：`True` = `detached` 是**权威值**，别把各班 Shift 上的旧名单并回来。
+    #: （`with_detached()` 用它实现"清空名单"；外部构造时不要传。）
+    _detached_authoritative: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self):
         if not self.shifts:
@@ -237,12 +240,15 @@ class Schedule:
         if total != self.cycle_hours:
             raise ValueError(f"各班长之和 {total}h ≠ 周期 {self.cycle_hours}h"
                              f"（改班次时长或改周期，两者必须相等）")
-        # ——「不在基建」名单归一化：整份排班共用一份（各班的并集，保序去重）——
+        # ——「不在基建」名单归一化：整份排班共用一份 ——
+        # 权威值（`with_detached` 给的，含"清空"）直接用；否则把各班的旧名单并进来
+        # （导入路径：名单可能挂在任何一个班次上）。
         merged: List[str] = [str(n) for n in (self.detached or [])]
-        for s in self.shifts:
-            for n in (s.detached or []):
-                if n not in merged:
-                    merged.append(n)
+        if not self._detached_authoritative:
+            for s in self.shifts:
+                for n in (s.detached or []):
+                    if n not in merged:
+                        merged.append(n)
         self.detached = merged
         for s in self.shifts:
             s.detached = list(merged)
@@ -349,9 +355,19 @@ class Schedule:
         return Schedule(new, self.cycle_hours, self.start_clock, list(self.detached))
 
     def with_detached(self, names: Sequence[str]) -> "Schedule":
-        """改「不在基建」名单（返回新的 Schedule；各班的副本同步更新）。"""
-        return Schedule(copy.deepcopy(self.shifts), self.cycle_hours, self.start_clock,
-                        [str(n) for n in (names or [])])
+        """改「不在基建」名单（返回新的 Schedule；各班的副本同步更新）。
+
+        ⚠️ 传进去的名单是**权威值**（`[]` 就是清空）：`__post_init__` 默认会把各班
+        Shift 上的旧名单并回来，所以这里要 `_detached_authoritative=True` ——
+        否则"清空名单"会被无声地撤销（踩过）。
+        """
+        new = [Shift(label=s.label, hours=s.hours, facilities=copy.deepcopy(s.facilities),
+                     source=s.source, entry_events=s.entry_events,
+                     initial_global=dict(getattr(s, "initial_global", {}) or {}),
+                     detached=[])
+               for s in self.shifts]
+        return Schedule(new, self.cycle_hours, self.start_clock,
+                        [str(n) for n in (names or [])], _detached_authoritative=True)
 
     def entry_config(self):
         """本排班的进驻事件配置（取第一个班次的；MAA 排班没有则为默认值）。"""

@@ -186,6 +186,45 @@ class Test全流程(unittest.TestCase):
         self.assertEqual(set(call(s2, "describe")["operators"]),
                          set(call(self.s, "describe")["operators"]))
 
+    def test_不在基建名单(self):
+        """`set_detached` / `bench_names`：既不在工作设施、也不在宿舍的人。
+
+        语义：轨迹里**一条平线**（心情恒定）、**不占进驻位**、不参与任何技能计数；
+        `moods` / `trajectory` 里照样能看到他们。
+        """
+        d = call(self.s, "set_detached", names=["板凳甲"], moods={"板凳甲": 11})
+        self.assertEqual(d["detached"], ["板凳甲"])
+        self.assertEqual(d["detached_explicit"], ["板凳甲"])
+        self.assertEqual(call(self.s, "bench_names")["detached"], ["板凳甲"])
+        # 平线：三个时刻都是 11
+        moods = call(self.s, "moods", at=[0, 12, 24])["moods"]
+        for key in ("0", "12", "24"):
+            self.assertEqual(moods[key]["板凳甲"], 11, key)
+        # 曲线里也有他（一条平线），速率 0
+        traj = call(self.s, "trajectory")
+        self.assertIn("板凳甲", traj["operators"])
+        self.assertEqual(set(traj["operators"]["板凳甲"]), {11})
+        self.assertEqual(call(self.s, "operator_detail", name="板凳甲")["rate"], 0)
+        # 清空**名单**：`detached_explicit` 为空、`bench_names` 也空了
+        # （她本来就没占任何位置，所以清了名单之后她就跟"从没排过班的人"一样了）
+        self.assertEqual(call(self.s, "set_detached", names=[])["detached_explicit"], [])
+        self.assertEqual(call(self.s, "bench_names")["detached"], [])
+        self.assertEqual(call(self.s, "moods", at=[12])["moods"]["12"].get("板凳甲"), None)
+
+    def test_不在基建的人从位置摘下来(self):
+        """`add` 默认连位置一起摘（否则她其实还在岗，与"不在基建"矛盾）。"""
+        call(self.s, "set_detached", add=["泡泡"])
+        d = call(self.s, "describe")
+        stationed = [n for s in d["shifts"] for f in s["facilities"] for n in f[2]]
+        self.assertNotIn("泡泡", stationed)
+        self.assertIn("泡泡", d["detached"])
+
+    def test_导出带去不在基建(self):
+        call(self.s, "set_detached", names=["板凳甲"])
+        ex = call(self.s, "export_schedule")
+        self.assertEqual(ex["shifts"][0]["scenario"]["detached"], ["板凳甲"])
+        self.assertEqual(ex["detached"], ["板凳甲"])
+
     def test_按文件载入四种格式(self):
         for op, args in (("load_file", {"path": str(MAA_SAMPLE)}),):
             s = Session()

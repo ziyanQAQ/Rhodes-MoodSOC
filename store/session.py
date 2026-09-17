@@ -300,12 +300,34 @@ class Session:
             self.schedule = self.schedule.with_detached(out)
             self._sync_from_schedule()      # 名单也写回每班的 Shift/world
 
-    def add_detached(self, name: str) -> bool:
-        """把某人加进「不在基建」名单（已在名单里返回 False）。"""
+    def add_detached(self, name: str, remove_from_slots: bool = True) -> bool:
+        """把某人加进「不在基建」名单（已在名单里返回 False）。
+
+        `remove_from_slots=True`（默认）时**同时把他从所有班次的进驻位上摘下来** ——
+        留在位置上她其实在岗（有消耗、会被"基建内每有 1 名 XX"数到），与"不在基建"矛盾。
+        摘位置时会重建 Schedule 并重算。
+        """
         name = str(name or "").strip()
         if not name or name in self.detached:
             return False
-        self.set_detached(self.detached + [name])
+        if remove_from_slots:
+            changed = False
+            for i in range(len(self.shifts())):
+                facs = self.facilities_of(i)
+                hit = False
+                for f in facs:
+                    ops = [n for n in f.get("operators", []) if n != name]
+                    if len(ops) != len(f.get("operators", [])):
+                        hit = True
+                        f["operators"] = ops
+                if hit:
+                    self.schedule = self.schedule.replaced_shift(i, facs)
+                    changed = True
+            self.set_detached(list(self.detached) + [name])
+            if changed:
+                self.recompute()
+            return True
+        self.set_detached(list(self.detached) + [name])
         return True
 
     def remove_detached(self, name: str) -> bool:

@@ -779,7 +779,15 @@ class BatchMixin:
                 self._draft[i] = facs
                 moved += 1
         self._collect_moods()
-        self._set_detached_names(list(self._detached) + [name])
+        self._detached = list(dict.fromkeys(list(self._detached) + [name]))
+        self._detached_edited = True
+        # ⚠️ 工作副本里也要跟着摘掉：`_sync_detached` 是"看布局"算自动名单的，
+        #    不摘的话她明明已经在名单里、却仍被当成"本班在岗"（于是上面那段还画着她）。
+        if self._shift_index in self._draft:
+            self._fac_names = self._draft[self._shift_index]
+        self._sync_detached()
+        self._rebuild_rows()
+        self._notify()
         self.err.configure(text=f"已把 {name} 移到「不在基建」"
                                 + (f"（并从 {moved} 个班次的位置上摘下）" if moved else "")
                                 + "；她的心情整段不变")
