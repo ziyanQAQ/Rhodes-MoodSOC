@@ -47,8 +47,9 @@ SAMPLE = MAA_SAMPLE          # 冷启动自载的示例排班（`data/resources/
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
 
 # 注：「宿舍01」↔ `IdleToDormEntry.dorm` 的翻译、以及 `IdleToDormEntry` → 下拉标签，
-#     都已搬到 `store/session.py`（`_dorm_index_of` / `_idle_label_of`）—— 那是**语义**，
-#     程序接口也要用同一套；界面只负责把标签画进下拉框。
+#     语义在 `store/session.py`（`_dorm_index_of` / `_idle_label_of`）——程序接口要用同一套；
+#     这里只 re-export 供界面与测试按老名字取用。
+from store.session import _dorm_index_of, _idle_label_of  # noqa: E402,F401
 
 # 播放速度：单位是 **模拟秒 / 真实秒（s/s）** —— `1x` 就是实时（1 秒推进 1 模拟秒）。
 # 24h 周期在 1x 下要放 24 小时，所以档位往上给到"4 小时/秒"（＝14400x）。
