@@ -124,6 +124,7 @@ class MoodSocApp(tk.Tk):
         self._play_last = 0.0
         self._last_refresh = 0.0
         self._roster_dirty = False
+        self._roster_names: list = []     # 「全员一览」当前画的是哪些干员（没变就不重建）
 
         self._init_style()
         self._build_toolbar()
@@ -494,7 +495,12 @@ class MoodSocApp(tk.Tk):
         if fit_slider or self.current_t > total:
             self.current_t = Decimal("0")
         self.scale.configure(to=float(total))
-        self.roster.set_operators(self.traj.names)
+        # 「全员一览」的芯片很贵（重建 57 个 ≈ 127ms），而"改一格心情"根本不影响干员集合：
+        # 集合没变就只换练度角标，不重建芯片（否则每次编辑都白花 127ms）。
+        names = list(self.traj.names)
+        if names != self._roster_names:
+            self.roster.set_operators(names)
+            self._roster_names = names
         self.roster.set_badges(self._elite_badges())
         self._refresh_layout()
         self._sync_operator_box()
@@ -896,6 +902,11 @@ class MoodSocApp(tk.Tk):
         self.initial_moods = dict(moods)
         self.mood_events = list(mood_events or ())
         self._layout_sig = None
+        # 整周期重算是同步的（实测 0.23~1.2s）：先把"在算什么"写出来再算，
+        # 否则点了「全部满心情」这种大动作会像卡死。
+        self.status.configure(text="正在重算…（设置已改动，周期数 "
+                                   f"{self.cycles}）")
+        self.update_idletasks()
         self.recompute()
         which = ("第 " + "、".join(str(i + 1) for i in sorted(changes)) + " 班"
                  if changes else "未改动布局")

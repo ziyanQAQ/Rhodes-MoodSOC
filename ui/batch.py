@@ -54,6 +54,8 @@ LEVEL_NAME_W = 9        # 房间名那一列的字符宽（如「制造站#1」�
 LEVEL_GAP = 14
 # 表格可视高度的下限（自动模式下再挤也要留这么多）
 TABLE_H_MIN = 160
+# 心情输入的防抖（毫秒）：一次落地＝宿主那边一整轮重算（0.23~1.2s），别设得太短
+NOTIFY_DEBOUNCE_MS = 500
 
 # 滚轮的接线在 `ui/scroll.py`（本实例专属 bindtag；见那里的注释）
 ROW_PAD = 1
@@ -152,6 +154,7 @@ class BatchMixin:
         self._shown: Dict[str, Optional[Decimal]] = {}
         self._cells: List[Tuple[int, int]] = []      # 表格里的 (设施下标, 位次)
         self._notify_job = None                      # 心情输入的防抖任务（改动即时生效用）
+        self._last_sent: Optional[str] = None        # 上次通知出去的结果（一样就不再通知）
 
         head = tk.Frame(self, bg=theme.BG)
         head.pack(fill="x", pady=(0, 2))
@@ -178,7 +181,12 @@ class BatchMixin:
         self._rebuild_rows()
 
     def _notify(self) -> None:
-        """改动 → 通知宿主（设置中心＝立即生效；独立对话框没有回调）。"""
+        """改动 → 通知宿主（设置中心＝立即生效）。
+
+        ⚠️ **结果与上次一模一样就不再通知**：宿主那边一次通知＝一整轮重算
+        （实测 cycles=1 约 230ms、周期数 3 约 1.2s）。"改回原值""连点同一个按钮"
+        以及"程序自己刷新"都不该触发重算。
+        """
         if self._notify_job is not None:
             try:
                 self.after_cancel(self._notify_job)
@@ -188,11 +196,36 @@ class BatchMixin:
         if self._on_change is None:
             return
         res = self.value()
-        if res is not None:
-            self._on_change(*res)
+        if res is None:
+            return
+        sig = repr(res)
+        if sig == self._last_sent:
+            return
+        self._last_sent = sig
+        self._on_change(*res)
+
+    def _on_cell_write(self, name: str) -> None:
+        """心情输入框被写：**只有"用户改的"才算改动**。
+
+        ⚠️ `StringVar.trace_add("write")` 对**程序自己**的 `var.set()` 一样会触发，而面板
+        每次刷新都会把一整列写一遍（`_refresh_mood_cells`）。不区分就是一个自激回路：
+        刷新 → 当成用户改动 → 通知 → 宿主重算 → 推送回来 → 又刷新 → ……（实测空转 2 秒
+        重算 6 次 / 2336ms，界面一直在烧 CPU —— 就是"设置干员与心情卡顿严重"的根源）。
+        判据用 `self._shown`：那是"我们刚写进去的值"，相等就说明这次写不是用户改的。
+        """
+        var = self._mood_vars.get(name)
+        if var is None:
+            return
+        if parse_mood(var.get()) == self._shown.get(name):
+            return                        # 程序写的（数值没变）→ 不算改动
+        self._notify_later()
 
     def _notify_later(self) -> None:
-        """心情输入框的防抖：连续敲键盘只落地一次（每次落地都要重算整周期）。"""
+        """心情输入框的防抖：连续敲键盘只落地一次（每次落地都要重算整周期）。
+
+        `NOTIFY_DEBOUNCE_MS`（500ms，原 250ms）：单次重算本身要 0.23~1.2s，防抖间隔比它
+        还短的话，打字过程中每个间隔都要冻一下。停手半秒就落地。
+        """
         if self._on_change is None:
             return
         if self._notify_job is not None:
@@ -200,7 +233,7 @@ class BatchMixin:
                 self.after_cancel(self._notify_job)
             except tk.TclError:
                 pass
-        self._notify_job = self.after(250, self._notify)
+        self._notify_job = self.after(NOTIFY_DEBOUNCE_MS, self._notify)
 
     def _cancel_notify(self) -> None:
         if self._notify_job is not None:
@@ -882,7 +915,8 @@ class BatchMixin:
                 var = tk.StringVar(value=theme.fmt_mood(shown))
                 self._mood_vars[name] = var
                 self._shown[name] = parse_mood(theme.fmt_mood(shown))
-                var.trace_add("write", lambda *_a: self._notify_later())   # 改动即时生效
+                # ⚠️ 用 `_on_cell_write` 而不是直接 `_notify_later`：程序化刷新也会触发 write
+                var.trace_add("write", lambda *_a, n=name: self._on_cell_write(n))
                 r["entry"].configure(textvariable=var)
                 if not r["entry"].winfo_manager():
                     r["entry"].pack(side="left", padx=(6, 4))
@@ -912,19 +946,32 @@ class BatchMixin:
                    lambda _e: self._pick_operator(fac_index, slot_index))
         return label
 
+    def _set_cell(self, name: str, text: str) -> None:
+        """**程序化**写入某一格：先把 `_shown` 登记好，再 `var.set`。
+
+        ⚠️ 顺序不能反：`var.set()` 会同步触发 `_on_cell_write`，而它是拿"新文本 vs `_shown`"
+        判断"是不是用户改的"。先 set 再更新 `_shown`，程序自己的刷新就会被误判成用户改动
+        ——非起点视图下每次刷新都会变成一次"改动"（重算）。先登记后写，判据恒等，稳。
+        """
+        var = self._mood_vars.get(name)
+        if var is None:
+            return
+        self._shown[name] = parse_mood(text)
+        if var.get() != text:                  # 值没变就别惊动 Tk（少一次 trace 调用）
+            var.set(text)
+
     def _refresh_mood_cells(self) -> None:
         """把**这一刻的实际心情**刷进表格（起点视图＝周期起点心情）。
 
-        `self._shown` 记下"我们刚写进去的值"，`_collect_moods` 靠它区分"用户改过"与"只是刷新"。
+        `self._shown` 记下"我们刚写进去的值"，`_collect_moods` / `_on_cell_write`
+        靠它区分"用户改过"与"只是刷新"（见 `_on_cell_write` 的说明）。
         """
         moods = self._view_moods()
-        for name, var in self._mood_vars.items():
+        for name in list(self._mood_vars):
             v = moods.get(name)
             if v is None:                      # 这一刻她不在基建里（没排班）→ 显示导入/起点值
                 v = self._moods.get(name, MOOD_MAX)
-            v = Decimal(str(v))
-            var.set(theme.fmt_mood(v))
-            self._shown[name] = parse_mood(theme.fmt_mood(v))
+            self._set_cell(name, theme.fmt_mood(Decimal(str(v))))
 
     # ================================================================ 交互
     def _on_shift_change(self) -> None:
