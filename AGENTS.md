@@ -100,7 +100,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 384 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 402 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（250 条 clause 逐条造场景
     核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `resources/skill_verify_report.md`。
@@ -121,7 +121,13 @@ documents/
     （`t = 0` 恰好就是"周期起点被事件改过"，会取到跳变**前**的值——修过的 bug）。
 16. **`Schedule.start_clock`（初始时间点）只改显示**：所有时刻标签都带这个偏移
     （`theme.fmt_clock(..., offset=)`），**引擎数值一字不变**；别在引擎里用它做任何计算。
-17. **分层别搞反**：`data/`（数据）← `mood_soc/`（纯计算）← `store/`（状态与 IO）← `ui/` `api/`。
+17. **「不在基建」的人（既不在工作设施、也不在宿舍）** = 净速率 0、心情**一条平线**，
+    且**不参与任何技能计数**（不在 `facilities` 里）。两个来源：本班未排班（自动）、
+    排班 JSON 顶层 `"detached": [...]` / 面板「＋ 添加干员…」（显式）。
+    ⚠️ **不变式**：写进名单的人会被自动从所有班次的位置上摘掉（别让她一边在名单、一边占位）；
+    ⚠️ "本班未排班" ≠ "整份排班都不在基建"——她在别的班有活，那些班照常算（面板 `—` 列写着
+    `其他班：2中 3宿`）。见 `documents/10-图形界面.md` §5 第 14 条。
+18. **分层别搞反**：`data/`（数据）← `mood_soc/`（纯计算）← `store/`（状态与 IO）← `ui/` `api/`。
     ① 资源路径一律 `from data.paths import X`（**别自己拼 `resources/…`**，有测试扫源码）；
     ② 给界面加**状态或重算**要改 `store/session.py`，别把业务状态写回 `ui/app.py`；
     ③ 加程序接口能力 = 在 `api/ops.py` 加一个 op（步骤见 `documents/11-程序接口.md` §7）；

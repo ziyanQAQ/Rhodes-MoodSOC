@@ -279,6 +279,29 @@ entry_target_kind("any", "dorm")                                      # 'auto'�
 即心情是**按次**扣的；而**配方自身的心情消耗在上游数据 dump 里没有字段**，
 所以"一次加工扣多少心情"也不建模（棘刺「爆炸艺术」同理）。
 
+### 「不在基建」的干员（既不在工作设施、也不在宿舍）
+
+多班排班里总有人**这一刻没上班、也不在宿舍**（换下来歇着、或压根没排班）。他们要能设心情、
+要能在曲线里看到，但**不能**因此被算成"在岗"：
+
+| | 口径 |
+|---|---|
+| 数值 | **这一刻**净速率 0（不消耗也不回复）⇒ 心情不变；轨迹里是**一条平线**（等于起点心情） |
+| 她在别的班有活？ | **那些班照常算**（"本班未排班" ≠ "整份排班都不在基建"） |
+| 技能计数 | **不参与** —— 她不在任何 `facilities` 里，「基建内每有 1 名 XX 干员」数不到她 |
+| 名单 ↔ 位置 | **不变式**：写进名单的人会被**自动从所有班次的位置上摘掉**（不会一边在名单、一边占位） |
+| 哪来的人 | ① 面板自动列出「本班未排班」的人；② 点「**＋ 添加干员…**」手动加（可从全量名册/干员池挑） |
+| 存哪 | 排班 JSON 顶层 `"detached": ["某人", ...]`（与 `entry_events` / `idle_to_dorm` 同层；老文件没这个键 = 空） |
+
+```jsonc
+// 场景 JSON：顶层加一个 detached 就够
+{"detached": ["板凳甲", "板凳乙"],
+ "facilities": [ {"type": "制造站", "level": 3, "operators": ["泡泡", "黍", "路人甲"]} ]}
+```
+
+程序接口：`set_detached`（改名单）/ `bench_names`（问名单）；`moods` 与 `trajectory` 里
+他们照样出现（一条平线）。详见 `documents/11-程序接口.md` §4。
+
 ### 开发约定
 
 - **每次改动即时提交**：每完成一次修改就 `git commit` 一次，提交信息用 **1–15 个字**简要描述
@@ -479,7 +502,7 @@ Rhodes-MoodSOC/
 │   ├── maa.py             MAA 排班 JSON -> facilities（唯一的房间映射表）
 │   └── serialize.py       结果 -> JSON dict / 写入文件（inf -> null）
 ├── api/                   ★ **程序接口**（JSON 进 / JSON 出；见 documents/11-程序接口.md）
-│   ├── ops.py             能力表：31 个 op（图形界面能做的一切）
+│   ├── ops.py             能力表：33 个 op（图形界面能做的一切）
 │   ├── protocol.py        线协议：请求/响应的解析与组装（NDJSON）
 │   ├── server.py          常驻服务 `python -m api.server`（推荐给 Rust）
 │   └── cli.py             一次性调用 `python -m api.cli --op …`
@@ -743,8 +766,8 @@ python main.py --mode base --demo --period 12                           # 先推
 {"id":5,"op":"quit"}
 ```
 
-共 **31 个 op**：载入（`load_schedule` / `load_file` / `load_files`）、改设置（时间轴 / 槽位 /
-房间等级 / 心情 / 锚点 / 练度 / 干员池 / 换心情 / 闲置入宿）、出结果（`moods` / `trajectory` /
+共 **33 个 op**：载入（`load_schedule` / `load_file` / `load_files`）、改设置（时间轴 / 槽位 /
+房间等级 / 心情 / 锚点 / 练度 / 干员池 / 换心情 / 闲置入宿 / **不在基建名单**）、出结果（`moods` / `trajectory` /
 `mood_ledger` / `time_to_mood` / `bottleneck` / `export_schedule`）、只读（`describe` /
 `list_shifts` / `validate` / `get_settings` / `operator_detail` …）。
 **先调一次 `capabilities` 握手**（拿协议版本与 op 表），版本不一致就报错、别继续。
@@ -944,7 +967,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 .venv/Scripts/python.exe -m unittest tests.test_ui_settings_blackbox -v  # 「设置」中心（同上）
 ```
 
-当前 **384 个测试全绿**（其中 `test_layers.py` 是**结构回归网**：依赖方向、
+当前 **402 个测试全绿**（其中 `test_layers.py` 是**结构回归网**：依赖方向、
 兼容转发壳不漏名字、源码里不许手拼资源路径）。
 
 技能侧另有一道"体检"（与测试同源，可独立跑、可出报告）：
