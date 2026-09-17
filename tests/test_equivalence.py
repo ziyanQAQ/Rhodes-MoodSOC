@@ -272,6 +272,34 @@ class Test不在基建(unittest.TestCase):
             self.assertEqual(q(s.mood_at("泡泡", D(t))), q(s.mood_at("泡泡", D(0))))
         self.assertEqual(s.rate_at("泡泡", D(12)), D("0"))
 
+    def test_名单里的人也能被闲置入宿安排进宿舍(self):
+        """**「不在基建」名单里的人**同样进闲置入宿的候选；进宿舍后当班按宿舍回复。
+
+        这条是"引擎早就支持、但没人写过"的路：`apply_idle_to_dorm` 对"不在布局里的人"
+        会现造 `Operator` 再放进宿舍（`op is None` 分支）。实测：心情 10 → 1h 后 14 →
+        6h 满（宿舍 Lv5 满氛围 4/h）。
+        """
+        s = Session()
+        s.load_layout({"facilities": [
+            {"type": "制造站", "level": 3, "operators": ["普通甲", "普通乙", "普通丙"]},
+            {"type": "宿舍", "level": 5, "operators": []},
+        ]}, hours=24)
+        s.set_initial_moods({"板凳甲": 10})
+        s.set_detached(["板凳甲"], recompute=True)     # 摘位置 + 进名单
+        # ① 没开闲置入宿：平线（心情 10 不动）
+        self.assertEqual(q(s.mood_at("板凳甲", D("6"))), D("10"))
+        self.assertEqual(s.rate_at("板凳甲", D("0")), D("0"))
+        # ② 开了闲置入宿：她进宿舍恢复
+        s.idle_to_dorm = True
+        s.recompute()
+        rows = [r for _t, _sc, rs in s.idle_groups() for r in rs if r[0] == "板凳甲"]
+        self.assertTrue(rows, "名单里的人应当出现在闲置入宿的候选里")
+        self.assertEqual(rows[0][2], "不在基建")       # 位置标记
+        self.assertEqual(q(s.mood_at("板凳甲", D("0"))), D("10"))
+        self.assertAlmostEqual(float(s.mood_at("板凳甲", D("1"))), 14.0, places=6)
+        self.assertEqual(q(s.mood_at("板凳甲", D("6"))), D("24"))   # 4/h × 3.5h 回满
+        self.assertEqual(q(s.rate_at("板凳甲", D("1"))), D("-4"))   # 宿舍 Lv5 满氛围
+
     def test_JSON往返(self):
         """导出场景 → 再导入：`detached` 原样回来（键与 `facilities` 同层、向后兼容）。"""
         from api.ops import handle

@@ -150,13 +150,17 @@ class VScroll:
         return steps * self.units_per_notch
 
     def _page_lines(self) -> int:
-        """一屏大约几行（拿可视高度除以单行高度；算不出来就退回 10）。"""
+        """一屏大约几行（拿可视高度除以单行高度）。
+
+        下限取 `2 × units_per_notch`：小窗口里算出来只有 3~4 行时，"整页"和普通滚轮
+        几乎没区别，Shift 就没意义了（实测过）。真正的整页由 `yview_scroll` 自己钳位。
+        """
         row_h = self._row_height()
         try:
             visible = max(self.canvas.winfo_height(), 1)
         except tk.TclError:
             visible = 1
-        return max(3, visible // max(row_h, 1) - 1)
+        return max(2 * self.units_per_notch, visible // max(row_h, 1) - 1)
 
     def _row_height(self) -> int:
         """单行高度（取内层第一个子控件；取不到就当 24px）。"""

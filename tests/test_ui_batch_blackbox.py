@@ -250,6 +250,114 @@ class Test批量设置(unittest.TestCase):
         self.assertEqual(events, [])
         self.assertIsNone(detached)
 
+    # ------------------------------------------------------------- 表格外观
+    def test_表头与分组卡片(self):
+        """表格要**一眼能看懂**：固定表头（列名）+ 每个房间一张分组卡片。"""
+        from ui.batch import TABLE_COLUMNS
+
+        dlg = self._open(0)
+        self.assertEqual([c[0] for c in TABLE_COLUMNS],
+                         ["房间", "位次", "干员", "练度", "心情", "说明"])
+        cards = [r for r in dlg._rows if r["kind"] == dlg.KIND_ROOM]
+        # 每间房一张卡片，标题写 `制1 制造站#1 · Lv3 · 3/3 人`
+        ftype_count = {}
+        for fi in range(len(dlg._fac_names)):
+            ftype_count[dlg._fac_names[fi]["type"]] = ftype_count.get(
+                dlg._fac_names[fi]["type"], 0) + 1
+        self.assertEqual(len(cards), len(dlg._fac_names) + 1)     # +1 = 「不在基建」那张
+        text = cards[1]["room"].cget("text")
+        self.assertIn("制造站", text)
+        self.assertIn("Lv", text)
+        self.assertIn("人", text)
+        self.assertIn("·", text)
+
+    def test_等宽列与对齐(self):
+        """位置行的各列都**落在同一列**上（grid 等宽，而不是各 pack 各的）。"""
+        dlg = self._open(0)
+        slots = [r for r in dlg._rows if r["kind"] == dlg.KIND_SLOT and r["name"]]
+        self.assertTrue(slots)
+        for r in slots[:5]:
+            for key in ("pos", "op", "elite", "entry"):
+                info = r[key].grid_info()
+                self.assertEqual(int(info["row"]), 0, key)
+            self.assertEqual(int(r["pos"].grid_info()["column"]), 1)
+            self.assertEqual(int(r["op"].grid_info()["column"]), 2)
+            self.assertEqual(int(r["elite"].grid_info()["column"]), 3)
+            self.assertEqual(int(r["entry"].grid_info()["column"]), 4)
+
+    def test_搜索过滤(self):
+        """搜索框：输入即过滤（匹配名字/房间），清空恢复全部，且**不动心情状态**。"""
+        app = self.app
+        dlg = self._open(0)
+        all_names = dlg._visible_names()
+        self.assertEqual(len(all_names), len(dlg._mood_vars))
+
+        who = all_names[0]
+        dlg.filter.set(who)
+        app.update()
+        self.assertEqual(dlg._visible_names(), [who])
+        self.assertIn("匹配 1 人", dlg.filter_note.cget("text"))
+        # 过滤只是"看不见"，不是"删掉"：状态里还有她、切回全部也在
+        self.assertIn(who, dlg._moods)
+        dlg.filter.set("")
+        app.update()
+        self.assertEqual(dlg._visible_names(), all_names)
+        # 搜房间名：宿舍里的人都该出现
+        dlg.filter.set("宿舍")
+        app.update()
+        vis = dlg._visible_names()
+        self.assertTrue(vis)
+        dorm_ops = {o.name for s in app.schedule.shifts for f in s.world.all_dormitories()
+                    for o in f.operators}
+        self.assertTrue(set(vis) & dorm_ops, "搜「宿舍」至少该出现一个住宿舍的人")
+        # 搜不到时给出提示，而不是空白
+        dlg.filter.set("不可能存在的名字")
+        app.update()
+        self.assertEqual(dlg._visible_names(), [])
+        self.assertIn("匹配 0 人", dlg.filter_note.cget("text"))
+        dlg.filter.set("")
+        app.update()
+
+    def test_一键动作只作用于看得见的行(self):
+        """搜索过滤之后点「全部满心情」，**不该**改到看不见的人（否则很反直觉）。"""
+        app = self.app
+        dlg = self._open(0)
+        who = dlg._visible_names()[0]
+        dlg.filter.set(who)
+        app.update()
+        dlg._set_all(Decimal("24"))              # 全部满心情
+        app.update()
+        others = [n for n in dlg._moods if n != who]
+        self.assertTrue(others)
+        for n in others[:5]:                     # 看不见的人没被动过
+            self.assertNotEqual(dlg._moods[n], Decimal("0"))
+        dlg.filter.set("")
+        app.update()
+
+    def test_滚轮速度与键盘(self):
+        """滚轮：默认 3 行 / Shift 整页 / Ctrl 10 行；另有 PgUp·PgDn·Home·End。"""
+        from ui.scroll import FAST_UNITS, UNITS_PER_NOTCH
+
+        dlg = self._open(0)
+        self.assertEqual(dlg.vs.units_per_notch, UNITS_PER_NOTCH)
+
+        class Ev:
+            delta = -120
+            state = 0
+
+        e = Ev()
+        self.assertEqual(dlg.vs._units(e), UNITS_PER_NOTCH)
+        e.state = 0x0001                          # Shift
+        self.assertGreaterEqual(abs(dlg.vs._units(e)), 2 * UNITS_PER_NOTCH)
+        e.state = 0x0004                          # Ctrl
+        self.assertEqual(dlg.vs._units(e), FAST_UNITS)
+        e.delta = 120                             # 向上滚 → 负值
+        self.assertEqual(dlg.vs._units(e), -FAST_UNITS)
+        # 键盘绑定在这个表的 bindtag 上（滚轮 tag 同一套）
+        self.assertIn(dlg.vs.tag, dlg.canvas.bindtags())
+        for seq in ("<Prior>", "<Next>", "<Home>", "<End>"):
+            self.assertTrue(dlg.canvas.bind_class(dlg.vs.tag, seq), seq)
+
     # ------------------------------------------------------------- 心情批量
     def test_全部满心情与全部零(self):
         """两个一键：全部 24 / 全部 0 → 覆盖**整个排班**的干员（不只当前班次）。"""
