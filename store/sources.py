@@ -14,7 +14,7 @@
 
 ## v3 输出怎么拼（**以 `maa` 段为主**）
 
-上游 `data/resources/输出JSON结构说明.md`（ArknightsInfraCalc-v3 的输出契约）说得很清楚：
+上游 `resources/输出JSON结构说明.md`（ArknightsInfraCalc-v3 的输出契约）说得很清楚：
 **输出里没有 `kind`、也没有 `level`**（类型只能回查输入的 `layout.rooms[].kind`）。
 而同一份输出里的 `result.maa` 段**是按设施类型分组的**（`trading`/`manufacture`/`power`/
 `dormitory`/`control`/`meeting`/`hire`/`processing`），并且连空宿舍都在（`skip:true`）。
@@ -398,7 +398,7 @@ def resolve_name(name: str) -> str:
 def _layout_levels(layout: Optional[dict]) -> Dict[str, List[int]]:
     """`layout.rooms` → `{设施中文名: [该类型各房间的等级（按出现顺序）]}`。
 
-    ⚠️ 输出契约（`data/resources/输出JSON结构说明.md` §5）说：**MAA 组内数组顺序 = 布局中该类型
+    ⚠️ 输出契约（`resources/输出JSON结构说明.md` §5）说：**MAA 组内数组顺序 = 布局中该类型
     房间的出现顺序**，所以第 i 间房能按下标对齐到 layout 里的第 i 间。
     """
     out: Dict[str, List[int]] = {}

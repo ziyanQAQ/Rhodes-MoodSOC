@@ -43,7 +43,7 @@ from mood_soc.config import MOOD_MAX, facility_max_level, facility_slots  # noqa
 from mood_soc.models import normalize_entry_when  # noqa: E402
 from data.paths import MAA_SAMPLE, RES as DATA_RES  # noqa: E402
 
-SAMPLE = MAA_SAMPLE          # 冷启动自载的示例排班（`data/resources/…`，见 data/paths.py）
+SAMPLE = MAA_SAMPLE          # 冷启动自载的示例排班（`resources/…`，见 data/paths.py）
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
 
 # 注：「宿舍01」↔ `IdleToDormEntry.dorm` 的翻译、以及 `IdleToDormEntry` → 下拉标签，

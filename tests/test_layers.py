@@ -129,5 +129,35 @@ class Test数据路径只有一处(unittest.TestCase):
         self.assertEqual(offenders, [], "资源路径请一律经 data/paths.py：\n" + "\n".join(offenders))
 
 
+class Test数据目录只放表(unittest.TestCase):
+    """`data/` **只放要 import 的表**：样例 JSON / 说明文档 / 报告不许放进来。
+
+    这条是给"把 `resources/` 搬进 `data/`"这种想法立的规矩（曾做过一次，已改回）：
+    `data/` 是 Python 包，测试发现与打包会整体遍历它；样例与报告是项目级资产，
+    落在这里只会让"数据表"这个概念变糊。分工见 `documents/01-架构.md` §1.1。
+    """
+
+    #: `data/` 里允许出现的扩展名
+    ALLOWED = {".py", ".txt"}
+    #: 例外：`data/` 下的子目录一律不许存在（样例/报告都在仓库根 `resources/`）
+    def test_data里没有子目录(self):
+        subs = [p.name for p in (ROOT / "data").iterdir()
+                if p.is_dir() and p.name != "__pycache__"]
+        self.assertEqual(subs, [], f"data/ 下不该有子目录：{subs}（样例/报告请放仓库根 resources/）")
+
+    def test_data里只有表和代码(self):
+        bad = [p.name for p in (ROOT / "data").iterdir()
+               if p.is_file() and p.suffix.lower() not in self.ALLOWED]
+        self.assertEqual(bad, [], f"data/ 里不该出现这些文件：{bad}")
+
+    def test_样例与报告在仓库根resources(self):
+        from data.paths import (MAA_SAMPLE, OUTPUT_CONTRACT_MD, REQUIREMENTS_DOCX,
+                                SKILL_VERIFY_REPORT, V4_SAMPLE)
+        for path in (MAA_SAMPLE, V4_SAMPLE, OUTPUT_CONTRACT_MD, SKILL_VERIFY_REPORT,
+                     REQUIREMENTS_DOCX):
+            self.assertTrue(path.exists(), f"{path} 不存在")
+            self.assertEqual(path.parent.name, "resources", f"{path} 应在仓库根 resources/ 下")
+
+
 if __name__ == "__main__":
     unittest.main()

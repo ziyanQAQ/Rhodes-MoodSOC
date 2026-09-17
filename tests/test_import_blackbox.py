@@ -7,7 +7,7 @@
 2. **导得对**：房间类型/等级/人员/练度/每班时长/换心情开关都被搬到本工具的模型里，
    拿不到的东西（没 layout、没 maa 段）走**兜底推断**并且**逐条写进导入报告**。
 
-样例都在 `data/resources/`（按 `输出JSON结构说明.md` 与
+样例都在 `resources/`（按 `输出JSON结构说明.md` 与
 `plan_compute_example_v4_annotated.md` 的字段造的）：
 `import_v3_out_3shifts.json` / `import_v3_out_no_maa.json` / `import_v3_out_36h_layout.json` /
 `import_v4_input.json`；再加上现成的 `arknights-infra-schedule-maa.json` 与 `scenarios/demo.json`。

@@ -4,13 +4,13 @@
 
 | 目录 | 放什么 | 例子 |
 |---|---|---|
-| `data/` | **数据** | 技能库/台账/阵营表（`.txt`）+ 生成物（`skills_data.py` 等）+ 样例 JSON + `paths.py` |
+| `data/` | **数据（要 import 的表）** | 技能库/台账/阵营表（`.txt`）+ 生成物（`skills_data.py` 等）+ `paths.py` |
+| `resources/` | **数据（要读文件的）** | 样例 JSON、数据字典说明、核对报告、需求文档 `.docx` |
 | `mood_soc/` | **纯计算** | 心情电池 / 规则引擎 / 流水账 / 变量账本 |
 | `store/` | **数据管理层** | 排班与整周期轨迹、4 种输入解析、结果序列化、**会话状态** |
 | `api/` | **程序接口** | JSON 进 / JSON 出（常驻 NDJSON + 一次性 CLI），供 Rust 调用 |
 | `ui/` | **图形界面** | tkinter 视图（状态在 `store.Session` 上） |
 | `scripts/` `tests/` `main.py` | **代码**（工具与测试） | 纯标准库 Python |
-| `resources/` | 规范文档 | 只剩需求文档 `.docx`（不是数据表） |
 | `documents/` | **文档**（本目录） | 你现在读的这些 `.md` |
 | `scenarios/` | 示例场景 | MAA 排班转换产物 |
 | 根目录 | 入口 | `AGENTS.md`（AI 入口）/ `README.md`（人类入口） |

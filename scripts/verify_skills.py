@@ -17,7 +17,7 @@
     # 只看结论（CI 用；有硬伤时退出码 1）
     .venv/Scripts/python.exe scripts/verify_skills.py --check
 
-    # 生成报告（默认写 data/resources/skill_verify_report.md）
+    # 生成报告（默认写 resources/skill_verify_report.md）
     .venv/Scripts/python.exe scripts/verify_skills.py --report
 
     # 指上游仓库（L3 需要；不指就自动探测常见路径，探测不到则 L3 跳过）

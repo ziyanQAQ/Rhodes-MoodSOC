@@ -284,8 +284,9 @@ entry_target_kind("any", "dorm")                                      # 'auto'�
 - **每次改动即时提交**：每完成一次修改就 `git commit` 一次，提交信息用 **1–15 个字**简要描述
   （如「修复替换链」「补变量账本」）。一次提交只做一件事。
 - **改完同步文档**：至少更新本文件与 `AGENTS.md`，以及 `documents/` 下受影响的那一篇。
-- **目录分工**：`data/` 放**数据**（`data/*.txt` 人工表 + `data/*.py` 生成物 + `data/resources/` 样例），
-  `resources/` 只剩需求文档，`documents/` 放**文档**（按门类分文件，
+- **目录分工**：**数据分两条线** —— `data/` 放**要 import 的表**（`*.txt` 人工表 + `*.py` 生成物），
+  `resources/` 放**要读文件的项目级数据**（样例 JSON / 数据字典 / 核对报告 / 需求文档 docx）；
+  `documents/` 放**文档**（按门类分文件，
   索引见 `documents/README.md`）；根 `AGENTS.md` 是给 AI 的**精简入口**，保持精简
   （64KB 指令预算，超了会被截断），细节一律写进 `documents/`。
 
@@ -448,15 +449,14 @@ sustain_hours（还能维持/恢复多久，evaluate 输出）：
 Rhodes-MoodSOC/
 ├── main.py                命令行入口（--mode single|base / --demo / --scenario-file / --target / --period
 │                            / --out-dir / --json-file / --trace / --explain / --entry-events）
-├── data/                  ★ **数据**（干员与技能数据的唯一住处）
-│   ├── paths.py           全部数据路径的**唯一出口**（别处不许手拼 resources/…）
+├── data/                  ★ **数据（要 import 的表）**：干员与技能数据
+│   ├── paths.py           全部数据路径的**唯一出口**（别处不许手拼路径）
 │   ├── domain.py          领域基元：FacilityType / 容量表 / 心情上下限 / 默认练度
 │   ├── skill_model.py     技能数据模型：Skill / SkillEquip / SkillKind
 │   ├── conditions.py      技能条件函数（`_cond_*`）与阵营查询（`_factions_of`）
 │   ├── skills_data.py     **生成物**：SKILLS / DEFAULT_OPERATORS / SKILL_EQUIPS / 阵营 / 变量产出者
 │   ├── operator_names.py  **生成物**：别名 → 中文名（英文名 / char_id）
-│   ├── *.txt              人工维护或上游生成的 CSV（技能库 / 台账 / 阵营 / 产出者）
-│   └── resources/         样例 JSON 与数据字典说明（MAA 排班、4 种导入样例、核对报告）
+│   └── *.txt              人工维护或上游生成的 CSV（技能库 / 台账 / 阵营 / 产出者）
 ├── mood_soc/              **纯计算**包（库，可被 import）
 │   ├── __init__.py        对外公共 API 汇总（导出下面各模块的公开符号）
 │   ├── config.py          计算规则常量与公式（基础消耗 / 减免 / 宿舍回复 / 设施集合 / 建造位）
@@ -517,7 +517,12 @@ Rhodes-MoodSOC/
 │   ├── generate_operator_names.py 从上游 character_table 生成 data/operator_names.py（别名表）
 │   └── generate_skills_data.py 把 data/ 两份 txt 生成为 data/skills_data.py（技能数据管道）
 ├── scenarios/             demo.json + maa_shift1/2/3.json（示例场景）
-├── resources/             仅剩需求文档 `心情消耗回复和工休时间.docx`（规范，不是数据表）
+├── resources/             ★ **数据（要读文件的）**：仓库根的项目级数据
+│   ├── 心情消耗回复和工休时间.docx              需求文档（规则来源）
+│   ├── arknights-infra-schedule-maa.json        MAA 排班样例（界面冷启动自载）
+│   ├── import_v3_out_*.json / import_v4_input.json   4 种导入格式的样例
+│   ├── 输出JSON结构说明.md / plan_compute_example_v4_annotated.md   数据字典与契约
+│   └── skill_verify_report.md                   技能核对报告（生成物，勿手改）
 ├── documents/             ★ **文档**（按门类分文件，索引见 documents/README.md）
 │   ├── README.md            文档索引 + §编号约定 + 维护约定
 │   └── 01-架构.md … 11-程序接口.md
@@ -732,7 +737,7 @@ python main.py --mode base --demo --period 12                           # 先推
 ```jsonc
 // 常驻模式下：一行一个请求，一行一个响应（NDJSON over stdio）
 {"id":1,"op":"capabilities"}
-{"id":2,"op":"load_file","args":{"path":"data/resources/arknights-infra-schedule-maa.json"}}
+{"id":2,"op":"load_file","args":{"path":"resources/arknights-infra-schedule-maa.json"}}
 {"id":3,"op":"set_timeline","args":{"cycles":2}}
 {"id":4,"op":"moods","args":{"at":["12:00"],"include_red_face":true}}   // → 全员心情 + 红脸 + 瓶颈
 {"id":5,"op":"quit"}
@@ -946,7 +951,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 
 ```bash
 .venv/Scripts/python.exe scripts/verify_skills.py --check    # 通过=退出码 0
-.venv/Scripts/python.exe scripts/verify_skills.py --report   # 重写 data/resources/skill_verify_report.md
+.venv/Scripts/python.exe scripts/verify_skills.py --report   # 重写 resources/skill_verify_report.md
 ```
 
 它把上游 **755** 条 buff / 本仓库 **250** 条心情 clause 全部过一遍：

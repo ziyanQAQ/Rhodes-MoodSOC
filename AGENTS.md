@@ -58,7 +58,9 @@ documents/
 排班/轨迹/解析/序列化/**会话**）→ `mood_soc/`（纯计算）→ `data/`（数据 + 领域基元 + 路径出口）。
 `data/paths.py` 是**资源路径的唯一出口**；`data/` 与 `mood_soc/` 不许 import 上层；
 `ui/` 与 `api/` 互不 import；`api/` `store/` `data/` 的代码里不许出现 `tkinter`。
-`resources/` 只剩需求文档 docx；`documents/` = **文档**；`scenarios/` = 示例场景。
+**数据分两条线**：`data/` = 要 import 的表（技能库 / 台账 / 阵营 / 生成物）；
+`resources/` = 仓库根的项目级数据（样例 JSON、数据字典说明、核对报告、需求文档 docx）。
+`documents/` = **文档**；`scenarios/` = 示例场景。
 
 > **§编号约定**：`§4.16` / `§8.5` / `§11` 之类引用沿用原 `AGENTS.md` 的**稳定章节号**，
 > 换算表见 `documents/README.md`。代码注释里也会出现这些引用。
@@ -101,7 +103,7 @@ documents/
 11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 381 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（250 条 clause 逐条造场景
-    核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `data/resources/skill_verify_report.md`。
+    核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `resources/skill_verify_report.md`。
     详见 `documents/05-技能分类大纲.md` §5.11）。
 13. **「导入排班」认 4 种 JSON**（本工具场景 / MAA / **v3 求解输出** / **v4 蓝图+干员池**），
     识别与转换只有一处：`store/sources.py`（别再在 `ui/` 里写第二份格式判断）。
@@ -154,7 +156,7 @@ python scripts/classify_skills.py --check                     # 零遗漏校验�
 
 # 技能全量核对（模板级 / clause 级 / 上游描述对照；只读，不改数据）
 python scripts/verify_skills.py --check                       # 有硬伤 → 退出码 1
-python scripts/verify_skills.py --report                      # 重写 data/resources/skill_verify_report.md
+python scripts/verify_skills.py --report                      # 重写 resources/skill_verify_report.md
 
 # 测试
 .venv/Scripts/python.exe -m unittest discover -s tests -v

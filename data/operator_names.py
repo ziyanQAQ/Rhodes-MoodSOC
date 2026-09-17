@@ -8,7 +8,7 @@
 ```
 
 消费方：`store/sources.py`（导入层的 `alias_table()` / `resolve_name()`）；
-测试与文档同步引用 `data/resources/` 下的样例。
+测试与文档同步引用 `resources/` 下的样例。
 """
 from __future__ import annotations
 

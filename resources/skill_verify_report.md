@@ -6,7 +6,7 @@
 ## 一、总览
 
 - 心情 clause（`skills.SKILLS`）：**250** 条
-- 上游 buff 台账：**755** 条（`resources/skills_registry.txt`）——已建模 210 / 登记不建模 545
+- 上游 buff 台账：**755** 条（`data/skills_registry.txt`）——已建模 210 / 登记不建模 545
   - 轴 A 分布：A1 214 条、A2 40 条、A3 6 条、A4 495 条
   - 台账双向核对：✅ 755 条 buff 全部对上（modeled=yes 都有 clause，modeled=no 都没有）
 - 模板：**32** 个（已建模 19 / 登记不建模 13）

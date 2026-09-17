@@ -473,7 +473,7 @@ class Test报告(unittest.TestCase):
             self.assertIn(f"| `{key}` |", self.text)
 
     def test_仓库里的报告没有过期(self):
-        """`data/resources/skill_verify_report.md` 的规模数字必须与当前数据一致。"""
+        """`resources/skill_verify_report.md` 的规模数字必须与当前数据一致。"""
         self.assertTrue(REPORT_MD.exists(), "报告没生成过：跑 scripts/verify_skills.py --report")
         saved = REPORT_MD.read_text(encoding="utf-8")
         live = [ln for ln in self.text.splitlines()
