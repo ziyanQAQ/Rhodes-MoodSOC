@@ -46,15 +46,19 @@ documents/
 ├── 04-特殊机制.md          ★ 34 条特殊情况 + 12 条建模假设（改代码前必读）
 ├── 05-技能分类大纲.md       六轴 + 模板字典 M01~M17 / X01~X11 + 决策记录
 ├── 06-数据来源.md          ★ 数据查找策略（强制）+ 上游缺失清单
-├── 07-设计史.md            架构诊断 + P1~P5 重构决策记录
+├── 07-设计史.md            架构诊断 + P1~P6 重构决策记录
 ├── 08-上游数据源分析.md     上游仓库结构分析（首次摸底留档）
 ├── 09-开发指南.md          运行与测试 / 公共 API 速查 / 改完代码自查清单
-└── 10-图形界面.md          图形界面 ui/：导入多班排班 / 时间滑动 / 对点曲线
+├── 10-图形界面.md          图形界面 ui/：导入多班排班 / 时间滑动 / 对点曲线
+└── 11-程序接口.md          ★ api/：NDJSON 常驻服务 + 一次性 CLI（Rust 接入）
 ```
 
-**目录分工**：`mood_soc/` `scripts/` `tests/` `main.py` `ui/` = **代码**；
-`resources/` = **数据**（`.docx` 需求文档 / `.txt` 技能与阵营表 / `.json` 样例）；
-`documents/` = **文档**；`scenarios/` = 示例场景。
+**分层（依赖严格单向向下，`tests/test_layers.py` 静态扫描盯着）**：
+`ui/`（tkinter 视图）与 `api/`（程序接口，JSON 进 JSON 出）→ `store/`（状态与 IO：
+排班/轨迹/解析/序列化/**会话**）→ `mood_soc/`（纯计算）→ `data/`（数据 + 领域基元 + 路径出口）。
+`data/paths.py` 是**资源路径的唯一出口**；`data/` 与 `mood_soc/` 不许 import 上层；
+`ui/` 与 `api/` 互不 import；`api/` `store/` `data/` 的代码里不许出现 `tkinter`。
+`resources/` 只剩需求文档 docx；`documents/` = **文档**；`scenarios/` = 示例场景。
 
 > **§编号约定**：`§4.16` / `§8.5` / `§11` 之类引用沿用原 `AGENTS.md` 的**稳定章节号**，
 > 换算表见 `documents/README.md`。代码注释里也会出现这些引用。
@@ -67,7 +71,7 @@ documents/
 > 设施集合定义 / 全局常量 / 机制术语——**先去上游仓库查证**：
 > [**Kengxxiao/ArknightsGameData**](https://github.com/Kengxxiao/ArknightsGameData)
 > （`zh_CN/gamedata/excel/`）。**不要凭印象写、不要猜、不要从二手资料誊抄。**
-> 本项目 `resources/*.txt` 与 `mood_soc/skills_data.py` 都只是**上游的派生物**，
+> 本项目 `data/*.txt` 与 `data/skills_data.py` 都只是**上游的派生物**，
 > 不一致时**以上游为准**并修正派生物。
 >
 > 完整流程 / 四个坑 / 查完之后的三件事 / **哪些数据上游根本没有** →
@@ -90,20 +94,20 @@ documents/
    走 `MoodLedger.same_kind_winner`，不能自己写 `max()`。
 7. **条件必须被求值**：新增条件分支时，确认它所在的贡献循环里有
    `if skill.condition is not None and not skill.condition(ctx): continue`（曾漏 3 处）。
-8. **模板挂在 clause 上**：`moods_skills.txt` 是 clause 级、每行带 `template_id` + `params`；
-   `skills_registry.txt` 是 buff 级 755 行覆盖台账。
+8. **模板挂在 clause 上**：`data/moods_skills.txt` 是 clause 级、每行带 `template_id` + `params`；
+   `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
-10. **技能数值不要手写进 `skills.py`**：改 `resources/*.txt` → 重跑生成脚本。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 333 个全绿），
+10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 381 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（250 条 clause 逐条造场景
-    核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `resources/skill_verify_report.md`。
+    核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `data/resources/skill_verify_report.md`。
     详见 `documents/05-技能分类大纲.md` §5.11）。
 13. **「导入排班」认 4 种 JSON**（本工具场景 / MAA / **v3 求解输出** / **v4 蓝图+干员池**），
-    识别与转换只有一处：`mood_soc/importer.py`（别再在 `ui/` 里写第二份格式判断）。
+    识别与转换只有一处：`store/sources.py`（别再在 `ui/` 里写第二份格式判断）。
     合同与字段对照见 `documents/10-图形界面.md` §2。
 14. **「干员与心情」的心情列＝"指定时刻那一刻的实际心情"**：改格子写的是**心情指定事件**
-    （`ui.schedule.MoodSetEvent`，只对指定周期生效、同刻跳变），只有**第 1 周期 0:00** 那一格
+    （`store.schedule.MoodSetEvent`，只对指定周期生效、同刻跳变），只有**第 1 周期 0:00** 那一格
     写 `initial_moods`。面板的 `_collect_moods` **只收"和刚写进去的值不同"的格子**
     （否则"改个房间等级"会把从轨迹读出来的值当成手动设定重复落一遍）。
     ⚠️ **`StringVar.trace_add("write")` 对程序化 `var.set()` 也触发**：刷新必须走 `_set_cell`
@@ -115,6 +119,11 @@ documents/
     （`t = 0` 恰好就是"周期起点被事件改过"，会取到跳变**前**的值——修过的 bug）。
 16. **`Schedule.start_clock`（初始时间点）只改显示**：所有时刻标签都带这个偏移
     （`theme.fmt_clock(..., offset=)`），**引擎数值一字不变**；别在引擎里用它做任何计算。
+17. **分层别搞反**：`data/`（数据）← `mood_soc/`（纯计算）← `store/`（状态与 IO）← `ui/` `api/`。
+    ① 资源路径一律 `from data.paths import X`（**别自己拼 `resources/…`**，有测试扫源码）；
+    ② 给界面加**状态或重算**要改 `store/session.py`，别把业务状态写回 `ui/app.py`；
+    ③ 加程序接口能力 = 在 `api/ops.py` 加一个 op（步骤见 `documents/11-程序接口.md` §7）；
+    ④ 老路径 `mood_soc.importer/output/scenario/maa`、`ui.schedule` 是**兼容转发壳**，别往里加逻辑。
 
 ---
 
@@ -134,14 +143,18 @@ python main.py --mode base --demo --period 12          # 先推进 12h 再评估
 .venv/Scripts/python.exe -m ui                          # 见 documents/10-图形界面.md
 .venv/Scripts/python.exe ui/__main__.py                 # 等价；IDE 里直接 Run 也行
 
-# 数据管道（改完 resources/*.txt 必须按顺序跑）
+# 程序接口（给 Rust 调用；见 documents/11-程序接口.md）
+.venv/Scripts/python.exe -m api.server                   # 常驻 NDJSON（推荐）
+.venv/Scripts/python.exe -m api.cli --op capabilities    # 一次性调用
+
+# 数据管道（改完 data/*.txt 必须按顺序跑）
 python scripts/classify_skills.py --agd <ArknightsGameData>   # 挂模板 + 生成 755 行台账
-python scripts/generate_skills_data.py                        # 生成 mood_soc/skills_data.py
+python scripts/generate_skills_data.py                        # 生成 data/skills_data.py
 python scripts/classify_skills.py --check                     # 零遗漏校验（CI 用，不需要仓库）
 
 # 技能全量核对（模板级 / clause 级 / 上游描述对照；只读，不改数据）
 python scripts/verify_skills.py --check                       # 有硬伤 → 退出码 1
-python scripts/verify_skills.py --report                      # 重写 resources/skill_verify_report.md
+python scripts/verify_skills.py --report                      # 重写 data/resources/skill_verify_report.md
 
 # 测试
 .venv/Scripts/python.exe -m unittest discover -s tests -v
@@ -156,11 +169,12 @@ python scripts/verify_skills.py --report                      # 重写 resources
 
 ```
 用户输入（dict/JSON）
-  └─ scenario.build_base_layout(data)        # 解析层 → Operator/Facility/BaseLayout
+  └─ store.layout.build_base_layout(data)    # 解析层 → Operator/Facility/BaseLayout
        ├─ single：rules.evaluate(world, name, hours)   → MoodResult（含 ledger）
        └─ base：  rules.evaluate_base(world, hours)    → BaseResult
-            └─ output.*_to_dict() → JSON（inf → null）
+            └─ store.serialize.*_to_dict() → JSON（inf → null）
        （--trace）simulator.simulate(...)      # 数值解：每步重算速率，能表现"红脸后技能失效"联动
+  └─ 多班 / 程序接口：store.session.Session（排班 + 全部设置 + 重算）← api/ 与 ui/ 共用这一份
 ```
 
 技能数据管道（与测算主流程分离）：
@@ -168,8 +182,10 @@ python scripts/verify_skills.py --report                      # 重写 resources
 ```
 Kengxxiao/ArknightsGameData  building_data.json（上游，非本仓库）
   └─ scripts/classify_skills.py --agd    # 挂模板 + 覆盖台账 + 零遗漏校验
-       ├─ resources/moods_skills.txt        （clause 级，+template_id/params）
-       └─ resources/skills_registry.txt     （buff 级 755 行台账）
-            └─ scripts/generate_skills_data.py → mood_soc/skills_data.py（勿手改）
-                 └─ skills.py re-export → rules.py 使用
+       ├─ data/moods_skills.txt             （clause 级，+template_id/params）
+       └─ data/skills_registry.txt          （buff 级 755 行台账）
+            └─ scripts/generate_skills_data.py → data/skills_data.py（勿手改）
+                 └─ mood_soc/skills.py re-export → rules.py 使用
+       ⚠️ 生成物只 import 数据包（data.skill_model / data.conditions / data.domain），
+          绝不 import mood_soc，否则「生成器无法重新生成自己」（见 07-设计史.md P6）
 ```

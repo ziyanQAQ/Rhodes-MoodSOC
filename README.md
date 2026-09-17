@@ -8,9 +8,9 @@
 
 规则依据：
 - 心情消耗/回复/工休的**计算规则**：`resources/心情消耗回复和工休时间.docx`；
-- **真实技能库与干员↔技能映射**：`resources/moods_skills.txt` + `resources/operators.txt`
+- **真实技能库与干员↔技能映射**：`data/moods_skills.txt` + `data/operators.txt`
   （含精英化解锁等级、value 千分值、作用 family），由 `scripts/generate_skills_data.py`
-  一键生成 `mood_soc/skills_data.py`。
+  一键生成 `data/skills_data.py`。
 
 > 技能数值以两份 txt 为**权威来源**（docx 中的技能示例值已过时）。
 > 两份 txt 的**上游**是 `Kengxxiao/ArknightsGameData`（`zh_CN/gamedata/excel/building_data.json`）；
@@ -19,7 +19,7 @@
 >
 > **技能分类**：每条技能都挂在一个**六轴模板**（`M01`~`M17` 心情类 / `X01`~`X11` 非心情）上，
 > 新增干员技能 = 认模板 + 填参数；上游全部 buff 都有覆盖台账，未归类会**硬报错**。
-> 见 `documents/05-技能分类大纲.md`（分类大纲 + 模板字典）与 `resources/skills_registry.txt`（台账）。
+> 见 `documents/05-技能分类大纲.md`（分类大纲 + 模板字典）与 `data/skills_registry.txt`（台账）。
 
 ### 心情流水账（可解释）
 
@@ -223,7 +223,7 @@ entry_target_kind("any", "dorm")                                      # 'auto'�
 塑心「无声共鸣」+1/每名宿舍干员 → 塑心「无词颂歌」每 5 点，宿舍回复额外 +0.01
 ```
 
-产出端逐条注明上游出处：`resources/variable_producers.txt`；实现见 `mood_soc/variables.py`。
+产出端逐条注明上游出处：`data/variable_producers.txt`；实现见 `mood_soc/variables.py`。
 流水账 `--explain` 会打印变量快照与"由谁产出"。
 
 ### 基建布局
@@ -269,7 +269,7 @@ entry_target_kind("any", "dorm")                                      # 'auto'�
 
 推论：那 9 条写「进驻训练室协助位时，心情每小时消耗 **+1**」的训练室技能**不生效**
 （工作狂 / 过量训练 / 索然无味 / 何须解脱 / 变异 / 斗争渴望 / 与人乐 / 兴之所至·β / “手段应当有效”）
-——已从技能库撤出，`resources/skills_registry.txt` 保留登记与原因。
+——已从技能库撤出，`data/skills_registry.txt` 保留登记与原因。
 
 > 与需求文档第 4 段「干员工作时…每小时基础消耗速率 1 点」**不冲突**：
 > 那说的是常规生产设施「上岗生产」的稳态消耗，挂件位不属于上岗生产。
@@ -284,7 +284,8 @@ entry_target_kind("any", "dorm")                                      # 'auto'�
 - **每次改动即时提交**：每完成一次修改就 `git commit` 一次，提交信息用 **1–15 个字**简要描述
   （如「修复替换链」「补变量账本」）。一次提交只做一件事。
 - **改完同步文档**：至少更新本文件与 `AGENTS.md`，以及 `documents/` 下受影响的那一篇。
-- **目录分工**：`resources/` 只放**数据**，`documents/` 放**文档**（按门类分文件，
+- **目录分工**：`data/` 放**数据**（`data/*.txt` 人工表 + `data/*.py` 生成物 + `data/resources/` 样例），
+  `resources/` 只剩需求文档，`documents/` 放**文档**（按门类分文件，
   索引见 `documents/README.md`）；根 `AGENTS.md` 是给 AI 的**精简入口**，保持精简
   （64KB 指令预算，超了会被截断），细节一律写进 `documents/`。
 
@@ -292,8 +293,8 @@ entry_target_kind("any", "dorm")                                      # 'auto'�
 
 - **分类**：每个技能 clause 挂在六轴模板（`M01`~`M17` 心情类 / `X01`~`X11` 非心情）上，
   新增干员技能 = 认模板 + 填参数；上游全部 755 条 buff 都有覆盖台账，未归类**硬报错**。
-  见 `documents/05-技能分类大纲.md`、`resources/skills_registry.txt`。
-- **阵营/标签**：`resources/factions.txt` 由 `scripts/generate_factions.py` 从上游
+  见 `documents/05-技能分类大纲.md`、`data/skills_registry.txt`。
+- **阵营/标签**：`data/factions.txt` 由 `scripts/generate_factions.py` 从上游
   `cc.g.*` / `cc.tag.*` 自动生成（28 组 231 条），**不手工维护**
   （人工补充只有上游不列名单的「异格者」）。生成器会校验技能引用的阵营名都存在，
   **包括写在条件表达式里的名字**（`_cond_target_in_faction` / `_cond_target_is`），
@@ -308,8 +309,8 @@ entry_target_kind("any", "dorm")                                      # 'auto'�
 遇到任何**不知道的数据**——技能原文 / 数值 / 解锁精英化与等级 / 阵营成员名单 / 设施集合定义 /
 全局常量 / 机制术语——**先去上游仓库查证**：
 [**Kengxxiao/ArknightsGameData**](https://github.com/Kengxxiao/ArknightsGameData)（`zh_CN/gamedata/excel/`）。
-**不要凭印象写、不要猜、不要从二手资料誊抄。** 本项目的 `resources/*.txt` 与
-`mood_soc/skills_data.py` 都只是**上游的派生物**；两者不一致时**以上游为准**。
+**不要凭印象写、不要猜、不要从二手资料誊抄。** 本项目的 `data/*.txt` 与
+`data/skills_data.py` 都只是**上游的派生物**；两者不一致时**以上游为准**。
 
 - 技能/数值/解锁 → `building_data.json`（`buffs` + `chars[].buffChar[].buffData[]`）
 - 干员名 → `character_table.json`；术语/阵营/设施集合/常量 → `gamedata_const.json`
@@ -322,7 +323,7 @@ entry_target_kind("any", "dorm")                                      # 'auto'�
 > **精度策略**：全部数值计算使用 Python 标准库 `decimal.Decimal`（十进制精确），
 > 避免 float 无法精确表示 `0.1 / 0.3 / 0.05 / 0.0004` 等十进制小数带来的累积误差。
 > 内部"无限"用 `Decimal('Infinity')` 表示；仅在 JSON 输出边界做一次受控的
-> **6 位小数舍入**（`mood_soc/output.py`），并把无限输出为 `null`。
+> **6 位小数舍入**（`store/serialize.py`），并把无限输出为 `null`。
 
 ---
 
@@ -428,7 +429,7 @@ sustain_hours（还能维持/恢复多久，evaluate 输出）：
 
 > 阵营表 `OPERATOR_FACTIONS` **不是手工维护的**——它与 `FACTION_MEMBERS` 一起由
 > `scripts/generate_factions.py` 从上游 `cc.g.*` / `cc.tag.*` 生成（28 组 / 208 名干员 / 231 条记录），
-> 人工补充只有上游不列名单的「异格者」（`resources/factions_supplement.txt`）。
+> 人工补充只有上游不列名单的「异格者」（`data/factions_supplement.txt`）。
 > 要改干员↔阵营，改上游或补充表后重跑生成器，**不要**改代码。
 
 ### 工休比
@@ -447,26 +448,45 @@ sustain_hours（还能维持/恢复多久，evaluate 输出）：
 Rhodes-MoodSOC/
 ├── main.py                命令行入口（--mode single|base / --demo / --scenario-file / --target / --period
 │                            / --out-dir / --json-file / --trace / --explain / --entry-events）
-├── mood_soc/              核心包（库，可被 import）
+├── data/                  ★ **数据**（干员与技能数据的唯一住处）
+│   ├── paths.py           全部数据路径的**唯一出口**（别处不许手拼 resources/…）
+│   ├── domain.py          领域基元：FacilityType / 容量表 / 心情上下限 / 默认练度
+│   ├── skill_model.py     技能数据模型：Skill / SkillEquip / SkillKind
+│   ├── conditions.py      技能条件函数（`_cond_*`）与阵营查询（`_factions_of`）
+│   ├── skills_data.py     **生成物**：SKILLS / DEFAULT_OPERATORS / SKILL_EQUIPS / 阵营 / 变量产出者
+│   ├── operator_names.py  **生成物**：别名 → 中文名（英文名 / char_id）
+│   ├── *.txt              人工维护或上游生成的 CSV（技能库 / 台账 / 阵营 / 产出者）
+│   └── resources/         样例 JSON 与数据字典说明（MAA 排班、4 种导入样例、核对报告）
+├── mood_soc/              **纯计算**包（库，可被 import）
 │   ├── __init__.py        对外公共 API 汇总（导出下面各模块的公开符号）
-│   ├── config.py          纯配置层：常量 + 数据表 + 解析函数（无逻辑）
+│   ├── config.py          计算规则常量与公式（基础消耗 / 减免 / 宿舍回复 / 设施集合 / 建造位）
 │   ├── battery.py         纯数学层：安时积分法 + MoodBattery + to_decimal/INF（与游戏规则无关）
 │   ├── models.py          数据模型层：Operator / Facility（多房间·容量·副手·活动室）
 │   │                      / BaseLayout（按类型聚合）/ MoodResult（含 ledger）/ OperatorResult / BaseResult
-│   ├── skills.py          规则数据层：Skill / SkillEquip / SkillKind 框架 + 条件函数（末尾 re-export 数据）
+│   ├── skills.py          **兼容门面**：re-export data 的技能模型 / 条件函数 / 数据表
 │   ├── skill_templates.py 分类字典：六轴枚举（ModelTier/Domain/Target/Effect/ValueShape/Stacking）+ 模板注册表
 │   ├── ledger.py          ★记录层：Contribution / MoodLedger（逐条贡献流水账）+ 轴 F 统一合成
 │   ├── variables.py       ★变量账本：26 种"中间货币"（人间烟火/热情值/无声共鸣…）+ 产出者收集
-│   ├── skills_data.py     技能数据表（自动生成，勿手改）：SKILLS / DEFAULT_OPERATORS / SKILL_EQUIPS / TRAITS
-│   ├── maa.py             输入解析层：MAA 排班 JSON -> facilities（脚本与图形界面共用这一份映射）
-│   ├── importer.py        ★导入层：4 种排班/蓝图 JSON 自动识别与转换（+ 干员池 + 变量初始值 + 导入报告）
 │   ├── rules.py           业务逻辑层：**流水账驱动**——把"布局 + 干员"折算成消耗/回复/净速率 + 各项查询
 │   ├── simulator.py       时间步进模拟器：每步重算速率，处理"红脸 → 技能失效"等时变情况
 │   ├── report.py          展示层：中文结果格式化（文本）
-│   ├── output.py          输出层：结果 -> JSON dict / 写入文件（inf -> null）
-│   └── scenario.py        输入解析层：字典/JSON -> BaseLayout
+│   └── scenario.py / importer.py / maa.py / output.py   **兼容转发壳** → store/ 对应模块
+├── store/                 ★ **数据管理层**（状态与 IO）
+│   ├── session.py         ★ **会话状态**：全部可调项 + 唯一的重算入口（界面与程序接口共用）
+│   ├── schedule.py        多班排班模型 + 整周期心情轨迹（事件驱动精确积分；原 ui/schedule.py）
+│   ├── sources.py         4 种排班/蓝图 JSON 自动识别与转换（+ 干员池 + 变量初始值 + 导入报告）
+│   ├── layout.py          字典/JSON -> BaseLayout
+│   ├── maa.py             MAA 排班 JSON -> facilities（唯一的房间映射表）
+│   └── serialize.py       结果 -> JSON dict / 写入文件（inf -> null）
+├── api/                   ★ **程序接口**（JSON 进 / JSON 出；见 documents/11-程序接口.md）
+│   ├── ops.py             能力表：31 个 op（图形界面能做的一切）
+│   ├── protocol.py        线协议：请求/响应的解析与组装（NDJSON）
+│   ├── server.py          常驻服务 `python -m api.server`（推荐给 Rust）
+│   └── cli.py             一次性调用 `python -m api.cli --op …`
 ├── ui/                    ★ **图形界面**（tkinter，纯标准库；见 documents/10-图形界面.md）
-│   ├── schedule.py        多班排班模型 + 整周期心情轨迹（事件驱动精确积分）——不依赖 GUI
+│   ├── app.py             主窗口（工具栏 + 看板 + 全员一览 + 曲线 + 时间滑块 + 状态栏）；
+│   │                      业务状态全在 store.session.Session 上，这里只有别名与绘制
+│   ├── schedule.py        **兼容转发** → store/schedule.py（引擎已搬走）
 │   ├── theme.py           配色/字体/间距令牌 + 颜色混合 + 显示格式化（唯一的显示舍入处）
 │   ├── widgets.py         心情芯片（21px 紧凑呈现单元：色条 + 位置标记 + 名字 + 心情值）
 │   ├── board.py           基建看板：控制中枢整行 + 工作区/休息区两列（一屏放下全部房间）
@@ -476,12 +496,13 @@ Rhodes-MoodSOC/
 │   ├── batch.py           「干员与心情」内容本体：房间等级 + 干员 + 练度 + 按时刻指定心情（锚点）
 │   ├── settings.py        「设置」中心：左侧导航 + 固定内容区 + 页面缓存（切页不重建、窗口不跳）
 │   ├── scroll.py          两张表的竖向滚动（Canvas + 滚动条 + 滚轮统一做法）
-│   ├── app.py             主窗口（工具栏 + 看板 + 全员一览 + 曲线 + 时间滑块 + 状态栏）
 │   └── __main__.py        `python -m ui` 入口
 ├── tests/                 黑盒测试（只断言"输入 → 输出"，不测内部结构）
 │   ├── __init__.py
 │   ├── test_api_blackbox.py        公开 API 黑盒：场景 JSON + 目标/时段 → 结果 JSON
 │   ├── test_cli_blackbox.py        命令行黑盒：subprocess 调 main.py → stdout JSON / 退出码 / 结果文件
+│   ├── test_api_ops.py             ★程序接口黑盒：握手 / 全流程 / **与引擎逐位同源** / 协议形状 / 时刻写法
+│   ├── test_layers.py              ★分层回归：依赖方向 / 兼容转发壳不漏名字 / 数据路径只有一处
 │   ├── test_ui_schedule_blackbox.py 图形界面的计算核心黑盒（含"不拉起 tkinter"的结构断言）
 │   ├── test_ui_app_smoke.py        界面端到端冒烟（真建窗口；无图形环境自动跳过）
 │   ├── test_ui_batch_blackbox.py   「干员与心情」面板黑盒（真建窗口；无图形环境自动跳过）
@@ -489,26 +510,17 @@ Rhodes-MoodSOC/
 │   ├── test_import_blackbox.py     导入黑盒（4 种 JSON 格式识别 + 转换 + 兜底推断 + 报告）
 │   └── test_skill_coverage.py      技能全量核对三层断言（模板级 / 250 条 clause / 上游描述对照）
 ├── scripts/
-│   ├── maa_to_scenario.py      把 MAA 排班 JSON 转成本工具的场景 JSON（解析在 mood_soc/maa.py）
+│   ├── maa_to_scenario.py      把 MAA 排班 JSON 转成本工具的场景 JSON（解析在 store/maa.py）
 │   ├── classify_skills.py      给每个 clause 挂六轴模板 + 生成 755 行覆盖台账 + 零遗漏校验
 │   ├── verify_skills.py        **技能全量核对**（三层）+ 生成核对报告（只读，不改数据）
 │   ├── generate_factions.py    从上游 termDescriptionDict 生成干员↔阵营/标签表
-│   ├── generate_operator_names.py 从上游 character_table 生成「英文名/char_id → 中文名」表
-│   └── generate_skills_data.py 把 resources 两份 txt 生成为 mood_soc/skills_data.py（技能数据管道）
+│   ├── generate_operator_names.py 从上游 character_table 生成 data/operator_names.py（别名表）
+│   └── generate_skills_data.py 把 data/ 两份 txt 生成为 data/skills_data.py（技能数据管道）
 ├── scenarios/             demo.json + maa_shift1/2/3.json（示例场景）
-├── resources/             ★ **数据**（不放文档）
-│   ├── 心情消耗回复和工休时间.docx        需求文档（心情消耗/回复/工休的**计算规则**）
-│   ├── moods_skills.txt / operators.txt   技能库 + 干员↔技能映射（含 template_id/params）
-│   ├── operator_names.txt                 别名→中文名（英文名/char_id；上游生成，见 06 文档 §11.5）
-│   ├── import_v3_out_*.json / import_v4_input.json  导入样例（v3 输出 / v4 蓝图+干员池）
-│   ├── skills_registry.txt                上游 755 条 buff 的覆盖台账
-│   ├── skill_verify_report.md             技能核对报告（**生成物**，勿手改）
-│   ├── factions.txt / factions_supplement.txt  阵营/标签表（上游生成）
-│   ├── variable_producers.txt             变量产出者表（人间烟火/热情值/无声共鸣）
-│   └── arknights-infra-schedule-maa.json  MAA 排班样例（转换脚本的输入）
+├── resources/             仅剩需求文档 `心情消耗回复和工休时间.docx`（规范，不是数据表）
 ├── documents/             ★ **文档**（按门类分文件，索引见 documents/README.md）
 │   ├── README.md            文档索引 + §编号约定 + 维护约定
-│   └── 01-架构.md … 10-图形界面.md
+│   └── 01-架构.md … 11-程序接口.md
 ├── results/               运行生成的结果 JSON（已被 gitignore）
 ├── README.md              面向人类的完整说明（人类入口）
 ├── AGENTS.md              给 AI 的精简入口（DSH 只从项目根自动加载它）
@@ -516,9 +528,27 @@ Rhodes-MoodSOC/
 └── .venv/                 Python 3.14 虚拟环境（uv 创建）
 ```
 
-依赖关系单向向下：`main / ui / tests → report/output/simulator/rules → skills/models → config/battery`，
-无环、无横向耦合。`ui/` 是**与 `main.py` 并列的另一个入口层**（`mood_soc` 不知道 `ui` 存在；
-`ui/schedule.py` 不得 import tkinter，有测试盯着）。
+依赖关系**严格单向向下**，无环、无横向耦合（`tests/test_layers.py` 会静态扫描源码盯着）：
+
+```
+ui/（tkinter 视图）      api/（程序接口，JSON 进 / JSON 出）     ← 两者互不 import
+        └──────────────────┬──────────────────┘
+                    store/（状态与 IO：排班 / 轨迹 / 解析 / 序列化 / 会话）
+                           │
+                    mood_soc/（纯计算：给定布局，谁的心情怎么变）
+                           │
+                       data/（数据 + 领域基元 + 路径出口；只依赖标准库）
+```
+
+三条硬规矩：① `data`/`mood_soc` 不许 import `store`/`ui`/`api`；② `ui` 与 `api` 互不 import；
+③ `api`/`store`/`data` 的代码里不许出现 `tkinter`（程序接口要能在无图形环境跑）。
+`store/schedule.py`（计算核心）同样不得 import tkinter。
+`mood_soc/__init__.py` 里 `build_base_layout` 从 `store.layout` 取，是唯一一处向上引用
+（为了 `from mood_soc import build_base_layout` 这个历史公开 API 不破）。
+
+> **为什么数据单独成包**：改数据的人不该翻计算代码。`data/paths.py` 是资源路径的唯一出口
+> （老代码里 7 处手拼 `resources/…` 已全部收敛），`data/domain.py` 放"游戏给的事实"
+> （设施枚举 / 容量表 / 心情上下限），顺便断开了数据包与计算包之间的循环导入。
 
 ---
 
@@ -659,7 +689,7 @@ python main.py --mode base --demo --period 12                           # 先推
 
 | 能做什么 | 怎么操作 |
 |---|---|
-| **导入排班（4 种 JSON 自动识别）** | 「导入排班…」可多选；每个文件**自己认格式**：本工具场景 / MAA 排班 / **v3 求解输出**（`result.rotation.shifts[]` → 每班时长 + "谁在哪间房" + 练度）/ **v4 蓝图+干员池**（房间 + 干员池，**房间里没有人**）。一个文件含多班就全导进来；导入后状态栏给一句摘要（读到什么、忽略了什么、**哪些是推断的**）。识别与转换只有一处：`mood_soc/importer.py`；字段对照见 `documents/10-图形界面.md` §2.1 |
+| **导入排班（4 种 JSON 自动识别）** | 「导入排班…」可多选；每个文件**自己认格式**：本工具场景 / MAA 排班 / **v3 求解输出**（`result.rotation.shifts[]` → 每班时长 + "谁在哪间房" + 练度）/ **v4 蓝图+干员池**（房间 + 干员池，**房间里没有人**）。一个文件含多班就全导进来；导入后状态栏给一句摘要（读到什么、忽略了什么、**哪些是推断的**）。识别与转换只有一处：`store/sources.py`；字段对照见 `documents/10-图形界面.md` §2.1 |
 | **干员池（导入 v4 蓝图才有）** | 那类文件只有"蓝图 + 我有谁"，导入后池会显示在「干员与心情」里：池里的人**能搜到**、**练度按池里的值**（E1 就写 E1），并能一键**「从池中依次填入」**按顺序铺满当前班次 |
 | **所有设置都在一个窗口里** | 工具栏＝**3 组**（组间有分隔线）：`导入排班… 设置… 周期数▾ │ 状态摘要 │ ▶播放 速度 回到起点`。「**设置…**」是唯一设置入口，左边导航选分区：**时间轴**（周期 / 班数 / 每班时长 / 周期数 / **初始时间点**）、**干员与心情**、**换心情**、**闲置入宿**。**改完立即生效**，关掉窗口即接受（不再有"点开→改→应用"三步）；中间那行状态摘要（点它也能开设置）随时告诉你两个开关的状态 |
 | 自己设置周期 / 班数 / 每班时长 / 周期数 | 「设置…」→ 时间轴：各班长之和必须等于周期，界面实时校验（不合法就不落地）；周期数 1~3 用来判断这套排班能不能永动。**周期数在工具栏上也有一个下拉**——两处共用同一个变量，哪边改另一边立刻跟着变 |
@@ -682,6 +712,40 @@ python main.py --mode base --demo --period 12                           # 先推
 
 技术底座是 tkinter（标准库），**没有引入任何第三方依赖**；界面规矩、计算口径与已知简化见
 **`documents/10-图形界面.md`**。
+
+### 5) 程序接口（给别的程序 / Rust 调用）
+
+图形界面能做的事，也能用 **JSON 进 / JSON 出**做完——同一个 `store.session.Session`，
+所以两条路算出来的数值**逐位一致**（有 `tests/test_api_ops.py::Test数值同源` 盯着）。
+
+```bash
+# 常驻（推荐：省掉每次 0.3~0.5s 的数据表 import）
+.venv/Scripts/python.exe -m api.server
+
+# 一次性（脚本 / 调试）
+.venv/Scripts/python.exe -m api.cli --op capabilities
+.venv/Scripts/python.exe -m api.cli \
+  --op load_schedule --args '{"facilities":[{"type":"制造站","level":3,"operators":["泡泡","黍","路人甲"]}]}' \
+  --then '{"op":"moods","args":{"at":[0,8,"24:00"],"include_trajectory":true}}'
+```
+
+```jsonc
+// 常驻模式下：一行一个请求，一行一个响应（NDJSON over stdio）
+{"id":1,"op":"capabilities"}
+{"id":2,"op":"load_file","args":{"path":"data/resources/arknights-infra-schedule-maa.json"}}
+{"id":3,"op":"set_timeline","args":{"cycles":2}}
+{"id":4,"op":"moods","args":{"at":["12:00"],"include_red_face":true}}   // → 全员心情 + 红脸 + 瓶颈
+{"id":5,"op":"quit"}
+```
+
+共 **31 个 op**：载入（`load_schedule` / `load_file` / `load_files`）、改设置（时间轴 / 槽位 /
+房间等级 / 心情 / 锚点 / 练度 / 干员池 / 换心情 / 闲置入宿）、出结果（`moods` / `trajectory` /
+`mood_ledger` / `time_to_mood` / `bottleneck` / `export_schedule`）、只读（`describe` /
+`list_shifts` / `validate` / `get_settings` / `operator_detail` …）。
+**先调一次 `capabilities` 握手**（拿协议版本与 op 表），版本不一致就报错、别继续。
+
+时刻支持两种写法：`8.5`（**绝对**小时，跨周期递增）或 `"08:30"`（**周期内**时刻，`"24:00"` = 周期末）。
+完整字段表、错误形状、Rust 接入样例、加 op 的步骤见 **`documents/11-程序接口.md`**。
 
 ## 五、Python API
 
@@ -767,7 +831,7 @@ python main.py --mode base --demo --period 12                           # 先推
   `facility_of` / `get_operator` / `all_operators` / `all_deputies` / `of_type` / `count_of_type` / `count_in` /
   `all_dormitories` / `facilities_in` / `operators_in` / `working_operators` / `base_operators` / `validate`
 
-### 5.3 输出层（`from mood_soc.output import ...`）
+### 5.3 输出层（`from store.serialize import ...`）
 
 | 函数 | 签名 | 说明 |
 |---|---|---|
@@ -776,7 +840,31 @@ python main.py --mode base --demo --period 12                           # 先推
 | `to_json_string` | `(data)` | dict → 可读 JSON 字符串（中文不转义） |
 | `dump_json` | `(data, path)` | dict → 写 JSON 文件（自动建目录），返回绝对路径 |
 
-### 5.4 设施类型（`FacilityType`）
+### 5.4 数据管理层（`from store... import ...`）
+
+| 入口 | 说明 |
+|---|---|
+| `store.session.Session` | ★**会话状态**：界面与程序接口共用的一份"当前在算的东西"。`load_paths([...])` / `load_layout({...})` / `recompute()` / `moods_at(t)` / `mood_at(name,t)` / `rate_at(name,t)` / `red_face_spans(name)` / `set_initial_mood` / `set_mood_at` / `set_training` / `set_timeline` / `set_slots` / `entry_candidates()` / `idle_groups()` / `validate()` / `describe()` / `settings_dict()` |
+| `store.schedule` | 多班排班与整周期轨迹：`Schedule` / `Shift` / `Trajectory` / `simulate_schedule` / `load_schedule(_ex)` / `MoodSetEvent` / `default_initial_moods` / `all_operator_names` |
+| `store.sources` | 排班/蓝图 JSON 的格式自动识别与转换：`detect_format` / `import_data` / `import_file` / `resolve_name` |
+| `store.layout` | `dict/JSON → BaseLayout`：`build_base_layout` / `build_operator` |
+| `store.maa` | MAA 排班解析：`read_maa` / `plans_from_data`（**唯一的房间映射表** `ROOM_MAP`） |
+| `store.serialize` | 结果 → JSON：`mood_result_to_dict` / `base_result_to_dict` / `to_json_string` / `dump_json` |
+
+> 老路径 `mood_soc.importer` / `mood_soc.output` / `mood_soc.scenario` / `mood_soc.maa` /
+> `ui.schedule` 都是**兼容转发壳**，import 照旧能用（`tests/test_layers.py` 逐名盯着）。
+
+### 5.5 数据层（`from data... import ...`）
+
+| 入口 | 说明 |
+|---|---|
+| `data.paths` | **全部数据路径的唯一出口**（`MAA_SAMPLE` / `OPERATORS_TXT` / `SKILLS_TXT` / `SKILLS_DATA` / `SKILL_VERIFY_REPORT` …）；其它模块不许自己拼 `resources/…` |
+| `data.domain` | 领域基元：`FacilityType` / `MOOD_MAX` / `MOOD_MIN` / `facility_slots` / `facility_max_level` / `DEFAULT_ELITE` / `DEFAULT_OPERATOR_LEVEL` |
+| `data.skills_data` | **生成物**：`SKILLS` / `SKILL_EQUIPS` / `DEFAULT_OPERATORS` / `TRAITS` / `OPERATOR_FACTIONS` / `FACTION_MEMBERS` / `SPREAD_SKILL_IDS` / `VARIABLE_PRODUCERS` |
+| `data.skill_model` | `Skill` / `SkillEquip` / `SkillKind` |
+| `data.conditions` | 技能条件函数（`_cond_*`）与 `_factions_of` |
+
+### 5.6 设施类型（`FacilityType`）
 
 | 枚举值 | 中文名 | | 枚举值 | 中文名 |
 |---|---|---|---|---|
@@ -786,13 +874,13 @@ python main.py --mode base --demo --period 12                           # 先推
 | `power` | 发电站 | | `dormitory` | 宿舍 |
 | `reception` | 会客室 | | | |
 
-### 5.5 完整示例
+### 5.7 完整示例
 
 ```python
 from decimal import Decimal
 from mood_soc import (build_base_layout, evaluate, evaluate_base, simulate,
                       work_rest_ratio, compute_net_rate)
-from mood_soc.output import mood_result_to_dict, base_result_to_dict, dump_json
+from store.serialize import mood_result_to_dict, base_result_to_dict, dump_json
 
 # 1) 构建布局
 world = build_base_layout({
@@ -843,17 +931,22 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 .venv/Scripts/python.exe -m unittest tests.test_cli_blackbox -v          # 命令行黑盒
 .venv/Scripts/python.exe -m unittest tests.test_skill_coverage -v        # 技能全量核对（三层）
 .venv/Scripts/python.exe -m unittest tests.test_import_blackbox -v       # 导入：4 种格式识别 + 转换
+.venv/Scripts/python.exe -m unittest tests.test_api_ops -v               # 程序接口：握手 / 全流程 / 与引擎同源
+.venv/Scripts/python.exe -m unittest tests.test_layers -v                # 分层方向 / 兼容转发壳 / 数据路径只有一处
 .venv/Scripts/python.exe -m unittest tests.test_ui_schedule_blackbox -v  # 图形界面的计算核心
 .venv/Scripts/python.exe -m unittest tests.test_ui_app_smoke -v          # 界面冒烟（无图形环境自动跳过）
 .venv/Scripts/python.exe -m unittest tests.test_ui_batch_blackbox -v     # 「干员与心情」面板黑盒
 .venv/Scripts/python.exe -m unittest tests.test_ui_settings_blackbox -v  # 「设置」中心（同上）
 ```
 
+当前 **381 个测试全绿**（其中 `test_layers.py` 是**结构回归网**：依赖方向、
+兼容转发壳不漏名字、源码里不许手拼资源路径）。
+
 技能侧另有一道"体检"（与测试同源，可独立跑、可出报告）：
 
 ```bash
 .venv/Scripts/python.exe scripts/verify_skills.py --check    # 通过=退出码 0
-.venv/Scripts/python.exe scripts/verify_skills.py --report   # 重写 resources/skill_verify_report.md
+.venv/Scripts/python.exe scripts/verify_skills.py --report   # 重写 data/resources/skill_verify_report.md
 ```
 
 它把上游 **755** 条 buff / 本仓库 **250** 条心情 clause 全部过一遍：
