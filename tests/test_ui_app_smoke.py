@@ -1174,6 +1174,28 @@ class Test新增交互(unittest.TestCase):
         self.assertIn(0, changes)
         self.assertEqual(changes[0][1]["level"], 2)
 
+    def test_不在基建一眼看得出(self):
+        """「不在基建」的人要在**两处一眼看得出**：全员一览的位置标记 `不`、
+        对点查询的数值区多一行说明（否则一条平线容易被当成"技能全失效"的 bug）。"""
+        app = self.app
+        who = app.schedule.shifts[0].operators[0]
+        app.session.set_detached([who], recompute=True)
+        app.recompute()
+        app.update()
+        try:
+            chip = app.roster.by_name[who]
+            self.assertEqual(chip.tag.cget("text"), "不")
+            app.curve_operator = who
+            app._update_chart()
+            app.update()
+            self.assertIn("不在基建", app.stats.cget("text"))
+            self.assertIn("不参与技能计数", app.stats.cget("text"))
+            self.assertIn("「不」=不在基建", app.roster.hint.cget("text"))
+        finally:
+            app.session.set_detached([], recompute=True)
+            app.recompute()
+            app.update()
+
     def test_精英化角标与练度摘要(self):
         """练度（精英化）要"看得见"：看板 / 全员一览的芯片带 `E1` 角标，
         对点查询说明"少算了哪条技能、为什么"。"""

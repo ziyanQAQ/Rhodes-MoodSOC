@@ -73,15 +73,26 @@ class RosterStrip(tk.Frame):
             return self._columns or COLUMNS_MAX
         return max(1, min(COLUMNS_MAX, width // (theme.ROSTER_CHIP_W + 6)))
 
-    def set_context(self, tags: Dict[str, str]) -> None:
-        """更新"当前班次在哪"的标记（班次切换时调用）。"""
+    def set_context(self, tags: Dict[str, str], bench=()) -> None:
+        """更新"当前班次在哪"的标记（班次切换时调用）。
+
+        `bench`：**「不在基建」**的干员（既不在工作设施、也不在宿舍）——他们不占任何位置，
+        位置标记写成绿色的 `不`（而不是 `休`），一眼能看出"她没在基建里、心情不会动"。
+        """
+        bench = set(bench or ())
         for v in self.chips:
-            if v.operator:
-                v.set_tag(tags.get(v.operator, "休"))
-                v.dim = v.operator not in tags
+            if not v.operator:
+                continue
+            if v.operator in bench:
+                v.set_tag("不")
+                v.dim = True
+                continue
+            v.set_tag(tags.get(v.operator, "休"))
+            v.dim = v.operator not in tags
         self.hint.configure(
             text=f"{len(self.chips)} 名干员　左键=对点看曲线　右键=设心情　"
-                 f"（位置标记＝当前班次所在房间，「休」=本班次未排班）"
+                 f"（位置标记＝当前班次所在房间，「休」=本班次未排班，"
+                 f"「不」=不在基建（心情不变））"
                  f"　｜　看板：左键选人/更换/清空·右键设心情")
 
     def update_moods(self, moods: Dict[str, Decimal], quick: bool = False) -> None:

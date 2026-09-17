@@ -616,13 +616,14 @@ class MoodSocApp(tk.Tk):
         if quick:
             self._roster_dirty = True
         else:
-            self.roster.set_context(self._room_tags(shift))
+            self.roster.set_context(self._room_tags(shift), bench=self.session.bench_names())
             self._roster_dirty = False
 
     def _flush_roster_context(self) -> None:
         """补上拖动期间推迟的「全员一览」位置标记。"""
         if self._roster_dirty and self.schedule is not None:
-            self.roster.set_context(self._room_tags(self.schedule.shift_at(self.current_t)))
+            self.roster.set_context(self._room_tags(self.schedule.shift_at(self.current_t)),
+                                   bench=self.session.bench_names())
             self._roster_dirty = False
 
     def _room_tags(self, shift) -> dict:
@@ -1217,7 +1218,10 @@ class MoodSocApp(tk.Tk):
         ]
         per = traj.min_mood_at_each_shift(name)
         lines.append("各班最低：" + "　".join(f"{l} {theme.fmt_mood(v)}" for l, v in per))
-        elite = self._elite_text(name)          # 练度：技能能不能生效就看它
+        if name in set(self.session.bench_names()):
+            # 「不在基建」的人：整条曲线是平线，不写清楚容易被当成"技能全失效"的 bug
+            lines.append("⚠ 不在基建（既不在工作设施、也不在宿舍）：心情整段不变、不参与技能计数")
+        elite = self._elite_text(name)
         if elite:
             lines.append(elite)
         return "\n".join(lines)
