@@ -31,6 +31,9 @@ TAG_PREFIX = "MoodVScroll"
 UNITS_PER_NOTCH = 3
 #: `Ctrl+滚轮` 的加速档（一次 10 行）
 FAST_UNITS = 10
+#: "滚完了"的判定间隔（毫秒）：滚轮停下这么久、位置还在原地，才算滚动结束
+#: （期间 `VScroll.scrolling` 为 `True`，调用方可以据此关掉悬停高亮等装饰）
+SCROLL_IDLE_MS = 120
 
 
 class VScroll:
@@ -46,8 +49,25 @@ class VScroll:
     self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
     self.vs = VScroll(self.canvas, scroll, self.inner)
     ...
-    self.vs.join(row)          # 每一行建好后都要 join（否则指针停在那行上滚不了）
+    self.vs.join(w)            # ⚠️ 每个"行容器"都要 join；没有行容器就逐格 join（见下）
     ```
+
+    ## 接线：**凡是可能出现指针的表内控件都要 join**
+
+    `join(w)` 做的是"往 `w` 的 bindtags 末尾追加本实例的 tag"，事件因此沿
+    「控件 → 控件类 → 所属 toplevel → all → 本 tag」走到 `on_wheel`。
+    链子**不含父控件**，所以：
+
+    ⚠️ 踩过的三条，别再改回去：
+      · **只挂 `canvas` / `inner` 不够**。指针停在某个 `Label` 上时，事件走的是
+        那个 Label 自己的链（Label → Label 类 → toplevel → all），**到不了**挂在
+        `inner` 上的 tag（实测：行里的 `op` 标签 bindtags 不含本 tag → 滚轮无效）。
+      · **有"行 Frame"的表**：`join(row)` 一次就够 —— 行里的标签事件会先在**行**的
+        bindtags 链上跑一遍（行有本 tag），处理函数在上面就 `break` 掉了。不用逐格挂。
+      · **没有行 Frame 的表**（`ui/batch.py` 的表格现在是"所有单元格共享一个 grid"，
+        为了跨行对齐）：**必须逐格 `join`** —— 一行 6 个控件 × 78 行 ≈ 470 次
+        `bindtags` 重建，实测整表重建 254ms，其中这部分可以忽略；反之漏挂的表现是
+        "指针停在文字上滚不动、停在行间空隙反而能动"。
     """
 
     def __init__(self, canvas: tk.Canvas, scrollbar: Optional[object] = None,
@@ -60,6 +80,10 @@ class VScroll:
         self.win = win                      # canvas.create_window(...) 的 item id
         self.units_per_notch = max(1, int(units_per_notch))
         self.tag = f"{base_tag}{id(self)}"
+        #: 正在滚动？（调用方可以据此把"悬停高亮"这类装饰暂时关掉——见 `ui/batch.py`）
+        self.scrolling = False
+        self._scroll_job = None
+        self._size_sig = None               # 上次的 (内容高, 内容宽, 可视高)：没变就不重设
         canvas.bind_class(self.tag, "<MouseWheel>", self.on_wheel)
         if keyboard:
             # 键盘也能滚（鼠标停在表上就能用，不必先点一下）：整页 / 首尾
@@ -69,6 +93,8 @@ class VScroll:
         # 内容高度变化 → 刷新滚动区间（调用方也可以自己绑，这里是兜底）
         if inner is not None:
             inner.bind("<Configure>", lambda _e: self.refresh(settle=False), add="+")
+        # 容器三个 + **每一行**（行由调用方在重建时 `join(row)`）：
+        # 事件的 bindtags 链不含父控件，所以只挂容器挡不住"指针停在行里的标签上"。
         for w in (canvas, scrollbar, inner):
             if w is not None:
                 self.join(w)
@@ -94,14 +120,22 @@ class VScroll:
                 self.inner.update_idletasks()
             h = self.inner.winfo_reqheight()
             w = max(self.inner.winfo_reqwidth(), self.canvas.winfo_width())
+            # **尺寸签名缓存**：内容高宽/可视高度都没变就直接返回。
+            # 滚动过程中 `inner` 会不停收到 `<Configure>`（视口在动），每次都
+            # `itemconfigure` + `scrollregion` 是白花的（实测这部分就是"滚一下顿一下"）。
+            sig = (h, w, self.canvas.winfo_height())
+            if sig == self._size_sig:
+                return
+            self._size_sig = sig
             if h > 1:
                 if self.win is not None:
                     self.canvas.itemconfigure(self.win, height=h)
                 self.canvas.configure(scrollregion=(0, 0, w, h))
                 return
+            self._size_sig = None
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         except tk.TclError:
-            pass
+            self._size_sig = None
 
     def join(self, widget: tk.Widget) -> None:
         """把某个控件纳入滚轮作用域（滚动条、行、行里的标签都要）。"""
@@ -184,12 +218,40 @@ class VScroll:
         return self._scroll_lines(units)
 
     def _scroll_lines(self, lines: int):
-        """按**行**滚（而不是按像素）：滚起来"一格一格"，视觉稳。"""
+        """按**行**滚（而不是按像素）：滚起来"一格一格"，视觉稳。
+
+        滚动期间把 `scrolling` 置位（调用方据此暂时关掉悬停高亮等装饰，省掉几十次重绘），
+        滚完（120ms 内位置不再变）自动复位。
+        """
         try:
             self.canvas.yview_scroll(int(lines), "units")
         except tk.TclError:
             return None
+        self._mark_scrolling()
         return "break"
+
+    def _mark_scrolling(self) -> None:
+        self.scrolling = True
+        try:
+            self._scroll_pos = int(self.canvas.canvasy(0))
+            if self._scroll_job is not None:
+                self.canvas.after_cancel(self._scroll_job)
+            self._scroll_job = self.canvas.after(SCROLL_IDLE_MS, self._check_scroll_idle)
+        except tk.TclError:
+            self.scrolling = False
+
+    def _check_scroll_idle(self) -> None:
+        """120ms 后检查位置是否还在变：不动了才算"滚完"。"""
+        self._scroll_job = None
+        try:
+            pos = int(self.canvas.canvasy(0))
+        except tk.TclError:
+            self.scrolling = False
+            return
+        if pos != getattr(self, "_scroll_pos", pos):
+            self._mark_scrolling()          # 还在滚 → 再等一轮
+            return
+        self.scrolling = False
 
     # ------------------------------------------------------------------ 键盘
     def page_up(self, _event=None):
@@ -213,4 +275,4 @@ class VScroll:
         return "break"
 
 
-__all__ = ["VScroll", "TAG_PREFIX", "UNITS_PER_NOTCH", "FAST_UNITS"]
+__all__ = ["VScroll", "TAG_PREFIX", "UNITS_PER_NOTCH", "FAST_UNITS", "SCROLL_IDLE_MS"]

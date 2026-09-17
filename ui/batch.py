@@ -55,10 +55,13 @@ LEVEL_NAME_W = 9        # 房间名那一列的字符宽（如「制造站#1」�
 LEVEL_GAP = 14
 # 表格可视高度的下限（自动模式下再挤也要留这么多）
 TABLE_H_MIN = 96
-#: 表格区里**不参与伸缩**的高度（实测"搜索栏 + 表头 + 事后才建的那几行"）。
-#: ⚠️ 由实测反推：`_table_height()` 是在建表格**之前**跑的，那时下面这几块还没建出来，
-#:    量不到；少扣 1px 就会让整页超 `PAGE_H`（超了内容被裁、切页时窗口跳）。改表格上方
-#:    的控件（加一行说明、加大字号…）之后要重新量一遍这两个数。
+#: 自校正的**让步下限**：整页超出内容区时，表格最多被压到这里。
+#: 为什么允许压到 96 以下：房间极多时（22 间 → 等级区 5 行）真的没有余量了 ——
+#: 宁可表格矮一点（有滚动条，照样能用），也不要让整页顶出 `PAGE_H`（会被裁、切页时窗口跳）。
+TABLE_H_FLOOR = 64
+#: 表格区内部**不参与伸缩**的高度：搜索栏 + 表头（两行）。`_table_height()` 是在建表格
+#: **之前**跑的，那时搜索栏/表头还没建出来、量不到，只能按这个估计值先扣一次；
+#: 不够的部分由 `_fit_table_height()` 的**自校正**兜底（见它的说明）。
 TABLE_CHROME = 55
 # 心情输入的防抖（毫秒）：一次落地＝宿主那边一整轮重算（0.23~1.2s），别设得太短
 NOTIFY_DEBOUNCE_MS = 500
@@ -75,15 +78,33 @@ DETACHED_HINT = ("══ 本班没排到位置：这一刻她不消耗也不回�
 HINT_WRAP = 700
 
 # 表格的**列定义**（表头与每一行共用，保证等宽对齐）：
-# `(标题, 宽度, 拉伸, 对齐)`。房间/段名那一列吃掉剩余宽度，其余定宽右对齐 → 数值列成一条线。
+# `(标题, 像素宽, 是否拉伸, 对齐)`。`宽 = 0` 表示"拉伸列"（吃剩余宽度）。
+#
+# ⚠️ 为什么用**像素**而不是字符宽（`Label(width=N)`）：字符宽要按字体度量换算，
+#    而表头是**粗体**、数据格是常规体 → 同一个 `width=5` 算出的像素不一样，
+#    列就歪了（实测：练度列 45 vs 52px、心情列 50 vs 68px、干员列 15 种宽度）。
+#    现在列宽完全由 grid 的 `minsize` 说了算，控件一律 `sticky="nsew"` 不再自己撑。
 TABLE_COLUMNS = (
-    ("房间", 15, True, "w"),
-    ("位次", 4, False, "center"),
-    ("干员", 0, True, "w"),        # 宽度 0 + 拉伸 = 占满中间
-    ("练度", 5, False, "center"),
-    ("心情", 7, False, "e"),
-    ("说明", 0, True, "w"),        # 「不在基建」那段的"她在别的班在哪"
+    ("房间", 96, False, "w"),
+    ("位次", 40, False, "center"),
+    ("干员", 0, True, "w"),        # 拉伸：吃剩余宽度
+    ("练度", 56, False, "center"),
+    ("心情", 72, False, "e"),
+    ("说明", 0, True, "w"),        # 拉伸：「不在基建」那段的"她在别的班在哪"
 )
+#: 拉伸列的最小宽度（内容再窄也不塌）
+COL_MIN_STRETCH = 110
+
+#: 行高（**固定**，让滚动位移恒定、列表看起来整齐）
+ROW_H = 24
+CARD_H = 22
+# 单元格文字的**请求宽度上限**：不给的话长名字会把那一列撑宽 → 看起来没对齐。
+# 值取"列宽 + 一点余量"：短内容不换行，长内容（如 `其他班：2中 3宿`）被行高裁掉尾巴。
+ELITE_PAD = 4
+MOOD_PAD = (2, 2)
+DASH_WRAP = 130
+OP_WRAP = 200
+CARD_WRAP = 560
 
 # 滚轮的接线在 `ui/scroll.py`（本实例专属 bindtag；见那里的注释）
 ROW_PAD = 1
@@ -151,6 +172,8 @@ class BatchMixin:
         # 表格可视高度：显式数字（独立使用）或 "auto"（设置中心：吃内容区剩余高度）
         self._table_h = None if table_height == "auto" else int(table_height)
         self._page_h = int(page_height) or 0
+        #: 上一次量到的"整页超出了内容区多少"（`_fit_table_height()` 用它自校正；见那个方法）
+        self._fit_over = 0
         self._pool = [dict(p) for p in (pool or [])]
         self._pool_elite = {p["name"]: int(p["elite"]) for p in self._pool
                             if p.get("elite") is not None}
@@ -195,6 +218,8 @@ class BatchMixin:
         self._detached_auto: List[str] = []
         self._rows: List[dict] = []                  # 行控件（结构没变时复用）
         self._hover_row = None                       # 指针当前所在的行（悬停高亮）
+        self._keep_scroll_next = False               # 下一次重建是否保留滚动位置
+        self._scroll_pos_save = 0.0                  # 重建前记下的滚动位置
         self._mood_vars: Dict[str, tk.StringVar] = {}
         # 「这一格刚才是我们写的什么值」——`_collect_moods` 靠它区分"用户改过"与"只是刷新过"
         self._shown: Dict[str, Optional[Decimal]] = {}
@@ -232,6 +257,9 @@ class BatchMixin:
         # 房间数一变（换排班 / 改等级）等级区行数就变 → 表格高度要跟着重算
         self.bind("<Configure>", lambda _e: self._fit_table_height(), add="+")
         self._rebuild_rows()
+        # ⚠️ 几何落定前 `winfo_reqheight()` 还是旧值，自校正第一次可能算不出差；
+        #    空闲时再修一次就够了（真实的 22 间房用例正是差这 3px）。
+        self.after_idle(self._fit_table_height)
 
     def _notify(self) -> None:
         """改动 → 通知宿主（设置中心＝立即生效）。
@@ -965,16 +993,23 @@ class BatchMixin:
 
         body = tk.Frame(self, bg=theme.BG)
         body.pack(fill="both", expand=True, padx=theme.PAD, pady=(2, 0))
-        # 表头与主体**用同一套列定义**，因此天然对齐（表头不滚动，始终可见）
+        # 表头与主体**用同一套像素列定义**，因此天然对齐（表头不滚动，始终可见）。
+        # 「不在基建」那段的**口径说明也放在这里**（一行通栏）：这样段首卡片只有 22px，
+        # 与房间卡片一样高 —— 行高统一，滚起来才顺（见 §5 第 20 条）。
         head = tk.Frame(body, bg=theme.HEADER_BG, highlightbackground=theme.BORDER,
                         highlightthickness=1)
         head.pack(fill="x")
         self._setup_columns(head)
-        for ci, (title, width, _stretch, anchor) in enumerate(TABLE_COLUMNS):
+        for ci, (title, _w, _stretch, anchor) in enumerate(TABLE_COLUMNS):
             tk.Label(head, text=title, bg=theme.HEADER_BG, fg=theme.MUTED,
-                     width=(width or 8), anchor=anchor, padx=4,
+                     anchor=anchor, padx=4,
                      font=(theme.FONT_FAMILY, theme.FS_SMALL, "bold")
-                     ).grid(row=0, column=ci, sticky="ew", padx=1, pady=2)
+                     ).grid(row=0, column=ci, sticky="nsew", padx=0, pady=2)
+        # 通栏的第二行：口径说明（不参与列对齐，所以单独一个 Label 跨全部列）
+        self.head_note = tk.Label(head, text=DETACHED_HINT, bg=theme.HEADER_BG,
+                                  fg=theme.MUTED, anchor="w", padx=4,
+                                  font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.head_note.grid(row=1, column=0, columnspan=len(TABLE_COLUMNS), sticky="ew")
         self.canvas = tk.Canvas(body, bg=theme.PANEL, highlightthickness=0,
                                 height=self._table_height(),
                                 highlightbackground=theme.BORDER)
@@ -984,53 +1019,99 @@ class BatchMixin:
         self.canvas.pack(side="left", fill="both", expand=True)
         self.inner = tk.Frame(self.canvas, bg=theme.PANEL)
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.canvas.bind("<Configure>",
-                         lambda e: self.canvas.itemconfigure(self._win, width=e.width))
-        # 滚轮：整个表格区域 + 行 + **滚动条本体**都能滚（见 ui/scroll.py）
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        # ⚠️ **列宽只在 `inner` 上配一次**（表头自己配一份）：grid 的列宽是按容器算的，
+        #    每行一个独立 grid 只能保证"行内对齐"、跨行还会差几个像素（实测 570 vs 561）。
+        #    现在所有行都 `grid(row=N)` 嵌在 `inner` 上 —— 列宽只有一个来源。
+        self._setup_columns(self.inner)
+        # 滚轮：表格区域 + **每一行** + 滚动条都能滚（见 ui/scroll.py 的接线说明）
         self.vs = VScroll(self.canvas, self.scroll, self.inner, win=self._win)
 
-    @staticmethod
-    def _setup_columns(frame: tk.Widget) -> None:
-        """给一行（或表头）配好列宽/拉伸（与 `TABLE_COLUMNS` 一一对应）。"""
-        frame.columnconfigure(1, minsize=30)
-        frame.columnconfigure(3, minsize=40)
-        frame.columnconfigure(4, minsize=52)
-        for ci, (_t, _w, stretch, _a) in enumerate(TABLE_COLUMNS):
+    def _on_canvas_configure(self, event) -> None:
+        """画布宽度变了 → 让内容跟着变宽（列宽由 `inner` 的 grid 分配）。"""
+        try:
+            self.canvas.itemconfigure(self._win, width=event.width)
+        except tk.TclError:
+            pass
+
+    def _setup_columns(self, frame: tk.Widget) -> None:
+        """配列宽/拉伸（**共享容器 `inner` 配一次**；表头自己配一次）。
+
+        ⚠️ **列宽必须只有一个来源**：grid 的列宽是"按容器"算的。过去每一行都是独立的
+        Frame（各自 grid），于是列宽只在行内成立、跨行仍会差（实测空位行的 `—` 在 x=570、
+        `不在基建` 行在 x=561，肉眼就是"没对齐"）。现在所有行都嵌在同一个 `inner` 上。
+        """
+        for ci, (_t, width, stretch, _a) in enumerate(TABLE_COLUMNS):
             if stretch:
-                frame.columnconfigure(ci, weight=1)
+                frame.columnconfigure(ci, weight=1, minsize=COL_MIN_STRETCH)
+            else:
+                frame.columnconfigure(ci, weight=0, minsize=width)
+
+    @staticmethod
+    def _text(parent, text: str, bg: str, fg: str, column: int, *,
+              anchor: str = "w", bold: bool = False, padx: int = 0,
+              wrap: int = 0, span: int = 0, sticky: str = "nsew", grid_row: int = 0):
+        """建一个**不会把列撑宽**的文字标签（表格里的统一做法）。
+
+        ⚠️ 关键在 `wraplength`：不给它，一个长名字（实测最长 307px）会让 grid 把整列
+        撑到那么宽 —— 于是"某几行的这一列特别宽"，肉眼看就是**没对齐**（只有 `minsize`
+        挡不住内容请求）。给一个上限之后，请求宽度就被夹住了（行高固定 24px，
+        超出部分由 Tk 直接裁掉）。
+        """
+        font = (theme.FONT_FAMILY, theme.FS_SMALL, "bold") if bold else \
+               (theme.FONT_FAMILY, theme.FS_SMALL)
+        lbl = tk.Label(parent, text=text, bg=bg, fg=fg, anchor=anchor,
+                       font=font, padx=padx, **({"wraplength": wrap} if wrap else {}))
+        lbl.grid(row=grid_row, column=column, sticky=sticky,
+                 **({"columnspan": span} if span else {}))
+        return lbl
 
     def _table_height(self) -> int:
         """表格可视高度：显式给了就用它；`"auto"`（设置中心）就**吃掉内容区的剩余高度**。
 
         为什么要 auto：等级区是网格，房间多的时候会占 2~5 行 —— 固定高度要么撑爆内容区、
         要么把等级区挤掉。让它吃剩余高度，等级区多高都不怕。
+
+        ⚠️ 这里只能**估**（建表格时搜索栏/表头还没建出来），少扣 1px 整页就会超 `PAGE_H`
+        （内容被裁、切页时窗口跳 —— 实测 22 间房就因此超了 3px）。所以真正保证"装得下"
+        的是 `_fit_table_height()` 的**自校正**：它量完实际高度再补差，不靠常量凑。
         """
         if self._table_h is not None:
             return int(self._table_h)
         self.update_idletasks()
         used = sum(w.winfo_reqheight() for w in self.winfo_children())
-        # 再扣两块**量不到**的：① 报错行（在表格之后才建，留 30px 余量）；
-        # ② 表格区内部的搜索栏 + 表头（`TABLE_CHROME`）。见那两个常量的注释。
-        # 剩下多少就给表格多少 —— 房间特别多时（22 间 → 等级区 200px）真的没有余量了，
-        # 这时宁可表格矮一点（有滚动条，照样能用），也不要让整页顶出 `PAGE_H`（会被裁）。
         return max(TABLE_H_MIN, int(self._page_h) - used - 30 - TABLE_CHROME)
 
     def _fit_table_height(self) -> None:
-        """`"auto"` 模式下**重新按当前内容**给表格定高（换排班/改等级后房间数会变）。
+        """`"auto"` 模式下**重新按当前内容**给表格定高，并**自校正到整页装得下**。
 
-        ⚠️ 只在建的时候算一次是不够的：等级区的行数随房间数变（22 间房要 4 行 ≈ +200px），
-        固定高度会撑着整页超出 `PAGE_H`（内容被裁、切页时窗口跳）。所以面板每次尺寸变化
-        都重算一遍——高度算错也不会死循环（值不变就不 configure）。
+        ⚠️ 只在建的时候算一次是不够的：等级区的行数随房间数变（22 间房要 5 行 ≈ +200px），
+        `_table_height()` 又是"建表格之前"跑的估计，量不到的东西（搜索栏、表头、报错行、
+        各层 pady）一多就会超。所以这里用**实际值**补差：
+
+        1. 先按当前内容算出目标高度；
+        2. `update_idletasks()` 之后量面板的真实请求高度，**超了就把表格压回去**，
+           直到装得下或压到 `TABLE_H_HARD_MIN`（值不变就不 configure，不会死循环）。
+
+        这样"表格上方又加了一行说明"之类的小改动不会再把整页顶出内容区。
         """
         if self._table_h is not None or not hasattr(self, "canvas"):
             return
         target = self._table_height()
+        if int(self._page_h) > 0:
+            # ⚠️ 这里**不能** `update_idletasks()`（那会重入正在派发的 `<Configure>`，
+            #    在构造期把别的控件搅乱 —— 实测触发 `invalid command name` 连片报错）。
+            #    用"上一次的真实高度"来算差：面板每变一次尺寸就再修一次，几帧内收敛。
+            over = self._fit_over
+            if over > 0:
+                target = max(TABLE_H_FLOOR, target - over)
         try:
             if int(self.canvas.cget("height")) != target:
                 self.canvas.configure(height=target)
                 self.vs.refresh(settle=False)
         except (tk.TclError, ValueError):
             pass
+        self._fit_over = max(0, self.winfo_reqheight() - int(self._page_h))
 
     def _sync_facilities(self) -> None:
         """把选中班次的布局拷成可改的形式。
@@ -1144,6 +1225,7 @@ class BatchMixin:
         return q in (name or "").lower() or q in (label or "").lower()
 
     def _row_filter_label(self, row) -> str:
+        """过滤时要一并匹配的"行标签"（房间名 / 「不在基建」段名）。"""
         kind, fi, _si, _name, label = row
         if kind == self.KIND_BENCH:
             return f"{DETACHED_ROOM} {DETACHED_TITLE}"
@@ -1158,10 +1240,26 @@ class BatchMixin:
                 if r[0] in (self.KIND_SLOT, self.KIND_BENCH) and r[3]]
 
     def _on_filter_change(self) -> None:
-        """搜索框输入 → 只重画表格（**不动心情状态**，所以不需要重算）。"""
+        """搜索框输入 → 只重画表格（**不动心情状态**，所以不需要重算）。
+
+        过滤时**保留滚动位置**（记下再恢复）：正看到一半被拉回顶部很难受。
+        """
         self._collect_moods()
+        self._keep_scroll_next = True
+        if hasattr(self, "canvas"):
+            try:
+                self._scroll_pos_save = self.canvas.yview()[0]
+            except tk.TclError:
+                self._scroll_pos_save = 0.0
         self._rebuild_rows()
         self._sync_filter_note()
+
+    def _restore_scroll(self, pos: float) -> None:
+        """把滚动位置挪回 `pos`（0.0~1.0；行数变了会自动钳位）。"""
+        try:
+            self.canvas.yview_moveto(max(0.0, min(1.0, float(pos))))
+        except (tk.TclError, ValueError):
+            pass
 
     def _sync_filter_note(self) -> None:
         if not hasattr(self, "filter_note"):
@@ -1262,69 +1360,80 @@ class BatchMixin:
             self._fill_rows(plan)
             self._sync_filter_note()
             return
+        # 过滤/重建时**保住滚动位置**（正看到一半被拉回顶部很难受）；
+        # 换排班 / 切班次那种"内容真的换了"的调用方会先 `yview_moveto(0)`。
+        # ⚠️ 名字别叫 `pos`：循环里有个"位次"单元格也叫 `pos`（Label），会把它覆盖成控件，
+        #    于是 `_restore_scroll(Label)` 抛 TypeError、**后面那行 `_sync_filter_note()` 就不执行**
+        #    ——表现是"搜索框有过滤、计数提示却还是空搜索的文案"（实测踩过）。
+        keep_scroll = self._keep_scroll_next
+        scroll_pos = self._scroll_pos_save if (keep_scroll and hasattr(self, "canvas")) else 0.0
+        self._keep_scroll_next = False
         for w in self.inner.winfo_children():
             w.destroy()
         self._rows = []
         for row_i, (kind, fi, si, name, label) in enumerate(plan):
             # 「房间分组卡片」＝ 通栏小标题行；「不在基建」的段首行也是通栏的
             card = kind == self.KIND_ROOM
-            home_card = card and fi == DETACHED_FI
             home = fi == DETACHED_FI                       # 「不在基建」那一段
             bg = (theme.OK_SOFT if home else
                   theme.PANEL_ALT if card else theme.zebra(row_i))
             fg = theme.OK if card else theme.TEXT
-            row = tk.Frame(self.inner, bg=bg)
-            row.pack(fill="x", padx=4, pady=(PAD_CARD_TOP if card else ROW_PAD,
-                                             ROW_PAD))
-            self._setup_columns(row)
-            r = {"key": (kind, fi, si), "kind": kind, "bg": bg, "name": name, "op": None,
-                 "entry": None, "elite": None, "dash": None, "remove": None}
+            # ⚠️ **所有单元格直接放上 `inner` 的共享 grid**（没有"每行一个 Frame"）。
+            #    列宽只有一个来源 ⇒ 严格对齐；行高由 `inner.rowconfigure(row_i, minsize=)`。
+            self.inner.rowconfigure(row_i, minsize=(CARD_H if card else ROW_H))
+            cells: List[tk.Widget] = []
+            r = {"key": (kind, fi, si), "grid_row": row_i, "kind": kind, "bg": bg,
+                 "name": name, "op": None,
+                 "entry": None, "elite": None, "dash": None, "remove": None,
+                 "cells": cells}
             if card:
-                # 通栏卡片：`[粗体] 制1 制造站#1 · Lv3 · 3/3 人`（不在基建那段再补一句口径）
-                room_lbl = tk.Label(row, text=(f"{'不在基建' if home else self._fac_tag(fi)}"
-                                               f"　{label}"), bg=bg, fg=fg, anchor="w",
-                                    font=(theme.FONT_FAMILY, theme.FS_SMALL, "bold"))
-                room_lbl.grid(row=0, column=0, columnspan=len(TABLE_COLUMNS), sticky="w",
-                              padx=(2, 0))
-                if home_card:
-                    tk.Label(row, text=DETACHED_HINT, bg=bg, fg=theme.MUTED, anchor="w",
-                             font=(theme.FONT_FAMILY, theme.FS_SMALL)
-                             ).grid(row=1, column=0, columnspan=len(TABLE_COLUMNS),
-                                    sticky="w", padx=(2, 0))
-                r["room"] = room_lbl
+                # 通栏卡片：`制1 制造站#1 · Lv3 · 3/3 人`（口径说明在表头那一行）
+                lbl = self._text(self.inner, f"{'不在基建' if home else self._fac_tag(fi)}"
+                                             f"　{label}", bg, fg, 0, bold=True, padx=6,
+                                 wrap=CARD_WRAP, span=len(TABLE_COLUMNS), sticky="ew",
+                                 grid_row=row_i)
+                r["room"] = lbl
+                cells.append(lbl)
             else:
-                r["pos"] = tk.Label(row, text=(f"{si + 1}" if kind == self.KIND_SLOT else ""),
-                                    bg=bg, fg=theme.MUTED, width=TABLE_COLUMNS[1][1],
-                                    anchor=TABLE_COLUMNS[1][3],
-                                    font=(theme.FONT_FAMILY, theme.FS_SMALL))
-                r["pos"].grid(row=0, column=1, sticky="ew", padx=1)
-                r["op"] = self._op_label(row, fi, si, name, bg=bg)
-                r["op"].grid(row=0, column=2, sticky="ew", padx=1)
-                r["elite"] = ttk.Combobox(row, state="readonly", width=3,
+                pos = self._text(self.inner, f"{si + 1}" if kind == self.KIND_SLOT else "",
+                                 bg, theme.MUTED, 1, anchor=TABLE_COLUMNS[1][3],
+                                 wrap=60, grid_row=row_i)
+                r["pos"] = pos
+                cells.append(pos)
+                r["op"] = self._op_label(self.inner, fi, si, name, bg=bg, grid_row=row_i)
+                r["op"].grid(row=row_i, column=2, sticky="nsew", padx=2)
+                cells.append(r["op"])
+                r["elite"] = ttk.Combobox(self.inner, state="readonly", width=1,
                                           values=[f"E{i}" for i in range(3)])
                 r["elite"].bind("<<ComboboxSelected>>",
                                 lambda _e, n=name: self._on_elite_change(n))
-                r["elite"].grid(row=0, column=3, sticky="ew", padx=1)
-                r["entry"] = ttk.Entry(row, width=6)
-                r["entry"].grid(row=0, column=4, sticky="ew", padx=1)
-                r["dash"] = tk.Label(row, text="—", bg=bg, fg=theme.MUTED, anchor="w",
-                                     font=(theme.FONT_FAMILY, theme.FS_SMALL))
-                r["remove"] = ttk.Button(row, text="×", width=2,
+                r["elite"].grid(row=row_i, column=3, sticky="ew", padx=ELITE_PAD)
+                cells.append(r["elite"])
+                r["entry"] = ttk.Entry(self.inner, width=1)
+                r["entry"].grid(row=row_i, column=4, sticky="ew", padx=MOOD_PAD)
+                cells.append(r["entry"])
+                dash = self._text(self.inner, "—", bg, theme.MUTED, 5, wrap=DASH_WRAP,
+                                  padx=2, grid_row=row_i)
+                r["dash"] = dash
+                cells.append(dash)
+                r["remove"] = ttk.Button(self.inner, text="×", width=2,
                                          command=lambda n=name: self._undetach_operator(n))
-            self._bind_hover(row, r)
+                cells.append(r["remove"])
+            self._bind_hover(r)
             self._rows.append(r)
-            self.vs.join(row)
-        if not plan:
-            tk.Label(self.inner, text="（这一班没有位置）", bg=theme.PANEL, fg=theme.MUTED,
-                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=6, pady=6)
-        elif not any(r["kind"] == self.KIND_SLOT for r in self._rows):
-            tk.Label(self.inner, text="（没有匹配的行 —— 清空搜索框可看全部）",
-                     bg=theme.PANEL, fg=theme.MUTED,
-                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=6, pady=6)
+        if not plan or not any(r["kind"] == self.KIND_SLOT for r in self._rows):
+            msg = ("（这一班没有位置）" if not plan
+                   else "（没有匹配的行 —— 清空搜索框可看全部）")
+            self._text(self.inner, msg, theme.PANEL, theme.MUTED, 0, padx=6,
+                       span=len(TABLE_COLUMNS), sticky="w", grid_row=len(plan))
         self._fill_rows(plan)
         if hasattr(self, "vs"):
             self.vs.refresh()          # 行数变了 → 重算滚动区间
-        self.canvas.yview_moveto(0)
+        # 回顶部只在"换了一整套内容"时做；**搜索过滤**时要保留位置（正看到一半被拉回顶部很难受）
+        if keep_scroll:
+            self._restore_scroll(scroll_pos)
+        else:
+            self.canvas.yview_moveto(0)
         self._sync_filter_note()
 
     def _fac_tag(self, fac_index: int) -> str:
@@ -1338,53 +1447,75 @@ class BatchMixin:
                                .world.facilities[:fac_index] if f.ftype == fac.ftype])
         return facility_tag(fac, ordinal)
 
-    def _bind_hover(self, row: tk.Frame, r: dict) -> None:
+    def _bind_hover(self, r: dict) -> None:
         """悬停高亮：指针在哪一行，那一行底色就变浅蓝（"我正指着哪一行"）。
 
         ⚠️ 要绑**行和它的每个子控件**：指针从行移进子控件时，Tk 会先给行发 `<Leave>`、
         再给子控件发 `<Enter>`；只绑行的话会闪一下。所以 `_unhover` 先问一句
         "指针还在不在这一行的范围里"，在就不撤。
         ⚠️ 程序化重建（销毁子控件）时 `winfo_containing` 会抛 TclError → 延后一帧执行。
+        ⚠️ **滚动期间一律不画**（`_scrolling()`）：滚一下会连着触发几十次 Enter/Leave，
+        每次都刷一行底色 → 手感"卡壳"。滚完 120ms 由 `VScroll` 通知恢复（见下）。
+        ⚠️ 顺手把**这一行的每个单元格**接进滚轮作用域（`vs.join`）：Tk 的 bindtags 链是
+        「控件 → 控件类 → toplevel → all」，**不含父控件**，所以光把 tag 挂在 `inner` 上
+        挡不住"指针停在行里的 `Label` 上"——实测就是这样滚轮没反应（`bench` 那段曾
+        因下面那行 `return` 整段漏挂）。一行 6 个控件 × 78 行，比"每格重画"便宜得多。
         """
+        for w in r["cells"]:
+            if hasattr(self, "vs"):
+                self.vs.join(w)
         if r["kind"] == self.KIND_BENCH:
             return                              # 「不在基建」那段保持淡绿底，不做悬停
+        cells = r["cells"]
+
         def enter(_e=None):
-            self._hover_row = row
+            if self._scrolling():
+                return
+            self._hover_row = r
             self._paint_row(r, theme.HOVER)
+
         def leave(_e=None):
-            if self._hover_row is row:
+            if self._hover_row is r:
                 self._hover_row = None
-            row.after_idle(lambda: self._unhover(row, r))
-        widgets = [w for w in (row, r.get("room"), r.get("pos"), r.get("op"),
-                               r.get("elite"), r.get("entry"), r.get("dash"),
-                               r.get("remove")) if w is not None]
-        for w in widgets:
+            if self._scrolling():
+                return
+            # 延后一帧再判断（指针可能只是移到了同一行的另一个单元格上）
+            try:
+                cells[0].after_idle(lambda: self._unhover(r))
+            except (tk.TclError, IndexError):
+                pass
+
+        for w in cells:
             w.bind("<Enter>", enter, add="+")
             w.bind("<Leave>", leave, add="+")
 
-    def _unhover(self, row: tk.Frame, r: dict) -> None:
-        """指针确实离开这一行了才撤回高亮。"""
+    def _scrolling(self) -> bool:
+        """当前是不是正在滚动（`VScroll` 在滚动开始/结束时会置位）。"""
+        return bool(getattr(self.vs, "scrolling", False)) if hasattr(self, "vs") else False
+
+    def _unhover(self, r: dict) -> None:
+        """指针确实不在这一行的任何一个单元格里了，才撤回高亮。"""
         try:
-            if not row.winfo_exists():
-                return
-            x, y = row.winfo_pointerxy()
-            left, top = row.winfo_rootx(), row.winfo_rooty()
-            if left <= x < left + row.winfo_width() and top <= y < top + row.winfo_height():
-                return                      # 指针还在这一行里（只是移到了子控件上）
+            x, y = self.inner.winfo_pointerxy()
+            for w in r["cells"]:
+                if not w.winfo_exists():
+                    continue
+                left, top = w.winfo_rootx(), w.winfo_rooty()
+                if (left <= x < left + w.winfo_width()
+                        and top <= y < top + w.winfo_height()):
+                    return                  # 还在这行里（只是换了单元格）
         except tk.TclError:
             return
         self._paint_row(r, r.get("bg") or theme.PANEL)
 
     @staticmethod
     def _paint_row(r: dict, bg: str) -> None:
-        """把一行（含它的子控件）刷成某个底色。"""
-        for key in ("room", "pos", "op", "dash"):
-            w = r.get(key)
-            if w is not None:
-                try:
-                    w.configure(bg=bg)
-                except tk.TclError:
-                    pass
+        """把这一行的**所有单元格**刷成某个底色（行不再是控件，只是"同一 grid 行的一组控件"）。"""
+        for w in r["cells"]:
+            try:
+                w.configure(bg=bg)
+            except tk.TclError:
+                pass
 
     def _fill_rows(self, plan) -> None:
         """把计划写进行控件（心情输入框按干员名重新绑定，空位显示 —）。
@@ -1417,10 +1548,12 @@ class BatchMixin:
                     if r["elite"].winfo_manager():
                         r["elite"].grid_remove()
                     if not r["remove"].winfo_manager():
-                        r["remove"].grid(row=0, column=3, sticky="w", padx=1)
+                        # ⚠️ 列内边距必须与练度下拉**完全一致**（`ELITE_PAD`），
+                        #    否则同一列的两种行会差几像素（实测 434 vs 437）
+                        r["remove"].grid(row=r["grid_row"], column=3, sticky="w", padx=ELITE_PAD)
                     r["dash"].configure(text=(self._detached_elsewhere(name) or "—"))
                     if not r["dash"].winfo_manager():
-                        r["dash"].grid(row=0, column=5, sticky="ew", padx=1)
+                        r["dash"].grid(row=r["grid_row"], column=5, sticky="ew")
                 else:
                     if r["remove"].winfo_manager():
                         r["remove"].grid_remove()
@@ -1430,19 +1563,24 @@ class BatchMixin:
                     self._elite_vars[name] = ev
                     r["elite"].configure(textvariable=ev)
                     if not r["elite"].winfo_manager():
-                        r["elite"].grid(row=0, column=3, sticky="ew", padx=1)
+                        r["elite"].grid(row=r["grid_row"], column=3, sticky="ew", padx=ELITE_PAD)
             else:
                 for key in ("entry", "elite", "remove", "dash"):
                     if r[key].winfo_manager():
                         r[key].grid_remove()
                 if not r["dash"].winfo_manager() and not bench:
-                    r["dash"].grid(row=0, column=5, sticky="ew", padx=1)
+                    r["dash"].grid(row=r["grid_row"], column=5, sticky="ew")
 
-    def _op_label(self, row, fac_index: int, slot_index: int, name: str,
-                  bg: str = theme.PANEL) -> tk.Label:
-        """干员单元格：可点的文字（点开搜索窗换人 / 选人 / 清空）。"""
-        label = tk.Label(row, text=(name or "（空位 · 点这里选人）"), bg=bg,
+    def _op_label(self, parent, fac_index: int, slot_index: int, name: str,
+                  bg: str = theme.PANEL, grid_row: int = 0) -> tk.Label:
+        """干员单元格：可点的文字（点开搜索窗换人 / 选人 / 清空）。
+
+        `wraplength=OP_WRAP` 是**对齐的关键**：不夹住的话长名字会把"干员"列撑宽
+        （实测最长 307px），于是各行的列宽不一致、看起来就是歪的。
+        """
+        label = tk.Label(parent, text=(name or "（空位 · 点这里选人）"), bg=bg,
                          fg=(theme.TEXT if name else theme.MUTED), anchor="w", cursor="hand2",
+                         wraplength=OP_WRAP,
                          font=(theme.FONT_FAMILY, theme.FS_SMALL))
         label.bind("<Button-1>",
                    lambda _e: self._pick_operator(fac_index, slot_index))

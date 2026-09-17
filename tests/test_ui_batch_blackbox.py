@@ -272,18 +272,43 @@ class Test批量设置(unittest.TestCase):
         self.assertIn("·", text)
 
     def test_等宽列与对齐(self):
-        """位置行的各列都**落在同一列**上（grid 等宽，而不是各 pack 各的）。"""
+        """位置行的各列都**落在同一列**上（共享 grid 等宽）。
+
+        表格的全部单元格都在 `inner` 的**同一个 grid** 上 —— 列宽只有一个来源，
+        所以"表头 / 空位行 / 有人的行 / 不在基建行"的每一列 x 坐标都完全一致
+        （曾经每行一个独立 Frame，列宽只在行内成立，实测跨行差 9px）。
+        """
+        app = self.app
         dlg = self._open(0)
         slots = [r for r in dlg._rows if r["kind"] == dlg.KIND_SLOT and r["name"]]
         self.assertTrue(slots)
+        self.assertEqual(slots[0]["grid_row"], 1)       # 第 0 行是房间分组卡片
         for r in slots[:5]:
             for key in ("pos", "op", "elite", "entry"):
                 info = r[key].grid_info()
-                self.assertEqual(int(info["row"]), 0, key)
+                self.assertEqual(int(info["row"]), r["grid_row"], key)
+                self.assertEqual(str(info["in"]), str(dlg.inner), key)
             self.assertEqual(int(r["pos"].grid_info()["column"]), 1)
             self.assertEqual(int(r["op"].grid_info()["column"]), 2)
             self.assertEqual(int(r["elite"].grid_info()["column"]), 3)
             self.assertEqual(int(r["entry"].grid_info()["column"]), 4)
+        # 同一列的 x 坐标逐行一致（这是"对齐"的硬指标）
+        app.update_idletasks()
+        import collections
+        xs = collections.defaultdict(set)
+        for r in dlg._rows:
+            for key in ("pos", "op", "elite", "entry", "dash"):
+                w = r.get(key)
+                if w is None or not w.winfo_manager() or w.winfo_width() <= 1:
+                    continue
+                xs[int(w.grid_info()["column"])].add(w.winfo_x())
+        self.assertTrue(xs)
+        for col, got in xs.items():
+            self.assertEqual(len(got), 1, f"列 {col} 的 x 坐标有 {sorted(got)} 种（未对齐）")
+        # 像素固定列：房间 96 / 位次 40 / 练度 56 / 心情 72（不随内容变宽）
+        for col, want in ((0, 96), (1, 40), (3, 56), (4, 72)):
+            self.assertEqual(dlg.inner.grid_columnconfigure(col)["minsize"], want,
+                             f"列 {col} 该是固定 {want}px")
 
     def test_搜索过滤(self):
         """搜索框：输入即过滤（匹配名字/房间），清空恢复全部，且**不动心情状态**。"""

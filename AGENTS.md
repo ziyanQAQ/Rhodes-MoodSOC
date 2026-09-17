@@ -133,10 +133,15 @@ documents/
     ③ 加程序接口能力 = 在 `api/ops.py` 加一个 op（步骤见 `documents/11-程序接口.md` §7）；
     ④ 老路径 `mood_soc.importer/output/scenario/maa`、`ui.schedule` 是**兼容转发壳**，别往里加逻辑。
 
-19. **表格的滚轮/搜索/高度是一套**：`ui/scroll.py` 一次滚 3 行（`UNITS_PER_NOTCH`）、
-    `Shift` 整页、`Ctrl` 10 行、`PgUp/PgDn/Home/End`；「干员与心情」的**搜索过滤**只影响显示
-    （一键动作的范围走 `_visible_names()`）；`_table_height()` 量的是"**已建出来**的兄弟控件"，
-    所以**表格必须最后建**、`TABLE_CHROME` 要跟着表格上方的改动重量（见 10-图形界面.md §5 第 16~18 条）。
+19. **表格的滚轮 / 搜索 / 对齐 / 高度是一套**（「干员与心情」）：
+    ① **列宽只有一个来源**——所有单元格 `grid` 到**共享的 `inner`**（不再是"每行一个 Frame"）；
+    `TABLE_COLUMNS` 的非拉伸列用**像素**写死，长文字一律给 `wraplength`；改了行里的控件要
+    三处一起想：`vs.join`（滚轮）／进 `r["cells"]`（悬停底色）／`row=r["grid_row"]`（列位）；
+    ② **bindtags 链不含父控件** ⇒ 没有行 Frame 就必须**逐格 `join`**，否则"停在文字上滚不动"；
+    ③ **滚动别卡**：`refresh()` 有尺寸签名缓存、滚动期间关掉悬停高亮（`VScroll.scrolling`）；
+    ④ 搜索过滤只影响显示（一键动作范围走 `_visible_names()`）；`_table_height()` 量的是
+    "**已建出来**的兄弟控件"，所以**表格必须最后建**、`TABLE_CHROME` 要跟着表格上方的改动重量，
+    超出 `PAGE_H` 由 `_fit_table_height()` 自校正兜底（见 10-图形界面.md §5 第 16~20 条）。
 
 ---
 
