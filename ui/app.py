@@ -29,39 +29,26 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from store.session import Session  # noqa: E402
 from ui import theme  # noqa: E402
-from ui.board import BaseBoard, elite_badge, facility_tag  # noqa: E402
+from ui.board import BaseBoard, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
 from ui.dialogs import ask_operator, ask_level, ask_mood  # noqa: E402
 from ui.roster import RosterStrip  # noqa: E402
-from ui.schedule import (MoodSetEvent, Schedule, Trajectory, all_operator_names,  # noqa: E402
-                         default_initial_moods, load_schedule, load_schedule_ex,
-                         simulate_schedule)
-from mood_soc import entry_event_holders, entry_target_kind  # noqa: E402
-from mood_soc import mood_skill_summary  # noqa: E402
+# 视图**只从 store 取计算与状态**：排班引擎、装配、心情查询都在 Session 与 store.schedule 里。
+from ui.schedule import all_operator_names  # noqa: E402  （转发自 store.schedule）
+from mood_soc import entry_target_kind  # noqa: E402
 from mood_soc.battery import to_decimal  # noqa: E402
-from mood_soc.config import (MOOD_MAX, FacilityType, facility_max_level,  # noqa: E402
-                             facility_slots)
-from mood_soc.models import IdleToDormEntry, normalize_entry_when  # noqa: E402
+from mood_soc.config import MOOD_MAX, facility_max_level, facility_slots  # noqa: E402
+from mood_soc.models import normalize_entry_when  # noqa: E402
 from data.paths import MAA_SAMPLE, RES as DATA_RES  # noqa: E402
 
 SAMPLE = MAA_SAMPLE          # 冷启动自载的示例排班（`data/resources/…`，见 data/paths.py）
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
 
-
-def _dorm_index_of(label) -> Optional[int]:
-    """「宿舍01」→ `1`；不是这种标签（人名 / 空）就返回 `None`。"""
-    text = (label or "").strip()
-    if text.startswith("宿舍") and text[2:].isdigit():
-        return int(text[2:])
-    return None
-
-
-def _idle_label_of(entry) -> Optional[str]:
-    """`IdleToDormEntry` → 下拉里的标签（`宿舍01` 或 人名；都没有 = 自动）。"""
-    if getattr(entry, "dorm", None) is not None:
-        return f"宿舍{entry.dorm:02d}"
-    return (getattr(entry, "swap_with", None) or None)
+# 注：「宿舍01」↔ `IdleToDormEntry.dorm` 的翻译、以及 `IdleToDormEntry` → 下拉标签，
+#     都已搬到 `store/session.py`（`_dorm_index_of` / `_idle_label_of`）—— 那是**语义**，
+#     程序接口也要用同一套；界面只负责把标签画进下拉框。
 
 # 播放速度：单位是 **模拟秒 / 真实秒（s/s）** —— `1x` 就是实时（1 秒推进 1 模拟秒）。
 # 24h 周期在 1x 下要放 24 小时，所以档位往上给到"4 小时/秒"（＝14400x）。
@@ -77,6 +64,20 @@ PLAY_SPEED_HINTS = {
 PLAY_TICK_MS = 60
 
 
+class _ViewVar:
+    """**ViewVar** —— 长得像 `tk.BooleanVar` 的轻量视图（没有 .get(_var) 的重载）。"""
+
+    def __init__(self, session, field: str):
+        object.__setattr__(self, "_session", session)
+        object.__setattr__(self, "_field", field)
+
+    def get(self) -> bool:
+        return bool(getattr(self._session, self._field))
+
+    def set(self, value) -> None:
+        setattr(self._session, self._field, bool(value))
+
+
 class MoodSocApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -86,14 +87,10 @@ class MoodSocApp(tk.Tk):
         self.minsize(1400, 780)
         self.configure(bg=theme.BG)
 
-        self.schedule: Schedule | None = None
-        self.traj: Trajectory | None = None
-        self.initial_moods: dict = {}          # 手动设过的心情（覆盖布局里的值）
-        # 「心情指定事件」＝「干员与心情」面板里的**锚点**（`MoodSetEvent` 列表）：
-        # 在 (周期, 周期内时刻) 把某人心情直接置为给定值。周期起点(第1周期 0:00)的锚点
-        # 由面板写成 `initial_moods`，不进这个列表。
-        self.mood_events: list = []
-        self.cycles = 1
+        # **状态与重算都在 Session**（`store/session.py`）：图形界面只是它的视图。
+        # 下面这些 `self.xxx` 都是**别名**（property / ViewVar），没有第二份状态 ——
+        # 这样程序接口（`api/`）与界面永远算的是同一件事。
+        self.session = Session()
         # 周期数是**设置中心**里的一个控件；变量挂在 app 上（唯一真源），
         # 设置窗口只是把它接到下拉框上——工具栏时代它挂在工具栏里。
         self.cycles_var = tk.StringVar(value="1")
@@ -102,20 +99,14 @@ class MoodSocApp(tk.Tk):
         self.follow_slider = tk.BooleanVar(value=False)
         self.settings_dlg = None               # 「设置」中心的窗口（唯一设置入口）
         # 「导入排班」读到的附赠信息（见 mood_soc/importer.py）：
-        self.operator_pool: list = []          # 干员池 [{name, elite, level, own}]（v4 蓝图才有）
-        self.initial_global: dict = {}         # 变量初始值（v4 的 initial_global）
-        self.import_summary = ""               # 导入摘要（状态栏那一句）
-        self.import_reports: list = []         # 每个文件的导入报告（明细见 details()）
-        self.entry_events = tk.BooleanVar(value=False)
+        self.entry_events = _ViewVar(self.session, "entry_events")
         self.entry_swap_with: Optional[str] = None     # None = 默认「前一位进驻」；"any" = 自动挑最累的
         self.entry_scope = "dorm"                      # "dorm" 仅同宿舍 / "anywhere" 基建任意位置
         self.entry_restore_back = True                 # 界面固定：只换心情、两人留原位
         self.entry_when = "full"                       # wait（勾了强制切换：等她满）/ full（没满就不换）
         self.entry_per_shift: list = []                # 按班次覆盖（EntryShiftOverride 列表）
         # 闲置入宿（未满的闲置干员进宿舍）：总开关 + 逐人设置 {名字: (参与, 换谁 或 None)}
-        self.idle_to_dorm = tk.BooleanVar(value=False)
-        self.idle_entries: dict = {}      # {(周期, 班次, 干员): (参与, 目标标签)}
-        self.idle_globals: dict = {}      # {干员: (参与, 目标标签)} 不限班次/周期（来自 JSON）
+        self.idle_to_dorm = _ViewVar(self.session, "idle_to_dorm")
         self.play_speed = Decimal("1")
         self.current_t = Decimal("0")
         self.curve_operator = ""
@@ -139,6 +130,124 @@ class MoodSocApp(tk.Tk):
         self._space_only_plays(self)          # 空格永远＝播放/暂停（别去"按下"聚焦的按钮）
 
         self._autoload_job = self.after(60, self._autoload_sample)
+
+    # ================================================================== 状态别名
+    # 下面全是 `self.session` 的**别名**（视图读写的还是同一份状态）。
+    # 为什么留着它们：`ui/` 其余文件与全部界面测试都按 `app.schedule` / `app.initial_moods`
+    # 这套名字取值，别名让"状态搬家"不改变任何调用点的写法。
+    @property
+    def schedule(self):
+        return self.session.schedule
+
+    @schedule.setter
+    def schedule(self, value):
+        self.session.schedule = value
+
+    @property
+    def traj(self):
+        return self.session.traj
+
+    @traj.setter
+    def traj(self, value):
+        self.session.traj = value
+
+    @property
+    def initial_moods(self):
+        return self.session.initial_moods
+
+    @initial_moods.setter
+    def initial_moods(self, value):
+        self.session.initial_moods = dict(value)
+
+    @property
+    def mood_events(self):
+        return self.session.mood_events
+
+    @mood_events.setter
+    def mood_events(self, value):
+        self.session.mood_events = list(value or ())
+
+    @property
+    def cycles(self) -> int:
+        return self.session.cycles
+
+    @cycles.setter
+    def cycles(self, value: int) -> None:
+        self.session.cycles = int(value)
+
+    @property
+    def operator_pool(self):
+        return list(getattr(self.session.loaded, "pool", []) or [])
+
+    @property
+    def initial_global(self):
+        return dict(getattr(self.session.loaded, "initial_global", {}) or {})
+
+    @property
+    def import_reports(self):
+        return list(getattr(self.session.loaded, "reports", []) or [])
+
+    @property
+    def import_summary(self) -> str:
+        loaded = self.session.loaded
+        return loaded.summary() if loaded is not None else ""
+
+    @property
+    def idle_entries(self):
+        return self.session.idle_entries
+
+    @idle_entries.setter
+    def idle_entries(self, value):
+        self.session.idle_entries = dict(value)
+
+    @property
+    def idle_globals(self):
+        return self.session.idle_globals
+
+    @idle_globals.setter
+    def idle_globals(self, value):
+        self.session.idle_globals = dict(value)
+
+    # —— 进驻事件（换心情）的四项设置：住在 Session 上，界面按别名读写 ——
+    @property
+    def entry_swap_with(self):
+        return self.session.entry_swap_with
+
+    @entry_swap_with.setter
+    def entry_swap_with(self, value):
+        self.session.entry_swap_with = value
+
+    @property
+    def entry_scope(self):
+        return self.session.entry_scope
+
+    @entry_scope.setter
+    def entry_scope(self, value):
+        self.session.entry_scope = value
+
+    @property
+    def entry_restore_back(self):
+        return self.session.entry_restore_back
+
+    @entry_restore_back.setter
+    def entry_restore_back(self, value):
+        self.session.entry_restore_back = bool(value)
+
+    @property
+    def entry_when(self):
+        return self.session.entry_when
+
+    @entry_when.setter
+    def entry_when(self, value):
+        self.session.entry_when = value
+
+    @property
+    def entry_per_shift(self):
+        return self.session.entry_per_shift
+
+    @entry_per_shift.setter
+    def entry_per_shift(self, value):
+        self.session.entry_per_shift = list(value or ())
     # ================================================================== 样式
     def _init_style(self):
         st = ttk.Style(self)
@@ -265,7 +374,7 @@ class MoodSocApp(tk.Tk):
         return self._editing_shift_index()
 
     def imported_moods(self) -> dict:
-        return default_initial_moods(self.schedule) if self.schedule else {}
+        return self.session.imported_moods()
 
     def moods_now(self) -> dict:
         return self.moods_at_now()
@@ -414,43 +523,17 @@ class MoodSocApp(tk.Tk):
         格式**自动识别**（`mood_soc/importer.py`）：本工具场景 / MAA 排班 / v3 求解输出 /
         v4 蓝图+干员池——点一次「导入排班…」即可，不需要先选格式。
         """
-        ld = load_schedule_ex(paths)
-        sch = ld.schedule
         # 设置中心里握着"当前排班"（面板建好后就认那一份）→ 换排班前先把它关掉，
         # 免得面板往旧 schedule 上写（各个面板都是进入分区时按最新排班重建的）。
         if self.settings_dlg is not None and self.settings_dlg.winfo_exists():
             self.settings_dlg.destroy()
         self.settings_dlg = None
-        self.schedule = sch
-        # 干员池（v4 蓝图那类文件带）与变量初始值：给「干员与心情」选人用
-        self.operator_pool = list(ld.pool)
-        self.initial_global = dict(ld.initial_global)
-        self.import_summary = ld.summary()
-        self.import_reports = list(ld.reports)
-        self.initial_moods.clear()
+        # 装配（解析 → 排班 → 池/变量初始值/导入报告 → 同步 JSON 里的设置）**全在 Session 里**：
+        # `load_paths` 读完文件会顺手把 `entry_events` / `idle_to_dorm` / `initial_global`
+        # 同步成会话设置，界面只负责把它们画出来。
+        self.session.load_paths(paths)
         self.current_t = Decimal("0")
-        # 场景 JSON 顶层可以带进驻事件配置（换不换 / 换谁）→ 同步到界面的开关与下拉
-        cfg = sch.entry_config()
-        self.entry_events.set(bool(cfg.enabled))
-        self.entry_swap_with = cfg.swap_with
-        self.entry_scope = getattr(cfg, "scope", "dorm")
-        # 「位置也一起互换」按用户要求从界面收掉：界面固定"只换心情、两人留原位"。
-        # 场景 JSON 里写 restore_back: false 会被这条界面口径覆盖（CLI / API 不受影响）。
-        self.entry_restore_back = True
-        self.entry_when = normalize_entry_when(getattr(cfg, "when", None)) or "full"
-        self.entry_per_shift = list(getattr(cfg, "per_shift", []) or [])
         self._sync_entry_label()
-        # 场景 JSON 顶层的 idle_to_dorm 也同步过来
-        idle_cfg = getattr(sch.shifts[0].world, "idle_to_dorm", None) if sch.shifts else None
-        self.idle_to_dorm.set(bool(getattr(idle_cfg, "enabled", False)))
-        self.idle_entries = {}
-        self.idle_globals = {}
-        for e in (getattr(idle_cfg, "per_operator", None) or []):
-            label = _idle_label_of(e)
-            if e.cycle is None and e.shift is None:
-                self.idle_globals[e.name] = (bool(e.enabled), label)   # 不限班次/周期
-            else:
-                self.idle_entries[(e.cycle or 1, e.shift or 1, e.name)] = (bool(e.enabled), label)
         self._sync_idle_label()
         self._build_shift_buttons()
         # ⚠️ 顺序：先 `recompute`（重建 traj），再 `_sync_operator_box`（挑一个**新排班里存在**的
@@ -482,20 +565,10 @@ class MoodSocApp(tk.Tk):
         t0 = time.perf_counter()
         self.status.configure(text="计算中…")
         self.update_idletasks()
-        self.traj = simulate_schedule(self.schedule, cycles=self.cycles,
-                                      initial_moods=self.initial_moods,
-                                      entry_events=self.entry_events.get(),
-                                      entry_swap_with=self.entry_swap_with,
-                                      entry_scope=self.entry_scope,
-                                      entry_restore_back=self.entry_restore_back,
-                                      entry_when=self.entry_when,
-                                      # ⚠️ 原样传（不要把 `[]` 变成 None）：`None` 会让引擎
-                                      #    回退去读排班自带的 `per_shift`（导入时可能带来了
-                                      #    Fiammetta 的逐班配置），而界面里"全不勾"就该是"没有覆盖"。
-                                      entry_per_shift=list(self.entry_per_shift),
-                                      idle_to_dorm=self.idle_to_dorm.get(),
-                                      idle_entries=self._idle_entry_list(),
-                                      mood_events=list(self.mood_events))
+        # 重算**只有一条路径**：`Session.recompute()`（它自己读会话里的全部设置，
+        # 包括"全不勾的 per_shift 要原样传空列表"那条口径，见 store/session.py）。
+        self.session.recompute()
+        self.session.last_recompute_ms = (time.perf_counter() - t0) * 1000
         total = self._total_hours()
         if fit_slider or self.current_t > total:
             self.current_t = Decimal("0")
@@ -512,11 +585,8 @@ class MoodSocApp(tk.Tk):
         self._sync_entry_label()
         self._sync_idle_label()
         self.refresh_view()
-        ms = (time.perf_counter() - t0) * 1000
-        self.status.configure(
-            text=f"{len(self.schedule.shifts)} 班 / 周期 {theme.fmt_hours(self.schedule.cycle_hours)}"
-                 f"　干员 {len(self.traj.names)} 名　轨迹节点 {len(self.traj.times)}"
-                 f"　重算耗时 {ms:.0f} ms　｜　{self._entry_status()}　｜　{self._idle_status()}")
+        self.status.configure(text=self.session.status_text()
+                                   + f"　｜　{self._entry_status()}　｜　{self._idle_status()}")
 
     def _refresh_layout(self, quick: bool = False):
         """看板只在"当前时刻所在班次的布局"变化时刷新（房间结构没变则只换内容）。
@@ -634,7 +704,7 @@ class MoodSocApp(tk.Tk):
         self.set_time(self.current_t + delta)
 
     def _total_hours(self) -> Decimal:
-        return self.schedule.cycle_hours * self.cycles if self.schedule else Decimal("0")
+        return self.session.total_hours
 
     def _shift_span_text(self, idx: int) -> str:
         s = self.schedule.shifts[idx]
@@ -676,13 +746,13 @@ class MoodSocApp(tk.Tk):
                               title=f"{facility.display_name} · 第 {slot_index + 1} 位")
         if picked is None:
             return
-        facs = self._facilities_of(idx)
         ops = [o.name for o in facility.operators]
         while len(ops) <= slot_index:
             ops.append("")
         ops[slot_index] = picked                      # "" = 清空
-        facs[fac_index]["operators"] = [o for o in ops if o]
-        self._apply_facilities(idx, facs)
+        self.session.set_slots(idx, fac_index, ops)
+        self._layout_sig = None
+        self.recompute()
 
     def on_slot_right(self, fac_index: int, slot_index: int):
         """右键：设置该位置干员的心情（周期起点）。"""
@@ -712,9 +782,9 @@ class MoodSocApp(tk.Tk):
                            lambda lv: facility_slots(ftype, lv))
         if new_lv is None or new_lv == facility.level:
             return
-        facs = self._facilities_of(idx)
-        facs[fac_index]["level"] = int(new_lv)
-        self._apply_facilities(idx, facs)
+        self.session.set_room_level(idx, fac_index, int(new_lv))
+        self._layout_sig = None
+        self.recompute()
         self.status.configure(
             text=f"{facility.display_name} 已设为 Lv{new_lv}"
                  f"（可放 {facility_slots(ftype, new_lv)} 人）"
@@ -746,15 +816,11 @@ class MoodSocApp(tk.Tk):
         v = ask_mood(self, who, current)
         if v is None:
             return
-        self.initial_moods[who] = Decimal(v)
+        self.session.set_initial_mood(who, v)
         self.recompute()
 
     def _current_start_mood(self, who: str) -> Decimal:
-        if self.schedule:
-            for op in self.schedule.shifts[0].world.all_operators():
-                if op.name == who:
-                    return op.mood
-        return Decimal("24")
+        return self.session.imported_moods().get(who, MOOD_MAX)
 
     def moods_at_now(self) -> dict:
         """滑块所在时刻的实际心情（设置中心用它做「按当前时刻回填」）。"""
@@ -762,32 +828,17 @@ class MoodSocApp(tk.Tk):
 
     def moods_at_abs(self, t) -> dict:
         """**任意**绝对时刻的实际心情（「干员与心情」按指定时刻显示心情列用的口子）。"""
-        return self.traj.moods_at(t) if self.traj is not None else {}
+        return self.session.moods_at(t)
 
     # ------------------------------------------------------------ 闲置入宿
     def _idle_entry_list(self):
-        """把界面的逐次设置转成 `[IdleToDormEntry, ...]`——**只列改过默认的**
-        （勾掉不参与的、或指定了目标的人）；没人改过就返回 `None`（＝全都参与、全自动）。
+        """把界面的逐次设置转成 `[IdleToDormEntry, ...]`（口径在 `Session.idle_entry_list()`）。
 
-        目标有两类，界面用同一个下拉表达：
-        - `宿舍01`/`宿舍02`…（**放进那间宿舍的空位**，不动任何人）→ `dorm=序号`
-        - 干员名（**与这位满心情的宿舍干员互换**，他换出来闲置）→ `swap_with=名字`
+        **只列改过默认的**（勾掉不参与的、或指定了目标的人）；没人改过就返回 `None`
+        （＝全都参与、全自动）。目标标签 → 引擎字段的翻译也只有那一处：
+        `宿舍01` = 放进那间宿舍的空位（`dorm=1`），人名 = 与那位满心情的宿舍干员互换。
         """
-        out = []
-        for name, (use, target) in self.idle_globals.items():          # 不限班次/周期的
-            if use and not target:
-                continue
-            dorm = _dorm_index_of(target)
-            out.append(IdleToDormEntry(name=name, enabled=use, dorm=dorm,
-                                       swap_with=(None if dorm else target) or None))
-        for (cyc, shf, n), (use, target) in self.idle_entries.items():
-            if use and not target:
-                continue
-            dorm = _dorm_index_of(target)
-            out.append(IdleToDormEntry(name=n, enabled=use, cycle=cyc, shift=shf,
-                                       dorm=dorm,
-                                       swap_with=(None if dorm else target) or None))
-        return out or None
+        return self.session.idle_entry_list()
 
     def _idle_groups(self, cycles: Optional[int] = None, entries: Optional[dict] = None,
                      traj=None):
@@ -799,57 +850,22 @@ class MoodSocApp(tk.Tk):
         都不一样 —— 候选与「换谁」的可选项都得按那一刻算（实测 3 个周期的事件分别落在
         12/18h、24/42h、66h）。只列出**真的有候选**的那几次。
         """
-        cycles = int(cycles if cycles is not None else self.cycles)
-        entries = self.idle_entries if entries is None else entries
-        traj = traj if traj is not None else self.traj
-        if self.schedule is None or traj is None:
-            return []
-        groups = []
-        n_shifts = len(self.schedule.shifts)
-        dorms = [f for f in (self.schedule.shifts[0].world.facilities if n_shifts else [])
-                 if f.ftype == FacilityType.DORMITORY]
-        for k in range(max(1, cycles)):
-            for i, shift in enumerate(self.schedule.shifts):
-                t0 = self.schedule.cycle_hours * k + self.schedule.starts[i]
-                cands, targets = [], []
-                # 空位选项：按"第几间宿舍"编号（01 起），只列**那一刻还有空位**的
-                shift_dorms = [f for f in shift.world.facilities
-                               if f.ftype == FacilityType.DORMITORY]
-                for di, dorm in enumerate(shift_dorms, 1):
-                    if len(dorm.operators) < dorm.capacity:
-                        targets.append(f"宿舍{di:02d}")
-                for name in traj.names:
-                    mood = traj.mood_at(name, t0)
-                    fac = shift.world.facility_of(name)
-                    if fac is not None and fac.ftype == FacilityType.DORMITORY:
-                        if mood >= MOOD_MAX:
-                            targets.append(name)     # 可以作为"被换出"的对象
-                        continue
-                    if fac is not None and fac.ftype not in (FacilityType.WORKSHOP,
-                                                             FacilityType.TRAINING):
-                        continue
-                    if mood >= MOOD_MAX:
-                        continue
-                    cands.append((mood, name, fac.display_name if fac else "未排班"))
-                if not cands:
-                    continue
-                cands.sort(key=lambda row: (row[0], row[1]))
-                rows = []
-                for mood, name, where in cands:
-                    use, target = entries.get((k + 1, i + 1, name)) \
-                        or self.idle_globals.get(name) or (True, None)
-                    rows.append((name, theme.fmt_mood(mood), where, use, target,
-                                 [t for t in targets if t != name]))
-                end = t0 + shift.hours
-                title = (f"第 {k + 1} 周期 · 第 {i + 1} 班"
-                         f"（{self.clock_text(t0)}–{self.clock_text(end)}）")
-                groups.append((title, (k + 1, i + 1), rows))
-        return groups
+        # 候选与可选目标全在 `Session.idle_groups()`（**与程序接口同一份**）；
+        # 界面只做两件"视图的事"：把心情值格式化、把组头时刻按初始时间点渲染。
+        out = []
+        for title, scope, rows in self.session.idle_groups(cycles=cycles, entries=entries):
+            k, i = scope
+            t0 = self.schedule.cycle_hours * (k - 1) + self.schedule.starts[i - 1]
+            end = t0 + self.schedule.shifts[i - 1].hours
+            shown = [(n, theme.fmt_mood(m), where, use, target, options)
+                     for n, m, where, use, target, options in rows]
+            out.append((f"{title}（{self.clock_text(t0)}–{self.clock_text(end)}）",
+                        scope, shown))
+        return out
 
     def _idle_count(self) -> int:
         """当前设置下会有多少次"有人入宿"、共涉及多少人。"""
-        groups = self._idle_groups()
-        return sum(len([r for r in rows if r[3]]) for _title, _scope, rows in groups)
+        return self.session.idle_count()
 
     def _sync_idle_label(self):
         """工具栏右侧的当前状态：`未开启` / `已开启 · 6 次（自动）`。"""
@@ -879,8 +895,8 @@ class MoodSocApp(tk.Tk):
 
         返回**新的分组表**：改动会影响后面每一次的候选，所以面板要按新表重建。
         """
-        self.idle_to_dorm.set(bool(enabled))
-        self.idle_entries = dict(entries)
+        self.session.idle_to_dorm = bool(enabled)
+        self.session.idle_entries = dict(entries)
         self.recompute()                           # 看板/曲线跟着刷新
         self._sync_idle_label()
         return self._idle_groups()
@@ -904,8 +920,10 @@ class MoodSocApp(tk.Tk):
             facs = changes[i]
             n_ops += sum(len(f.get("operators", [])) for f in facs)
             self.schedule = self.schedule.replaced_shift(i, facs)
-        self.initial_moods = dict(moods)
-        self.mood_events = list(mood_events or ())
+        # 心情整份替换起点 + 收下锚点（**原样替换**：`None` 也当空列表，
+        # 否则删掉的锚点会留在引擎里继续生效 —— 这条口径现在写在 Session 里）
+        self.session.initial_moods = {str(k): v for k, v in dict(moods).items()}
+        self.session.mood_events = list(mood_events or ())
         self._layout_sig = None
         # 整周期重算是同步的（实测 0.23~1.2s）：先把"在算什么"写出来再算，
         # 否则点了「全部满心情」这种大动作会像卡死。
@@ -930,7 +948,7 @@ class MoodSocApp(tk.Tk):
         """
         if self.schedule is None:
             return
-        self.schedule = self.schedule.with_start_clock(clock)
+        self.session.set_start_clock(clock)
         self._layout_sig = None
         self._build_shift_buttons()        # 底部班次按钮写的是时段 → 要重建
         self._refresh_layout()
@@ -944,33 +962,10 @@ class MoodSocApp(tk.Tk):
 
     # ------------------------------------------------------------ 进驻事件（换心情）
     def _entry_candidates(self):
-        """返回 `(触发者名单, 可交换对象名单)`。
-
-        触发者 = 排班里可能触发 M15a 的干员（如菲亚梅塔）；
-        可交换对象 = **同宿舍的其他干员排前面**，后面跟上排班里的其他干员
-        （因为"基建任意位置"模式下任何位置的干员都能换）。
-        """
-        holders: list = []
-        mates: list = []
+        """返回 `(触发者名单, 可交换对象名单)`（口径在 `Session.entry_candidates()`）。"""
         if self.schedule is None:
-            return holders, mates
-        for s in self.schedule.shifts:
-            for who, _room in entry_event_holders(s.world):
-                if who not in holders:
-                    holders.append(who)
-            for f in s.world.facilities:
-                if f.ftype != FacilityType.DORMITORY:
-                    continue
-                names = [o.name for o in f.operators]
-                if not any(n in holders for n in names):
-                    continue
-                for n in names:
-                    if n not in holders and n not in mates:
-                        mates.append(n)
-        # 再补上"其它位置的干员"（任意位置模式用得上）
-        others = [n for n in self.schedule.operator_names()
-                  if n not in holders and n not in mates]
-        return holders, mates + others
+            return [], []
+        return self.session.entry_candidates()
 
     def _when_token(self, when: str) -> str:
         """「③ 强制切换」的紧凑说法（不勾＝"没满就不换"是默认口径，不写，省工具栏宽度）。"""
@@ -1063,16 +1058,17 @@ class MoodSocApp(tk.Tk):
         if picked is None:
             return
         enabled, swap_with = picked[0], picked[1]
-        scope = picked[2] if len(picked) > 2 else self.entry_scope
-        restore_back = picked[3] if len(picked) > 3 else self.entry_restore_back
-        when = normalize_entry_when(picked[4]) if len(picked) > 4 else self.entry_when
-        per_shift = picked[5] if len(picked) > 5 else self.entry_per_shift
-        self.entry_events.set(enabled)
-        self.entry_swap_with = swap_with
-        self.entry_scope = scope
-        self.entry_restore_back = restore_back
-        self.entry_when = when or "full"      # 界面口径：缺省＝"没满就不换"
-        self.entry_per_shift = list(per_shift or [])
+        scope = picked[2] if len(picked) > 2 else self.session.entry_scope
+        restore_back = picked[3] if len(picked) > 3 else self.session.entry_restore_back
+        when = normalize_entry_when(picked[4]) if len(picked) > 4 else self.session.entry_when
+        per_shift = picked[5] if len(picked) > 5 else self.session.entry_per_shift
+        # 设置**写在 Session 上**（界面只是它的视图；程序接口改的是同一批字段）
+        self.session.entry_events = bool(enabled)
+        self.session.entry_swap_with = swap_with
+        self.session.entry_scope = scope
+        self.session.entry_restore_back = restore_back
+        self.session.entry_when = when or "full"   # 界面口径：缺省＝"没满就不换"
+        self.session.entry_per_shift = list(per_shift or [])
         self._sync_entry_label()
         self.recompute()                      # 先重算（recompute 会写状态栏）
         if not self._entry_candidates()[0]:
@@ -1083,14 +1079,11 @@ class MoodSocApp(tk.Tk):
 
     def _layout_issues(self) -> str:
         """当前班次布局的自检问题（上游约束：单类型上限 / 建造位总量 9 / 人数 ≤ 等级容量）。"""
-        if self.schedule is None:
-            return ""
-        issues = self.schedule.shifts[self._editing_shift_index()].world.validate()
-        return "；".join(issues)
+        v = self.session.validate()
+        return "；".join(i.message for i in v.issues)
 
     def _facilities_of(self, idx: int):
-        return [dict(f, operators=list(f.get("operators", [])))
-                for f in self.schedule.shifts[idx].facilities]
+        return self.session.facilities_of(idx)
 
     # ------------------------------------------------------------ 练度（精英化）
     def _elite_badges(self) -> dict:
@@ -1099,43 +1092,24 @@ class MoodSocApp(tk.Tk):
         为什么取最低：同一个人在不同班次可以有不同练度（少见但合法），
         用最低那档才不会漏掉"某一班他的技能其实没生效"。
         """
-        out: dict = {}
-        if self.schedule is None:
-            return out
-        for shift in self.schedule.shifts:
-            for op in shift.world.all_operators():
-                badge = elite_badge(op)
-                if badge and badge < out.get(op.name, "E9"):
-                    out[op.name] = badge
-        return out
+        badges = self.session.elite_badges()
+        if badges:
+            return badges
+        # Session 只记非满练的角标；这里补上"当前布局里出现过的满练干员"由芯片自己处理，
+        # 所以直接返回即可（`elite_badge()` 仍被 chip 用）。
+        return {}
 
     def _operator_obj(self, name: str):
         """找这个干员的 `Operator`（优先当前班次，其次第一个有他的班次）。"""
-        if self.schedule is None or not name:
-            return None
-        idx = self._editing_shift_index()
-        for shift in [self.schedule.shifts[idx]] + list(self.schedule.shifts):
-            op = shift.world.get_operator(name)
-            if op is not None:
-                return op
-        return None
+        return self.session.operator_obj(name, self._editing_shift_index())
 
     def _elite_text(self, name: str) -> str:
         """练度摘要（对点查询用）：`练度 E1 · 已解锁 6 条心情技能；因未满练少 1 条（「手工艺品·β」）`。"""
-        op = self._operator_obj(name)
-        if op is None:
-            return ""
-        unlocked, locked = mood_skill_summary(op)
-        text = f"练度 E{op.elite}（等级 {op.level}）· 已解锁 {unlocked} 条心情技能"
-        if locked:
-            names = "、".join(f"「{n}」（E{e}）" for n, e, _lv in locked[:3])
-            more = f" 等 {len(locked)} 条" if len(locked) > 3 else ""
-            text += f"；⚠ 因未满练少 {len(locked)} 条：{names}{more}"
-        return text
+        return self.session.elite_text(name)
 
     def _apply_facilities(self, idx: int, facs):
-        """改完某个班次的布局 → 重建 Schedule → 重算。"""
-        self.schedule = self.schedule.replaced_shift(idx, facs)
+        """改完某个班次的布局 → 重建 Schedule → 重算（转发到 Session）。"""
+        self.session.replace_facilities(idx, facs)
         self._layout_sig = None
         self.recompute()
 
@@ -1156,7 +1130,7 @@ class MoodSocApp(tk.Tk):
         now = [to_decimal(h) for h in hours]
         if now == [s.hours for s in self.schedule.shifts]:
             return
-        self.schedule = self.schedule.with_hours(hours)
+        self.session.set_timeline(hours=hours)      # 周期自动 = 各班长之和
         self._build_shift_buttons()
         self.recompute(fit_slider=True)
         # 班次时长/数量变了 → 别的分区里的班次下拉、逐次表都得重建（设置窗口自己不用）
@@ -1169,7 +1143,7 @@ class MoodSocApp(tk.Tk):
             dlg.invalidate(*pages)
 
     def _on_cycles(self):
-        self.cycles = int(self.cycles_var.get())
+        self.session.cycles = int(self.cycles_var.get())
         self.recompute(fit_slider=True)
         # 逐次表按周期展开、干员与心情的「周期」下拉也有 1~周期数 项 → 两个分区都得重建
         self._invalidate_settings("idle", "batch")
