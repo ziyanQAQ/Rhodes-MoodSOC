@@ -100,7 +100,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 403 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 409 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（250 条 clause 逐条造场景
     核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `resources/skill_verify_report.md`。
@@ -132,6 +132,11 @@ documents/
     ② 给界面加**状态或重算**要改 `store/session.py`，别把业务状态写回 `ui/app.py`；
     ③ 加程序接口能力 = 在 `api/ops.py` 加一个 op（步骤见 `documents/11-程序接口.md` §7）；
     ④ 老路径 `mood_soc.importer/output/scenario/maa`、`ui.schedule` 是**兼容转发壳**，别往里加逻辑。
+
+19. **表格的滚轮/搜索/高度是一套**：`ui/scroll.py` 一次滚 3 行（`UNITS_PER_NOTCH`）、
+    `Shift` 整页、`Ctrl` 10 行、`PgUp/PgDn/Home/End`；「干员与心情」的**搜索过滤**只影响显示
+    （一键动作的范围走 `_visible_names()`）；`_table_height()` 量的是"**已建出来**的兄弟控件"，
+    所以**表格必须最后建**、`TABLE_CHROME` 要跟着表格上方的改动重量（见 10-图形界面.md §5 第 16~18 条）。
 
 ---
 
