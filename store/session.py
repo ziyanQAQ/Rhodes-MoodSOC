@@ -288,46 +288,60 @@ class Session:
         here = {o.name for o in self.schedule.shifts[idx].world.all_operators()}
         return [n for n in self.schedule.operator_names() if n not in here]
 
-    def set_detached(self, names: Sequence[str]) -> None:
-        """整份替换「不在基建」名单（去重保序；**不重算**，调用方自己决定何时重算）。"""
+    def set_detached(self, names: Sequence[str], remove_from_slots: bool = True,
+                     recompute: bool = False) -> None:
+        """整份替换「不在基建」名单（去重保序）。
+
+        `remove_from_slots=True`（默认）会把名单里的人**从所有班次的进驻位上摘下来**，
+        于是"名单里的人 ↔ 不在任何房间里"成为一条**不变式** —— 不摘的话她一边在名单里、
+        一边占着位置（有消耗、还会被"基建内每有 N 名 XX"数到），语义自相矛盾。
+        ⚠️ 这一条踩过：只有 `add_detached` 摘位置、`set_detached` 不摘，
+        于是"导入带名单的文件"与"直接设名单"两条路给出**不同**数值。
+
+        `recompute=False`（默认）：只改状态、**不重算**（导入路径随后自己会算一次）；
+        只想改名单就要新结果时传 `recompute=True`。
+        """
         out: List[str] = []
         for n in (names or []):
             n = str(n).strip()
             if n and n not in out:
                 out.append(n)
         self.detached = out
-        if self.schedule is not None:
-            self.schedule = self.schedule.with_detached(out)
-            self._sync_from_schedule()      # 名单也写回每班的 Shift/world
+        if self.schedule is None:
+            return
+        if remove_from_slots:
+            self._remove_from_slots(out)
+        self.schedule = self.schedule.with_detached(out)
+        self._sync_from_schedule()      # 名单也写回每班的 Shift/world
+        if recompute:
+            self.recompute()
+
+    def _remove_from_slots(self, names: Sequence[str]) -> int:
+        """把这些人从**所有班次**的进驻位上摘掉（返回动过几个班次）。"""
+        if self.schedule is None or not names:
+            return 0
+        wanted = set(names)
+        touched = 0
+        for i in range(len(self.schedule.shifts)):
+            facs = self.facilities_of(i)
+            hit = False
+            for f in facs:
+                ops = [n for n in f.get("operators", []) if n not in wanted]
+                if len(ops) != len(f.get("operators", [])):
+                    hit = True
+                    f["operators"] = ops
+            if hit:
+                self.schedule = self.schedule.replaced_shift(i, facs)
+                touched += 1
+        return touched
 
     def add_detached(self, name: str, remove_from_slots: bool = True) -> bool:
-        """把某人加进「不在基建」名单（已在名单里返回 False）。
-
-        `remove_from_slots=True`（默认）时**同时把他从所有班次的进驻位上摘下来** ——
-        留在位置上她其实在岗（有消耗、会被"基建内每有 1 名 XX"数到），与"不在基建"矛盾。
-        摘位置时会重建 Schedule 并重算。
-        """
+        """把某人加进「不在基建」名单（已在名单里返回 False）；默认连位置一起摘。"""
         name = str(name or "").strip()
         if not name or name in self.detached:
             return False
-        if remove_from_slots:
-            changed = False
-            for i in range(len(self.shifts())):
-                facs = self.facilities_of(i)
-                hit = False
-                for f in facs:
-                    ops = [n for n in f.get("operators", []) if n != name]
-                    if len(ops) != len(f.get("operators", [])):
-                        hit = True
-                        f["operators"] = ops
-                if hit:
-                    self.schedule = self.schedule.replaced_shift(i, facs)
-                    changed = True
-            self.set_detached(list(self.detached) + [name])
-            if changed:
-                self.recompute()
-            return True
-        self.set_detached(list(self.detached) + [name])
+        self.set_detached(list(self.detached) + [name],
+                          remove_from_slots=remove_from_slots)
         return True
 
     def remove_detached(self, name: str) -> bool:

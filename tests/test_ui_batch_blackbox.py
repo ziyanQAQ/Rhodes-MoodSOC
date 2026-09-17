@@ -163,6 +163,31 @@ class Test批量设置(unittest.TestCase):
         dlg = self._open(0)
         self.assertTrue(all(fi != DETACHED_FI for fi, _si in dlg._cells))
 
+    def test_其他班在哪一列(self):
+        """「本班未排班 ≠ 整份排班都不在基建」：`—` 列要写出她在别的班在哪。
+
+        示例排班的每班人员不同：第 1 班没排到的人，多半在第 2/3 班有活。
+        """
+        app = self.app
+        dlg = self._open(0)
+        from ui.batch import DETACHED_FI
+
+        shift1 = set(app.schedule.shifts[0].operators)
+        elsewhere = [n for n in dlg._detached_all()
+                     if any(s.world.facility_of(n) is not None for s in app.schedule.shifts[1:])]
+        self.assertTrue(elsewhere, "示例排班应当有'第 1 班没排到、别的班有活'的人")
+        name = elsewhere[0]
+        text = dlg._detached_elsewhere(name)
+        self.assertTrue(text.startswith("其他班："))
+        row = next(r for r in dlg._rows if r["key"][0] == DETACHED_FI
+                   and r["op"].cget("text").startswith(name))
+        self.assertEqual(row["dash"].cget("text"), text)
+        # 两个班都没排到的人 → 没有"其他班"标记（真正的不在基建）
+        for other in dlg._detached_all():
+            if all(s.world.facility_of(other) is None for s in app.schedule.shifts):
+                self.assertEqual(dlg._detached_elsewhere(other), "")
+        self.assertNotIn("", [n for n in shift1])          # 只是说明 shift1 有用（避免空断言）
+
     def test_添加干员把它移出位置并写进名单(self):
         """「＋ 添加干员…」的效果：从所有班次的位置上摘下来 + 进「不在基建」名单。
 

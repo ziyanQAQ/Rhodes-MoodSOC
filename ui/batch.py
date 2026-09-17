@@ -42,6 +42,7 @@ from mood_soc.config import (MOOD_MAX, MOOD_MIN, OUTPUT_ROOM_TYPES, OUTPUT_SLOT_
 from mood_soc.scenario import DEFAULT_OPERATOR_LEVEL
 
 from ui import theme
+from ui.board import facility_tag
 from ui.dialogs import ask_operator, parse_mood
 from ui.schedule import MoodSetEvent, all_operator_names
 from ui.scroll import VScroll
@@ -60,7 +61,10 @@ NOTIFY_DEBOUNCE_MS = 500
 # 真设施的合法下标是 `0 ≤ fi < len(facilities)`，所以 `-1` 不会与之冲突。
 DETACHED_FI = -1
 DETACHED_ROOM = "不在基建"          # 该段的行首标签（表格「房间」列）
-DETACHED_HINT = "既不在工作设施、也不在宿舍：心情整段不变（不消耗、不回复）"
+DETACHED_TITLE = "不在工作设施、也不在宿舍（本班未排班）"     # 段首那一行
+#: 段首那句口径（写清楚"这一刻"与"整段"的区别，免得被当 bug）
+DETACHED_HINT = ("══ 本班没排到位置：这一刻她不消耗也不回复（心情不变）；"
+                 "若她在别的班有活，那些班照常算 ══")
 # 说明文字的最大换行宽度：**必须给**，否则一条长 tk.Label 会把设置中心的内容区撑宽
 # （实测「干员与心情」因此从 816px 涨到 1247px，超宽被裁）。口径说明都走这个值。
 HINT_WRAP = 700
@@ -800,6 +804,25 @@ class BatchMixin:
                                 + ("" if name not in self._detached_auto
                                    else "（本班仍未排班，所以她还在这一段的自动名单里）"))
 
+    def _detached_elsewhere(self, name: str) -> str:
+        """她**在别的班**在哪（本班没排到 ≠ 整份排班都不在基建）。
+
+        返回紧凑标记（如 `其他班：2中 3宿`）；哪儿都没排到就返回 `""`。
+        界面把这一句放在「不在基建」那一段的 `—` 列里：让人一眼看出
+        "这一刻她不在基建"与"她其实还有班"的区别。
+        """
+        if self._schedule is None:
+            return ""
+        marks: List[str] = []
+        for i, s in enumerate(self._schedule.shifts):
+            if i == self._shift_index:
+                continue
+            fac = s.world.facility_of(name)
+            if fac is None:
+                continue
+            marks.append(f"{i + 1}{facility_tag(fac)}")
+        return ("其他班：" + " ".join(marks)) if marks else ""
+
     def _add_detached(self) -> None:
         """「＋ 添加干员…」：从全量名册 / 干员池里选一个人，放进「不在基建」。"""
         self._collect_moods()
@@ -1096,6 +1119,7 @@ class BatchMixin:
             remove_btn = ttk.Button(row, text="×", width=2,
                                     command=lambda n=name: self._undetach_operator(n))
             if header:
+                # 段首那句口径：本班 vs 整段的区别（列少的地方挤一挤，但不改变列数）
                 tk.Label(row, text=DETACHED_HINT, bg=bg, fg=theme.MUTED, anchor="w",
                          font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left",
                                                                         padx=(6, 4))
@@ -1125,7 +1149,7 @@ class BatchMixin:
             detached = fi == DETACHED_FI
             r["room"].configure(text=room)
             elite = self._elite_of(name) if name else 2
-            r["op"].configure(text=(DETACHED_ROOM if r.get("header") else self._op_text(name)),
+            r["op"].configure(text=(DETACHED_TITLE if r.get("header") else self._op_text(name)),
                               fg=(theme.TEXT if name else theme.MUTED),
                               cursor=("arrow" if detached else "hand2"))
             if not detached and r["op"].cget("text") != self._op_text(name):
@@ -1141,14 +1165,19 @@ class BatchMixin:
                 r["entry"].configure(textvariable=var)
                 if not r["entry"].winfo_manager():
                     r["entry"].pack(side="left", padx=(6, 4))
-                if r["dash"].winfo_manager():
-                    r["dash"].pack_forget()
                 if detached:
+                    # 「不在基建」那一段：没有练度下拉（对她无意义），换成一个「×」；
+                    # `—` 列改成"她在别的班在哪"（本班没排到 ≠ 整份排班都不在基建）。
                     if r["elite"].winfo_manager():
                         r["elite"].pack_forget()
                     if not r["remove"].winfo_manager():
                         r["remove"].pack(side="left", padx=(0, 4))
+                    r["dash"].configure(text=(self._detached_elsewhere(name) or "—"))
+                    if not r["dash"].winfo_manager():
+                        r["dash"].pack(side="left", padx=(6, 4))
                 else:
+                    if r["dash"].winfo_manager():
+                        r["dash"].pack_forget()
                     if r["remove"].winfo_manager():
                         r["remove"].pack_forget()
                     ev = tk.StringVar(value=f"E{elite}")        # 练度：决定技能能不能生效
@@ -1171,7 +1200,7 @@ class BatchMixin:
         「不在基建」的**段首行**（`detached_header`）不是干员，只是段名 + 一句口径说明。
         """
         if detached_header:
-            return tk.Label(row, text=DETACHED_ROOM, bg=bg, fg=theme.OK, anchor="w",
+            return tk.Label(row, text=DETACHED_TITLE, bg=bg, fg=theme.OK, anchor="w",
                             font=(theme.FONT_FAMILY, theme.FS_SMALL, "bold"))
         label = tk.Label(row, text=(name or "（空位 · 点这里选人）"), bg=bg,
                          fg=(theme.TEXT if name else theme.MUTED), anchor="w", cursor="hand2",

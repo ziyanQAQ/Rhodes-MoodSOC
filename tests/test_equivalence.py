@@ -242,7 +242,8 @@ class Test不在基建(unittest.TestCase):
              "operators": ["陈", "星熊", "诗怀雅", "路人1", "路人2"]},
         ]})
         before = s.rate_at("陈", D(0))          # 龙门近卫局 3 人 → 中枢全体回复 0.15
-        s.add_detached("路人1")                 # 默认连位置一起摘
+        s.add_detached("路人1")                 # 默认连位置一起摘（只是改状态）
+        s.recompute()
         after = s.rate_at("陈", D(0))
         self.assertEqual(s.bench_names(), ["路人1"])
         # 中枢只剩 4 人：减免从 0.25 降到 0.20，且陈的「德才兼备」仍按 3 名龙门算 → 速率变了
@@ -252,6 +253,24 @@ class Test不在基建(unittest.TestCase):
         self.assertIsNone(world.facility_of("路人1"))
         self.assertNotIn("路人1", [o.name for o in world.base_operators()])
         self.assertEqual(q(s.mood_at("路人1", D(12))), q(s.mood_at("路人1", D(0))))
+
+    def test_直接设名单也会摘位置(self):
+        """`set_detached` 与 `add_detached` 必须**同一条路**：名单里的人不占位置、心情平线。
+
+        （踩过：只有 `add_detached` 摘位置，于是"导入带名单的文件"与"直接设名单"
+        给出不同数值 —— 名单里的人一边在名单里、一边在房间里有消耗。）
+        """
+        s = Session()
+        s.load_layout({"facilities": [
+            {"type": "制造站", "level": 3, "operators": ["泡泡", "黍", "路人甲"]},
+        ]})
+        s.set_detached(["泡泡"], recompute=True)
+        self.assertEqual(s.bench_names(), ["泡泡"])
+        self.assertIsNone(s.schedule.shifts[0].world.facility_of("泡泡"))
+        self.assertNotIn("泡泡", [o.name for o in s.schedule.shifts[0].world.all_operators()])
+        for t in (0, 6, 24):
+            self.assertEqual(q(s.mood_at("泡泡", D(t))), q(s.mood_at("泡泡", D(0))))
+        self.assertEqual(s.rate_at("泡泡", D(12)), D("0"))
 
     def test_JSON往返(self):
         """导出场景 → 再导入：`detached` 原样回来（键与 `facilities` 同层、向后兼容）。"""
