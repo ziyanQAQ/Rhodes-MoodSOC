@@ -517,6 +517,7 @@ def op_moods(session: Session, args: dict) -> dict:
     traj = session.traj
     out: dict = {
         "operators": list(traj.names),
+        "detached": session.bench_names(),     # 其中这些人不在基建（心情一条平线）
         "cycle_hours": _num(cycle_hours),
         "cycles": session.cycles,
         "total_hours": _num(session.total_hours),
