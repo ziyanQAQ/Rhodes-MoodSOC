@@ -5,7 +5,7 @@
 用法：
     .venv/Scripts/python.exe scripts/maa_to_scenario.py [源文件] [输出目录]
 
-默认读取 `resources/arknights-infra-schedule-maa.json`，输出到 `scenarios/`，
+默认读取 `data/resources/arknights-infra-schedule-maa.json`，输出到 `scenarios/`，
 为每个排班（Shift）生成一个 `maa_shift{N}.json`。
 
 MAA 的 rooms 键名 ↔ 本工具设施：
@@ -27,12 +27,13 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:          # 允许直接 `python scripts/maa_to_scenario.py`
     sys.path.insert(0, str(ROOT))
 
+from data.paths import MAA_SAMPLE, SCENARIOS  # noqa: E402
 from mood_soc.maa import plans_from_data  # noqa: E402
 
 
 def main() -> int:
-    src = sys.argv[1] if len(sys.argv) > 1 else "resources/arknights-infra-schedule-maa.json"
-    outdir = sys.argv[2] if len(sys.argv) > 2 else "scenarios"
+    src = sys.argv[1] if len(sys.argv) > 1 else str(MAA_SAMPLE)
+    outdir = sys.argv[2] if len(sys.argv) > 2 else str(SCENARIOS)
 
     with open(src, "r", encoding="utf-8") as f:
         data = json.load(f)

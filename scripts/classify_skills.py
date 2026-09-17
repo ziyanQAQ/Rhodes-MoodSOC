@@ -2,12 +2,12 @@
 
 产物（两个）：
 
-1. `resources/moods_skills.txt` —— **clause 级**心情技能库，追加两列：
+1. `data/moods_skills.txt` —— **clause 级**心情技能库，追加两列：
      - `template_id`：模板 ID（见 mood_soc/skill_templates.py），如 `M07a`
      - `params`     ：模板参数，`k=v;k=v` 形式（只放生成器推不出来的新信息）
    同时应用「口径修正」（见 OVERRIDES，例如巫恋「低语」room_others → room）。
 
-2. `resources/skills_registry.txt` —— **buff 级**覆盖台账（仓库全部 755 条 buff 各一行）：
+2. `data/skills_registry.txt` —— **buff 级**覆盖台账（仓库全部 755 条 buff 各一行）：
      buff_id, name, room_type, tier, template_ids, modeled, note
    作用：任何新 buff 都必须在这张表里有归宿；`--check` 断言
    「台账行数 == 仓库 buff 数」且「无 tier=?? 的行」——把漏技能变成必报错误。
@@ -31,10 +31,16 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+# 路径一律走 `data/paths.py`（数据的唯一路径出口）；本脚本在仓库根下运行，
+# 故先补 sys.path 再 import（与 `ui/__main__.py` 同一套引导写法）。
 ROOT = Path(__file__).resolve().parent.parent
-RES = ROOT / "resources"
-SKILLS_TXT = RES / "moods_skills.txt"
-REGISTRY_TXT = RES / "skills_registry.txt"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from data.paths import (  # noqa: E402
+    OPERATORS_TXT,
+    REGISTRY_TXT,
+    SKILLS_TXT,
+)
 
 
 def _load_templates_module():
@@ -365,7 +371,7 @@ def audit_enhanced(agd: Path) -> list[str]:
     issues = []
     with SKILLS_TXT.open(encoding="utf-8") as f:
         pass                                  # 占位：技能库不含解锁信息
-    with (RES / "operators.txt").open(encoding="utf-8") as f:
+    with OPERATORS_TXT.open(encoding="utf-8") as f:
         for r in csv.DictReader(f):
             key = (r["operator_name"], r["skill_id"])
             if key not in should_enhance:
@@ -470,4 +476,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Windows 控制台/管道默认 GBK，输出里的 ✅/❌ 会让脚本**在校验通过之后**崩掉
+    # （曾实测 `--check` 明明全绿却退出码 1）。统一改 UTF-8，对 Linux CI 无影响。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     raise SystemExit(main())

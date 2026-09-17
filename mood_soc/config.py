@@ -186,7 +186,7 @@ OUTPUT_SLOT_TOTAL = 9
 # 能数到它。挂件不需要休息，所以给它们算心情消耗没有意义。
 #
 # 推论：那 9 条写「进驻训练室协助位时，心情每小时消耗 +1」的训练室技能**不生效**
-# （已从 `resources/moods_skills.txt` 撤出，`skills_registry.txt` 保留登记与原因）。
+# （已从 `data/moods_skills.txt` 撤出，`skills_registry.txt` 保留登记与原因）。
 #
 # 与 docx 第 4 段**不冲突**：那说的是常规生产设施"上岗生产"的稳态消耗，
 # 挂件位不属于上岗生产。

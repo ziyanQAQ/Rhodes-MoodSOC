@@ -2,7 +2,7 @@
 
 ## 为什么需要它
 
-`mood_soc/skills.py` 里原先有一张**手工维护**的 `OPERATOR_FACTIONS`。实测发现它是错的：
+`data/skills_data.py` 的 `OPERATOR_FACTIONS` 以前是 `mood_soc/skills.py` 里一张**手工维护**的表。实测发现它是错的：
 
 | 项目手工表 | 上游权威（`gamedata_const.json → termDescriptionDict`） |
 |---|---|
@@ -14,13 +14,13 @@
 
 ## 产物
 
-1. `resources/factions.txt` —— 生成表（`faction,member,source,kind`）
+1. `data/factions.txt` —— 生成表（`faction,member,source,kind`）
    - `source`：上游术语键（`cc.g.sui`）或 `manual`
    - `kind`：`faction` / `tag` / `supplement`
-2. `resources/factions_supplement.txt` —— **人工补充**（上游只写"包含所有异格干员"而不列名单的，
+2. `data/factions_supplement.txt` —— **人工补充**（上游只写"包含所有异格干员"而不列名单的，
    如 `cc.g.sp` 异格）。生成时与上游表合并，上游优先。
 
-`scripts/generate_skills_data.py` 读这两份文件 → 生成 `skills_data.OPERATOR_FACTIONS` /
+`scripts/generate_skills_data.py` 读这两份文件 → 生成 `data/skills_data.py` 的 `OPERATOR_FACTIONS` /
 `FACTION_MEMBERS`，并以阵营反推 `TRAITS`。**不再手工维护阵营表。**
 
 ## 用法
@@ -36,10 +36,14 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+# 路径一律走 `data/paths.py`（数据的唯一路径出口）。
 ROOT = Path(__file__).resolve().parent.parent
-RES = ROOT / "resources"
-OUT = RES / "factions.txt"
-SUPPLEMENT = RES / "factions_supplement.txt"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from data.paths import (  # noqa: E402
+    FACTIONS_SUPPLEMENT_TXT as SUPPLEMENT,
+    FACTIONS_TXT as OUT,
+)
 
 SUPPLEMENT_HEADER = ["faction", "member", "source", "kind", "note"]
 OUT_HEADER = ["faction", "member", "source", "kind"]

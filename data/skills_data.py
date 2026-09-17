@@ -1,17 +1,15 @@
-"""mood_soc/skills_data.py —— 由 scripts/generate_skills_data.py 自动生成。
+"""data/skills_data.py —— 由 scripts/generate_skills_data.py 自动生成。
 
-请勿手工编辑；修改数据请改 resources/moods_skills.txt 与 resources/operators.txt，
+请勿手工编辑；修改数据请改 data/moods_skills.txt 与 data/operators.txt，
 然后重新运行：.venv/Scripts/python.exe scripts/generate_skills_data.py
 """
 from __future__ import annotations
 
 from decimal import Decimal
 
-from .config import FacilityType
-from .skills import (
-    Skill,
-    SkillEquip,
-    SkillKind,
+from mood_soc.config import FacilityType
+from data.skill_model import Skill, SkillEquip, SkillKind
+from data.conditions import (
     _cond_mood_below_18,
     _cond_mood_below_20,
     _cond_with_cc_mogui,
@@ -7324,8 +7322,8 @@ TRAITS = {
 
 # ---------------------------------------------------------------------------
 # 干员 ↔ 阵营/标签（由 scripts/generate_factions.py 从上游 termDescriptionDict 生成）。
-# 上游权威键：cc.g.*（阵营）/ cc.tag.*（标签）；人工补充见 resources/factions_supplement.txt。
-# 用法：skills._factions_of(op) —— 支持"中枢内每有 1 名 XX 干员"这类 per-count 技能。
+# 上游权威键：cc.g.*（阵营）/ cc.tag.*（标签）；人工补充见 data/factions_supplement.txt。
+# 用法：data.conditions._factions_of(op) —— 支持"中枢内每有 1 名 XX 干员"这类 per-count 技能。
 # ---------------------------------------------------------------------------
 OPERATOR_FACTIONS = {
     'CONFESS-47': ('拉特兰', '作业平台',),
@@ -7602,7 +7600,7 @@ ROOM2_MAX_GROUP = "room2_recover"
 
 # ---------------------------------------------------------------------------
 # 变量产出者：(skill_id, clause, 变量名, 值, 计数基准, 条件, 技能名, 持有者)
-# 来源 resources/variable_producers.txt（逐条注明上游 buff 描述出处）。
+# 来源 data/variable_producers.txt（逐条注明上游 buff 描述出处）。
 # 用于 mood_soc/variables.collect_variables()：技能间的"中间货币"（人间烟火/热情值/无声共鸣）。
 # ---------------------------------------------------------------------------
 VARIABLE_PRODUCERS = (

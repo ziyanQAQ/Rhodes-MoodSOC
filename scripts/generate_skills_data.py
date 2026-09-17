@@ -1,8 +1,8 @@
-"""scripts/generate_skills_data.py —— 从 resources 的两份 CSV 生成 mood_soc/skills_data.py。
+"""scripts/generate_skills_data.py —— 从 data 的两份 CSV 生成 data/skills_data.py。
 
 数据来源（均为逗号分隔文本，UTF-8，首行为表头）：
 
-1. resources/moods_skills.txt —— 心情类技能库
+1. data/moods_skills.txt —— 心情类技能库
    列：skill_id, clause, name, kind, family, target, condition, value_milli, status, control_capability
    - kind：drain（消耗） / recover（回复）
    - family：self / room / room_others / control_room / work_area / immune / swap /
@@ -10,14 +10,14 @@
    - value_milli：千分值（250 = 0.25；drain 负=减耗、正=加耗；recover 恒正）
    - clause：同一 skill_id 可有多分句（每个分句是一个独立效果，单独成一条 Skill）
 
-2. resources/operators.txt —— 干员↔技能映射
+2. data/operators.txt —— 干员↔技能映射
    列：operator_id, operator_name, skill_index, skill_name, skill_id, function_key,
        enhanced, unlock, elite, level
    - unlock：初始解锁 / 精英 1|2 解锁 / 等级 30 解锁 / 精英 1|2 提升 / 等级 30 提升
    - elite：0/1/2；level：1/30（三星机械满级解锁用 level=30）
    - enhanced：0=独立技能（解锁），1=精英化"提升"（β 替换 α）
 
-生成的 mood_soc/skills_data.py 内容：
+生成的 data/skills_data.py 内容：
    - SKILLS：skill_id#clause -> Skill(...)（共享的技能效果定义，不含解锁信息）
    - DEFAULT_OPERATORS：干员名 -> [skill_id#clause, ...]（仅心情类，含全部 clause）
    - SKILL_EQUIPS：{(干员名, skill_id#clause) -> SkillEquip(unlock_elite, unlock_level, enhanced, replaces)}
@@ -30,13 +30,22 @@ from __future__ import annotations
 
 import csv
 import re
+import sys
 from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
 
+# 路径一律走 `data/paths.py`（数据的唯一路径出口）。
 ROOT = Path(__file__).resolve().parent.parent
-RES = ROOT / "resources"
-OUT = ROOT / "mood_soc" / "skills_data.py"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from data.paths import (  # noqa: E402
+    FACTIONS_TXT,
+    OPERATORS_TXT,
+    SKILLS_DATA as OUT,
+    SKILLS_TXT,
+    VARIABLE_PRODUCERS_TXT,
+)
 
 
 def _load_templates_module():
@@ -59,8 +68,25 @@ def _load_templates_module():
 _TEMPLATES = _load_templates_module()
 SPREAD_SKILL_IDS = _TEMPLATES.SPREAD_SKILL_IDS
 
-SKILLS_TXT = RES / "moods_skills.txt"
-OPERATORS_TXT = RES / "operators.txt"
+# 条件函数名单：与 `data/conditions.CONDITION_NAMES` 一致（那边是同一份名单，
+# 供消费方自省用）。生成器**不能** import 数据包里的模块来取它：
+# `data.conditions` → `mood_soc.config` 会连锁 `mood_soc/__init__` → rules → skills → 生成物，
+# 而生成物正是本脚本要写的东西（引导死锁，见 `_load_templates_module` 的注释）。
+CONDITIONS = [
+    "_cond_mood_below_18",
+    "_cond_mood_below_20",
+    "_cond_with_cc_mogui",
+    "_cond_with_cc_xiangzi",
+    "_cond_with_cc_operator",
+    "_cond_with_facility_operator",
+    "_cond_with_cc_faction",
+    "_cond_alone_in_facility",
+    "_cond_no_abyssal_outside_dorm",
+    "_cond_dorm_abyssals_full_mood",
+    "_cond_target_in_faction",
+    "_cond_target_is",
+    "_cond_self_full_mood",
+]
 
 
 # ----------------------------------------------------------------------------
@@ -171,9 +197,8 @@ UNTRANSLATED_PREFIX_FAMILY = {
 }
 
 # 阵营 / 标签表（由 scripts/generate_factions.py 从上游 termDescriptionDict 生成，
-# 人工补充见 resources/factions_supplement.txt）。**不再手工维护阵营表。**
-FACTIONS_TXT = RES / "factions.txt"
-VARIABLE_PRODUCERS_TXT = RES / "variable_producers.txt"
+# 人工补充见 data/factions_supplement.txt）。**不再手工维护阵营表。**
+# （FACTIONS_TXT / VARIABLE_PRODUCERS_TXT 已在上方从 data.paths 引进）
 
 # per-count 阵营计数类技能：skill_id -> 阵营名。
 # 语义："进驻控制中枢时，中枢内每个 XX 阵营干员 → 回复 value"，回复量 = value × 中枢内该阵营干员数。
@@ -206,7 +231,7 @@ COOP_COND = {
 
 
 def load_variable_producers():
-    """读 resources/variable_producers.txt → 产出者元组表。
+    """读 data/variable_producers.txt → 产出者元组表。
 
     返回 [(skill_id, clause, variable, value, basis, condition, skill_name, holders)]，
     其中 holders = ((干员名, unlock_elite, unlock_level), ...)。
@@ -253,7 +278,7 @@ def load_variable_producers():
 
 
 def load_factions():
-    """读 resources/factions.txt → {"by_operator": {...}, "by_faction": {...}}。"""
+    """读 data/factions.txt → {"by_operator": {...}, "by_faction": {...}}。"""
     by_operator = defaultdict(list)
     by_faction = defaultdict(list)
     with open(FACTIONS_TXT, encoding="utf-8") as f:
@@ -525,7 +550,7 @@ def load_operators(skills_by_key):
 # 四、定向技能阵营：令「杯莫停」限定「岁」阵营
 # ----------------------------------------------------------------------------
 def annotate_factions(skills_by_key):
-    """给需要按阵营筛选的技能补 target_faction（比对干员的阵营集合，见 skills._factions_of）。"""
+    """给需要按阵营筛选的技能补 target_faction（比对干员的阵营集合，见 data.conditions._factions_of）。"""
     for key, sk in skills_by_key.items():
         if sk["kind"] == "ELIMINATE_SELF" and sk["skill_id"] == "control_facCostReset_000":
             sk["target_faction"] = "岁"
@@ -546,33 +571,23 @@ def _fmt_tuple(items):
 
 def render(skills_by_key, default_operators, equips, traits, factions, var_producers):
     lines = []
-    lines.append('"""mood_soc/skills_data.py —— 由 scripts/generate_skills_data.py 自动生成。')
+    lines.append('"""data/skills_data.py —— 由 scripts/generate_skills_data.py 自动生成。')
     lines.append('')
-    lines.append('请勿手工编辑；修改数据请改 resources/moods_skills.txt 与 resources/operators.txt，')
+    lines.append('请勿手工编辑；修改数据请改 data/moods_skills.txt 与 data/operators.txt，')
     lines.append('然后重新运行：.venv/Scripts/python.exe scripts/generate_skills_data.py')
     lines.append('"""')
     lines.append('from __future__ import annotations')
     lines.append('')
     lines.append('from decimal import Decimal')
     lines.append('')
-    lines.append('from .config import FacilityType')
-    lines.append('from .skills import (')
-    lines.append('    Skill,')
-    lines.append('    SkillEquip,')
-    lines.append('    SkillKind,')
-    lines.append('    _cond_mood_below_18,')
-    lines.append('    _cond_mood_below_20,')
-    lines.append('    _cond_with_cc_mogui,')
-    lines.append('    _cond_with_cc_xiangzi,')
-    lines.append('    _cond_with_cc_operator,')
-    lines.append('    _cond_with_facility_operator,')
-    lines.append('    _cond_with_cc_faction,')
-    lines.append('    _cond_alone_in_facility,')
-    lines.append('    _cond_no_abyssal_outside_dorm,')
-    lines.append('    _cond_dorm_abyssals_full_mood,')
-    lines.append('    _cond_target_in_faction,')
-    lines.append('    _cond_target_is,')
-    lines.append('    _cond_self_full_mood,')
+    # 数据包只依赖数据包：技能框架在 `data/skill_model.py`、条件函数在 `data/conditions.py`。
+    # ⚠️ 绝不要在这里写 `from mood_soc.skills import ...` —— 那是计算包的门面，
+    #    会把 rules/models 拖进数据包，重新制造「生成脚本无法重新生成自己」的死锁。
+    lines.append('from mood_soc.config import FacilityType')
+    lines.append('from data.skill_model import Skill, SkillEquip, SkillKind')
+    lines.append('from data.conditions import (')
+    for _name in CONDITIONS:
+        lines.append(f'    {_name},')
     lines.append(')')
     lines.append('')
     lines.append('')
@@ -651,8 +666,8 @@ def render(skills_by_key, default_operators, equips, traits, factions, var_produ
     lines.append('')
     lines.append('# ---------------------------------------------------------------------------')
     lines.append('# 干员 ↔ 阵营/标签（由 scripts/generate_factions.py 从上游 termDescriptionDict 生成）。')
-    lines.append('# 上游权威键：cc.g.*（阵营）/ cc.tag.*（标签）；人工补充见 resources/factions_supplement.txt。')
-    lines.append('# 用法：skills._factions_of(op) —— 支持"中枢内每有 1 名 XX 干员"这类 per-count 技能。')
+    lines.append('# 上游权威键：cc.g.*（阵营）/ cc.tag.*（标签）；人工补充见 data/factions_supplement.txt。')
+    lines.append('# 用法：data.conditions._factions_of(op) —— 支持"中枢内每有 1 名 XX 干员"这类 per-count 技能。')
     lines.append('# ---------------------------------------------------------------------------')
     lines.append('OPERATOR_FACTIONS = {')
     for name in sorted(factions["by_operator"]):
@@ -686,7 +701,7 @@ def render(skills_by_key, default_operators, equips, traits, factions, var_produ
     lines.append('')
     lines.append('# ---------------------------------------------------------------------------')
     lines.append('# 变量产出者：(skill_id, clause, 变量名, 值, 计数基准, 条件, 技能名, 持有者)')
-    lines.append('# 来源 resources/variable_producers.txt（逐条注明上游 buff 描述出处）。')
+    lines.append('# 来源 data/variable_producers.txt（逐条注明上游 buff 描述出处）。')
     lines.append('# 用于 mood_soc/variables.collect_variables()：技能间的"中间货币"（人间烟火/热情值/无声共鸣）。')
     lines.append('# ---------------------------------------------------------------------------')
     lines.append('VARIABLE_PRODUCERS = (')
@@ -700,7 +715,7 @@ def render(skills_by_key, default_operators, equips, traits, factions, var_produ
 
 
 def load_all_operator_names() -> set:
-    """`resources/operators.txt` 里出现过的**全部**干员名（含只有非心情技能的干员）。
+    """`data/operators.txt` 里出现过的**全部**干员名（含只有非心情技能的干员）。
 
     校验 `_cond_target_is("锡兰")` 这类"点名某干员"的定向加成时必须用全量名册：
     `DEFAULT_OPERATORS` 只收"有心情技能"的干员，而锡兰/嘉维尔/蓝毒这几个**目标**
@@ -727,7 +742,7 @@ def check_faction_refs(skills_by_key, factions, known_operators=()) -> list[str]
       3. `CLAUSE_COND` 里的 `_cond_target_in_faction("…")`（阵营名）
          与 `_cond_target_is("…")`（**具体干员名**，如沏茶→锡兰）。
     第 3 类是 P5 补的：名字写在条件表达式的字符串里、不经过字段，
-    旧守卫完全扫不到（`resources/skills_registry.md` 式的"改名/打错字"会静默失效）。
+    旧守卫完全扫不到（`data/skills_registry.txt` 式的"改名/打错字"会静默失效）。
     """
     known = set(factions["by_faction"])
     known_ops = set(known_operators) | set(factions["by_operator"])
@@ -758,7 +773,7 @@ def check_faction_refs(skills_by_key, factions, known_operators=()) -> list[str]
     unknown = {f: v for f, v in used.items() if f not in known}
     if unknown:
         raise SystemExit(
-            "❌ 技能引用了阵营表里不存在的阵营（改名或补 resources/factions_supplement.txt）：\n"
+            "❌ 技能引用了阵营表里不存在的阵营（改名或补 data/factions_supplement.txt）：\n"
             + "\n".join(f"   {f!r} ← {', '.join(v[:4])}" for f, v in unknown.items()))
     if unknown_ops:
         raise SystemExit(

@@ -904,16 +904,16 @@ _OPERATOR_CACHE: Optional[List[str]] = None
 
 
 def all_operator_names(extra: Iterable[str] = ()) -> List[str]:
-    """全部可选干员名：`resources/operators.txt`（全量 921 名）+ 内置心情技能表 + 指定补充。
+    """全部可选干员名：`data/operators.txt`（全量 921 名）+ 内置心情技能表 + 指定补充。
 
     全量名册优先（它含只有生产/训练技能的干员）；读不到时退回内置表。
     """
     global _OPERATOR_CACHE
     if _OPERATOR_CACHE is None:
+        from data.paths import OPERATORS_TXT
         names = set(DEFAULT_OPERATORS)
-        path = Path(__file__).resolve().parent.parent / "resources" / "operators.txt"
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(OPERATORS_TXT, "r", encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split(",")
                     if len(parts) > 1 and parts[0] != "operator_id":

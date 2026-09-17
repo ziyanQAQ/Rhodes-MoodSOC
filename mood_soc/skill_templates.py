@@ -27,15 +27,15 @@
 
 游戏一个 buff 常含多个子句，子句可以属于不同族。例：
 `trade_cost&bd2[000]`（跋山涉水）= ①贸易站全体消耗 -0.1（`M05`）+ ②每 10 点人间烟火再 -0.01（`M05`+变量条件）。
-因此 `resources/moods_skills.txt` 是 **clause 级**、每行带 `template_id`；
-`resources/skills_registry.txt` 是 **buff 级**的覆盖台账（755 行，保证不漏）。
+因此 `data/moods_skills.txt` 是 **clause 级**、每行带 `template_id`；
+`data/skills_registry.txt` 是 **buff 级**的覆盖台账（755 行，保证不漏）。
 
 ## 数据流
 
 ```
 ArknightsGameData building_data.json ─┐
-                                      ├─ scripts/classify_skills.py ─┬─→ resources/moods_skills.txt  (+template_id, params)
-resources/moods_skills.txt ───────────┘                              └─→ resources/skills_registry.txt (755 行台账)
+                                      ├─ scripts/classify_skills.py ─┬─→ data/moods_skills.txt  (+template_id, params)
+data/moods_skills.txt ───────────┘                              └─→ data/skills_registry.txt (755 行台账)
                                                                           │
                                             scripts/generate_skills_data.py ←┘（读 template_id/params，不再靠猜）
                                                                           ↓

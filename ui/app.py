@@ -43,8 +43,9 @@ from mood_soc.battery import to_decimal  # noqa: E402
 from mood_soc.config import (MOOD_MAX, FacilityType, facility_max_level,  # noqa: E402
                              facility_slots)
 from mood_soc.models import IdleToDormEntry, normalize_entry_when  # noqa: E402
+from data.paths import MAA_SAMPLE, RES as DATA_RES  # noqa: E402
 
-SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
+SAMPLE = MAA_SAMPLE          # 冷启动自载的示例排班（`data/resources/…`，见 data/paths.py）
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
 
 
@@ -463,7 +464,7 @@ class MoodSocApp(tk.Tk):
     def import_files(self):
         paths = filedialog.askopenfilenames(
             title="选择排班 / 蓝图文件（自动识别格式；可多选：12h / 6h / 6h 三个文件也对）",
-            initialdir=str(ROOT / "resources"),
+            initialdir=str(DATA_RES),
             filetypes=[("排班 / 蓝图 JSON", "*.json"), ("全部文件", "*.*")])
         if not paths:
             return

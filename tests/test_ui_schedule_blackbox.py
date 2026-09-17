@@ -21,7 +21,7 @@ from ui.schedule import (EVENT_THRESHOLDS, MoodSetEvent, Schedule, all_operator_
                          simulate_schedule)
 
 ROOT = Path(__file__).resolve().parent.parent
-SAMPLE_MAA = ROOT / "resources" / "arknights-infra-schedule-maa.json"
+from data.paths import MAA_SAMPLE as SAMPLE_MAA  # noqa: E402
 D = Decimal
 # Decimal 除法在 28 位有效数字处舍入，故"精确值"比较留 1e-6 的数值容差（≈ 3.6 毫秒的心情）
 TOL = D("0.000001")

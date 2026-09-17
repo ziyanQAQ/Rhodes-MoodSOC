@@ -49,7 +49,7 @@ VARIABLES = (
 # 派生变量：不靠技能产出，而是由心情直接推出（24 − 当前心情）
 DERIVED_MOOD_DROP = "心情落差"
 
-# 有心情效果的变量（= 真正需要算的）。其余为登记性质，见 resources/skills_registry.txt 的 X09。
+# 有心情效果的变量（= 真正需要算的）。其余为登记性质，见 data/skills_registry.txt 的 X09。
 MOOD_RELEVANT_VARIABLES = ("人间烟火", "热情值", "无声共鸣", DERIVED_MOOD_DROP)
 
 BASIS_DOC = {
@@ -186,7 +186,7 @@ def _count_in_facilities(world, faction: str) -> int:
     `basis_count` 的 `abyssal_non_dorm` 分支与 `documents/04-特殊机制.md` 第 23 条。
     副手不算（`Facility.operators` 只含进驻者）；活动室使用者同样不算。
     """
-    from .skills import _factions_of
+    from data.conditions import _factions_of
     count = 0
     for f in world.facilities:
         if f.ftype in (FacilityType.DORMITORY, FacilityType.PRIVATE):
@@ -215,7 +215,7 @@ def collect_variables(world, producers=None, initial=None) -> VariableLedger:
     当"进场时就有的量"，而本项目的产出者算的是"布局里这班能产多少"——两者叠加。
     """
     if producers is None:
-        from .skills_data import VARIABLE_PRODUCERS
+        from data.skills_data import VARIABLE_PRODUCERS
         producers = VARIABLE_PRODUCERS
 
     by_name = {op.name: op for op in world.all_operators()}

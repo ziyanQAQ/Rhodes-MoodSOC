@@ -17,14 +17,14 @@
     # 只看结论（CI 用；有硬伤时退出码 1）
     .venv/Scripts/python.exe scripts/verify_skills.py --check
 
-    # 生成报告（默认写 resources/skill_verify_report.md）
+    # 生成报告（默认写 data/resources/skill_verify_report.md）
     .venv/Scripts/python.exe scripts/verify_skills.py --report
 
     # 指上游仓库（L3 需要；不指就自动探测常见路径，探测不到则 L3 跳过）
     .venv/Scripts/python.exe scripts/verify_skills.py --agd <ArknightsGameData> --report
 
 ⚠️ 三层都**只读**：本脚本不改任何数据。核出真差异时，在报告里列出并由人拍板后再改
-（改数据要走 `resources/*.txt` → 重新生成 `skills_data.py` 的管道）。
+（改数据要走 `data/*.txt` → 重新生成 `data/skills_data.py` 的管道）。
 """
 from __future__ import annotations
 
@@ -50,9 +50,10 @@ from mood_soc.skills import SKILLS, SkillKind, base_skill_id, SPREAD_SKILL_IDS  
 from mood_soc.skill_templates import ModelTier, TEMPLATES                # noqa: E402
 from mood_soc.variables import basis_count, collect_variables            # noqa: E402
 
-RES = ROOT / "resources"
-REGISTRY_TXT = RES / "skills_registry.txt"
-REPORT_MD = RES / "skill_verify_report.md"
+from data.paths import (  # noqa: E402  （路径的唯一出口）
+    REGISTRY_TXT,
+    SKILL_VERIFY_REPORT as REPORT_MD,
+)
 
 # 合成干员名：不在 `SKILL_EQUIPS` 里，因此**不受精英化门槛约束**（要核对的是技能本身）
 SYNTH = "校验员"
@@ -359,7 +360,7 @@ def _producers_for(skill) -> List[dict]:
     """给变量门控的 clause 自动补"变量产出者"（真名，按上游产出规则）。"""
     if not skill.var_name:
         return []
-    from mood_soc.skills_data import VARIABLE_PRODUCERS
+    from data.skills_data import VARIABLE_PRODUCERS
     picks: List[dict] = []
     seen = set()
     for sid, clause, var, value, basis, cond, sname, holders in VARIABLE_PRODUCERS:
@@ -411,7 +412,7 @@ def _independent_expected(skill, variables, world, facility, op) -> Tuple[bool, 
 
 
 def _factions_of(op):
-    from mood_soc.skills import _factions_of as f
+    from data.conditions import _factions_of as f
     return f(op)
 
 
@@ -737,7 +738,7 @@ def build_report(clauses: List[ClauseCheck], descs: Optional[List[DescCheck]],
     lines.append("## 一、总览")
     lines.append("")
     lines.append(f"- 心情 clause（`skills.SKILLS`）：**{len(clauses)}** 条")
-    lines.append(f"- 上游 buff 台账：**{reg['rows']}** 条（`resources/skills_registry.txt`）"
+    lines.append(f"- 上游 buff 台账：**{reg['rows']}** 条（`data/skills_registry.txt`）"
                  f"——已建模 {reg['modeled']} / 登记不建模 {reg['unmodeled']}")
     lines.append(f"  - 轴 A 分布："
                  + "、".join(f"{k} {v} 条" for k, v in sorted(reg["tiers"].items())))

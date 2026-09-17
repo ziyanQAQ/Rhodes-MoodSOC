@@ -24,8 +24,7 @@ from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SAMPLE = ROOT / "resources" / "arknights-infra-schedule-maa.json"
-V4 = ROOT / "resources" / "import_v4_input.json"
+from data.paths import MAA_SAMPLE as SAMPLE, V4_SAMPLE as V4  # noqa: E402
 
 
 def _tk_available() -> bool:

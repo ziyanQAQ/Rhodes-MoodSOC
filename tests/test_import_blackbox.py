@@ -7,8 +7,8 @@
 2. **导得对**：房间类型/等级/人员/练度/每班时长/换心情开关都被搬到本工具的模型里，
    拿不到的东西（没 layout、没 maa 段）走**兜底推断**并且**逐条写进导入报告**。
 
-样例都在 `resources/`（按 `resources/输出JSON结构说明.md` 与
-`resources/plan_compute_example_v4_annotated.md` 的字段造的）：
+样例都在 `data/resources/`（按 `输出JSON结构说明.md` 与
+`plan_compute_example_v4_annotated.md` 的字段造的）：
 `import_v3_out_3shifts.json` / `import_v3_out_no_maa.json` / `import_v3_out_36h_layout.json` /
 `import_v4_input.json`；再加上现成的 `arknights-infra-schedule-maa.json` 与 `scenarios/demo.json`。
 
@@ -33,13 +33,17 @@ from mood_soc.ledger import Bucket                                      # noqa: 
 from mood_soc.rules import mood_ledger                                  # noqa: E402
 from ui.schedule import load_schedule, load_schedule_ex                 # noqa: E402
 
-RES = ROOT / "resources"
-V3_3SHIFTS = RES / "import_v3_out_3shifts.json"
-V3_NO_MAA = RES / "import_v3_out_no_maa.json"
-V3_36H = RES / "import_v3_out_36h_layout.json"
-V4_INPUT = RES / "import_v4_input.json"
-MAA = RES / "arknights-infra-schedule-maa.json"
-SCENARIO = ROOT / "scenarios" / "demo.json"
+# 样例路径一律走 `data/paths.py`（数据的唯一路径出口）。
+from data.paths import (  # noqa: E402
+    MAA_SAMPLE as MAA,
+    RES,
+    SCENARIOS,
+    V3_SAMPLE_36H as V3_36H,
+    V3_SAMPLE_3SHIFTS as V3_3SHIFTS,
+    V3_SAMPLE_NO_MAA as V3_NO_MAA,
+    V4_SAMPLE as V4_INPUT,
+)
+SCENARIO = SCENARIOS / "demo.json"
 
 
 def _load(path: Path) -> dict:
@@ -280,7 +284,7 @@ class Testv4蓝图与干员池(unittest.TestCase):
 
 
 class Test干员名解析(unittest.TestCase):
-    """别的工具可能写英文名或干员 id（`resources/operator_names.txt`）。"""
+    """别的工具可能写英文名或干员 id（`data/operator_names.py`）。"""
 
     def test_英文名与干员id都能译成中文名(self):
         self.assertEqual(resolve_name("Amiya"), "阿米娅")
@@ -355,7 +359,7 @@ class Test报告(unittest.TestCase):
         self.assertEqual(imp.report.to_dict()["kind"], "plan_compute_v4")
 
     def test_英文名全部译得出来(self):
-        """英文名/干员 id 不该落进"名字不认得"那一档（`resources/operator_names.txt`）。"""
+        """英文名/干员 id 不该落进"名字不认得"那一档（`data/operator_names.py`）。"""
         imp = import_file(V4_INPUT)
         self.assertEqual(imp.report.unknown, [])
         self.assertEqual({p["name"] for p in imp.pool}, {"阿米娅", "能天使", "巫恋", "摩根"})

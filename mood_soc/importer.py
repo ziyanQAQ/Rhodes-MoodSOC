@@ -14,7 +14,7 @@
 
 ## v3 输出怎么拼（**以 `maa` 段为主**）
 
-上游 `resources/输出JSON结构说明.md`（ArknightsInfraCalc-v3 的输出契约）说得很清楚：
+上游 `data/resources/输出JSON结构说明.md`（ArknightsInfraCalc-v3 的输出契约）说得很清楚：
 **输出里没有 `kind`、也没有 `level`**（类型只能回查输入的 `layout.rooms[].kind`）。
 而同一份输出里的 `result.maa` 段**是按设施类型分组的**（`trading`/`manufacture`/`power`/
 `dormitory`/`control`/`meeting`/`hire`/`processing`），并且连空宿舍都在（`skip:true`）。
@@ -339,12 +339,12 @@ def _unknown_names(names: Sequence[str], known) -> List[str]:
 
 
 def _known_operator_names():
-    """本项目技能库里"有心情技能的人" —— 取 `DEFAULT_OPERATORS`（由 `operators.txt` 生成）。
+    """本项目技能库里"有心情技能的人" —— 取 `DEFAULT_OPERATORS`（由 `data/operators.txt` 生成）。
 
     ⚠️ 不要用阵营表当"技能库名单"：阿米娅这类没有阵营的干员会被误判成"不认识"
     （实测：她在 `OPERATOR_FACTIONS` 里没有条目，但技能库里有）。
     """
-    from .skills import DEFAULT_OPERATORS
+    from data.skills_data import DEFAULT_OPERATORS
     return set(DEFAULT_OPERATORS)
 
 
@@ -352,7 +352,7 @@ _ALL_NAMES: Optional[set] = None
 
 
 def _all_operator_names() -> set:
-    """**认得的**干员名（`resources/operators.txt` 第 2 列，约 429 名）——含没有心情技能的人。
+    """**认得的**干员名（`data/operators.txt` 第 2 列，约 429 名）——含没有心情技能的人。
 
     用来把"认得但没心情技能"（能天使那种：她的基建技能是产出类）与"根本不认得"
     （英文名没收录、或写了别的工具的内部 id）区分开——报告里这两件事的分量不同。
@@ -360,10 +360,10 @@ def _all_operator_names() -> set:
     global _ALL_NAMES
     if _ALL_NAMES is None:
         import csv
+        from data.paths import OPERATORS_TXT
         names = set()
-        path = Path(__file__).resolve().parent.parent / "resources" / "operators.txt"
-        if path.exists():
-            with open(path, encoding="utf-8", newline="") as fh:
+        if OPERATORS_TXT.exists():
+            with open(OPERATORS_TXT, encoding="utf-8", newline="") as fh:
                 for row in csv.reader(fh):
                     if len(row) >= 2 and row[1].strip():
                         names.add(row[1].strip())
@@ -374,27 +374,16 @@ def _all_operator_names() -> set:
 # ---------------------------------------------------------------------------
 # 干员名解析：别的工具可能写英文名或干员 id（`Amiya` / `char_002_amiya`）
 # ---------------------------------------------------------------------------
-_NAME_TABLE: Optional[Dict[str, str]] = None
-
-
 def alias_table() -> Dict[str, str]:
-    """别名 → 中文名（`resources/operator_names.txt`，由 `generate_operator_names.py` 生成）。
+    """别名 → 中文名（`data/operator_names.py`，由 `generate_operator_names.py` 生成）。
 
-    文件不存在时返回空表（此时只有中文名能被认出）——**不让导入因为缺一张派生物而失败**。
+    生成物不存在时返回空表（此时只有中文名能被认出）——**不让导入因为缺一张派生物而失败**。
     """
-    global _NAME_TABLE
-    if _NAME_TABLE is None:
-        table: Dict[str, str] = {}
-        path = Path(__file__).resolve().parent.parent / "resources" / "operator_names.txt"
-        if path.exists():
-            import csv
-            with open(path, encoding="utf-8", newline="") as fh:
-                for row in csv.DictReader(fh):
-                    a, c = (row.get("alias") or "").strip(), (row.get("chinese") or "").strip()
-                    if a and c:
-                        table.setdefault(a, c)
-        _NAME_TABLE = table
-    return _NAME_TABLE
+    try:
+        from data.operator_names import OPERATOR_ALIASES
+    except ImportError:            # 派生物还没生成 → 退化为"只认中文名"
+        return {}
+    return dict(OPERATOR_ALIASES)
 
 
 def resolve_name(name: str) -> str:
@@ -409,7 +398,7 @@ def resolve_name(name: str) -> str:
 def _layout_levels(layout: Optional[dict]) -> Dict[str, List[int]]:
     """`layout.rooms` → `{设施中文名: [该类型各房间的等级（按出现顺序）]}`。
 
-    ⚠️ 输出契约（`resources/输出JSON结构说明.md` §5）说：**MAA 组内数组顺序 = 布局中该类型
+    ⚠️ 输出契约（`data/resources/输出JSON结构说明.md` §5）说：**MAA 组内数组顺序 = 布局中该类型
     房间的出现顺序**，所以第 i 间房能按下标对齐到 layout 里的第 i 间。
     """
     out: Dict[str, List[int]] = {}

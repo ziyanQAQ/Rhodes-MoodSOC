@@ -812,7 +812,7 @@ class Test可数条件与替换链(unittest.TestCase):
         心情那一半无条件成立 —— 与上一个用例「挑大梁」同一类。
 
         ⚠️ 这条 buff 曾按 `partial_mode=hold` 整条不生效，导致龙舌兰的常驻减耗**丢失**；
-        现改为 `partial_mode=apply`（`resources/moods_skills.txt`）。
+        现改为 `partial_mode=apply`（`data/moods_skills.txt`）。
 
         贸易站 3 人 + 中枢满员基准：1 − 0.1(设施) − 0.25(中枢) = 0.65，再 −0.25 → **0.40**。
         """
@@ -1357,7 +1357,7 @@ class Test挂件位(unittest.TestCase):
     挂件不需要休息，所以给它们算心情消耗没有意义。
 
     推论：那 9 条写「进驻训练室协助位时，心情每小时消耗 +1」的训练室技能**不生效**
-    （已从 `resources/moods_skills.txt` 撤出，台账保留登记与原因）。
+    （已从 `data/moods_skills.txt` 撤出，台账保留登记与原因）。
     与 docx 第 4 段「工作时基础消耗 1 点/时」不冲突——那说的是常规生产设施的上岗消耗。
     """
 
