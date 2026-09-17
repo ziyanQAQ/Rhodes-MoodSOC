@@ -261,6 +261,32 @@ class Test界面冒烟(unittest.TestCase):
             if v.operator:
                 self.assertIn(v.operator, tags, f"{v.operator} 应在当前班次里")
 
+    def test_干员集合没变时不重建全员一览(self):
+        """⚠️ 性能回归：`recompute()` 每次都重建「全员一览」的芯片要 127ms，而"改一格心情"
+        根本不影响干员集合 —— 集合没变时只换练度角标，不重建控件。
+        """
+        app = self.app
+        calls = []
+        orig = app.roster.set_operators
+        app.roster.set_operators = lambda names: (calls.append(list(names)), orig(names))[1]
+        try:
+            app.recompute()                       # 什么都改了不，只是重算
+            self.assertEqual(calls, [], "干员集合没变却重建了芯片")
+            app.initial_moods = {"锡人": Decimal("10")}
+            app.recompute()
+            self.assertEqual(calls, [], "改心情不影响干员集合")
+            # 换了人 → 必须重建
+            facs = [dict(f) for f in app.schedule.shifts[0].facilities]
+            facs[0] = dict(facs[0], operators=["泡泡"])
+            app.schedule = app.schedule.replaced_shift(0, facs)
+            app.recompute()
+            self.assertEqual(len(calls), 1, "换了人就要重建")
+        finally:
+            del app.roster.set_operators        # 还原实例属性 → 回到类方法
+            app.initial_moods = {}
+            app.load_paths([SAMPLE])
+            app.update_idletasks()
+
     def test_播放与关键盘微调(self):
         app = self.app
         app.set_time(Decimal("0"))

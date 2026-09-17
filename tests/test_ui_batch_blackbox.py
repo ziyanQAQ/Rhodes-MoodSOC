@@ -468,6 +468,61 @@ class Test批量设置(unittest.TestCase):
         self.assertIn("之外", dlg.anchor_note.cget("text"))
         self.assertIn("周期数调大", dlg.anchor_note.cget("text"))
 
+    # ------------------------------------------------------------- 卡顿回归
+    def test_程序化刷新不会被当成改动(self):
+        """程序化刷新不能触发"改动"。
+
+        ⚠️ 老 bug（"设置干员与心情卡顿严重"的根源）：面板刷新会把自己那一列写回输入框，
+        而 `StringVar.trace_add("write")` 对程序自己的 `var.set()` 一样触发 →
+        被当成"用户改动" → 通知 → 宿主重算 → 推送回来 → 又刷新 …… 自激回路。
+        实测：空转 2 秒重算 **6 次 / 2336ms**（单次 231ms），界面一直在烧 CPU。
+        """
+        app = self.app
+        dlg = self._open(0)
+        sent = []
+        dlg._on_change = lambda *a: sent.append(a)      # 打桩：只看"发了几次通知"
+        # ① 非起点视图（最容易漏判的那种）：换时刻 / 刷新 / 重建行 / 刷锚点一览都不该发通知
+        dlg._set_view(1, Decimal("6"))
+        dlg._refresh_mood_cells()
+        dlg._rebuild_rows()
+        dlg._sync_anchor_note()
+        self._pump(app, 1.0)
+        self.assertEqual(sent, [], "程序化刷新被当成了用户改动")
+        # ② 真的改一格 → 恰好一次
+        who = "菲亚梅塔"
+        dlg._mood_vars[who].set("9")
+        self._pump(app, 1.0)
+        self.assertEqual(len(sent), 1, "改一格只该通知一次")
+        # ③ 再刷新一遍（值已经一致）→ 不该再有通知
+        dlg._refresh_mood_cells()
+        self._pump(app, 1.0)
+        self.assertEqual(len(sent), 1)
+        # ④ 结果没变时重复通知 → 去重，也不发
+        dlg._notify()
+        dlg._notify()
+        self.assertEqual(len(sent), 1, "同一个结果不该重复通知（每次都＝一整轮重算）")
+        app.initial_moods.clear()
+        app.mood_events.clear()
+        app.recompute()
+
+    def test_连续输入只落地一次(self):
+        """打字走 500ms 防抖：连续输入只在停手后落地一次（每次落地＝一整轮重算）。"""
+        app = self.app
+        dlg = self._open(0)
+        sent = []
+        dlg._on_change = lambda *a: sent.append(a)
+        who = "菲亚梅塔"
+        for v in ("1", "12", "12.", "12.5", "12.6", "12.7"):
+            dlg._mood_vars[who].set(v)
+            self._pump(app, 0.05)
+        self.assertEqual(sent, [], "打字途中不该落地")
+        self._pump(app, 1.0)
+        self.assertEqual(len(sent), 1, "停手后只落地一次")
+        self.assertEqual(sent[0][1], {who: Decimal("12.7")})
+        app.initial_moods.clear()
+        app.mood_events.clear()
+        app.recompute()
+
     # ------------------------------------------------------------- 端到端
     def test_设置中心里改干员与心情立即生效(self):
         """`app.open_settings("batch")`：面板里一改，布局与起点心情**立刻**落地、状态栏给回执。
@@ -482,7 +537,7 @@ class Test批量设置(unittest.TestCase):
             panel = dlg.panel
             panel._apply_names(["泡泡", "慕斯"], clear_first=True)
             panel._mood_vars["泡泡"].set("8")
-            self._pump(app)                       # 心情输入走 250ms 防抖
+            self._pump(app)                       # 心情输入走 500ms 防抖
             self.assertEqual(app.initial_moods.get("泡泡"), Decimal("8"))
             self.assertEqual(app.traj.mood_at("泡泡", 0), Decimal("8"))
             self.assertEqual(app.schedule.shifts[0].world.facilities[0].operators[0].name, "泡泡")
@@ -525,8 +580,8 @@ class Test批量设置(unittest.TestCase):
             dlg.destroy()
 
     # ------------------------------------------------------------- 小工具
-    def _pump(self, app, seconds: float = 0.4):
-        """空转事件循环若干秒（等防抖定时器到点）。"""
+    def _pump(self, app, seconds: float = 0.9):
+        """空转事件循环若干秒（等防抖定时器到点：默认要盖过 500ms 的防抖）。"""
         t0 = time.perf_counter()
         while time.perf_counter() - t0 < seconds:
             app.update()
