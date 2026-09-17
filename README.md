@@ -944,7 +944,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 .venv/Scripts/python.exe -m unittest tests.test_ui_settings_blackbox -v  # 「设置」中心（同上）
 ```
 
-当前 **381 个测试全绿**（其中 `test_layers.py` 是**结构回归网**：依赖方向、
+当前 **384 个测试全绿**（其中 `test_layers.py` 是**结构回归网**：依赖方向、
 兼容转发壳不漏名字、源码里不许手拼资源路径）。
 
 技能侧另有一道"体检"（与测试同源，可独立跑、可出报告）：
