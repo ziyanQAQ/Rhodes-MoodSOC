@@ -52,6 +52,35 @@ def build_initial_variables(data) -> dict:
     return {str(k): to_decimal(v) for k, v in data.items() if v is not None}
 
 
+def build_detached(raw) -> list:
+    """解析顶层 `detached`（「不在基建」名单）→ `["名字", ...]`。
+
+    两种写法都收（宽松解析，与别处的输入风格一致）：
+
+    ```json
+    "detached": ["某人", "另一个"]
+    "detached": [{"name": "某人"}, "另一个"]     // 也可以是场景里的干员对象写法
+    ```
+
+    **向后兼容**：缺省 / `null` / 空数组 → 空名单（老场景文件完全不受影响）。
+    名单里的人只需是**名字**：他们不在 `facilities` 里，练度/心情技能都无从生效，
+    唯一的作用是"有个心情值、能被查到与画出来"（见 `models.BaseLayout.detached`）。
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw.strip()] if raw.strip() else []
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError(f"detached 应当是字符串数组，收到 {raw!r}")
+    out = []
+    for item in raw:
+        name = item.get("name") if isinstance(item, dict) else item
+        name = str(name or "").strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
 def build_base_layout(data, validate: bool = False) -> BaseLayout:
     """由整个场景描述构建 BaseLayout。
 
@@ -83,7 +112,11 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
     顶层可选字段（在 `facilities` 之外）：
       - `entry_events`：进驻事件（M15a 患难之交）配置 —— **换不换 / 换谁**：
         `{"enabled": true, "swap_with": "路人"}`（也可写 `true`/`false`，或只写目标人名）。
-        见 `models.EntryEventConfig` 与 `rules.apply_entry_events`。
+        见 `models.EntryEventConfig` 与 `rules.apply_entry_events`；
+      - `idle_to_dorm`：闲置入宿配置（未满的闲置干员进宿舍）；
+      - `initial_global`：变量初始值（基建级中间货币的起始量）；
+      - `detached`：**「不在基建」名单**（既不在工作设施、也不在宿舍的干员），
+        `["某人", "另一个"]`。他们不占位、不消耗、不参与技能计数，只在轨迹里是一条平线。
 
     validate=True 时做容量/房间数自检，有问题抛 ValueError
     （默认 False：历史场景可能刻意超容量，不破坏既有用法）。
@@ -118,6 +151,10 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
         # 顶层可选的「变量初始值」（基建级中间货币的起始量）：
         #   {"initial_global": {"木天蓼": 5, "人间烟火": 30}, "facilities": [...]}
         initial_variables=build_initial_variables(data.get("initial_global")),
+        # 顶层可选的「不在基建」名单（既不在工作设施、也不在宿舍的人）：
+        #   {"detached": ["某人", "另一个"], "facilities": [...]}
+        # 只接受字符串数组（或 `{"name": ...}` 对象数组）；缺省 = 空（**向后兼容**：老文件没这个键）
+        detached=build_detached(data.get("detached")),
     )
     if validate:
         issues = world.validate()

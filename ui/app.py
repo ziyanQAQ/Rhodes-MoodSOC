@@ -209,6 +209,15 @@ class MoodSocApp(tk.Tk):
     def idle_globals(self, value):
         self.session.idle_globals = dict(value)
 
+    # —— 「不在基建」名单（既不在工作设施、也不在宿舍的人）：住在 Session 上 ——
+    @property
+    def detached(self):
+        return self.session.detached
+
+    @detached.setter
+    def detached(self, value):
+        self.session.set_detached(list(value or ()))
+
     # —— 进驻事件（换心情）的四项设置：住在 Session 上，界面按别名读写 ——
     @property
     def entry_swap_with(self):
@@ -907,7 +916,8 @@ class MoodSocApp(tk.Tk):
         """（旧入口，现等价于）打开设置中心的「干员与心情」分区。"""
         return self.open_settings("batch")
 
-    def apply_batch(self, changes: dict, moods: dict, mood_events=None) -> None:
+    def apply_batch(self, changes: dict, moods: dict, mood_events=None,
+                    detached=None) -> None:
         """「干员与心情」落地：干员改动按班次写回布局，心情整份替换周期起点 + 收下锚点。
 
         干员改动按"改过哪几班"返回（面板里可切班次，未改的不会丢）；
@@ -915,6 +925,8 @@ class MoodSocApp(tk.Tk):
         所以这里整份替换 `initial_moods`（`恢复导入值` ⇒ 空差集 ⇒ 手动心情清空）。
         `mood_events` 是**心情指定事件**（面板里的锚点，`MoodSetEvent` 列表）；
         ⚠️ 原样替换（`None` 也当空列表），否则删掉的锚点会留在引擎里继续生效。
+        `detached` 是**「不在基建」名单**（既不在工作设施、也不在宿舍的人）；
+        `None` = 用户没动过这一段 → 保留现有名单（别把导入带来的名单抹掉）。
         """
         n_ops = 0
         for i in sorted(changes):
@@ -925,6 +937,8 @@ class MoodSocApp(tk.Tk):
         # 否则删掉的锚点会留在引擎里继续生效 —— 这条口径现在写在 Session 里）
         self.session.initial_moods = {str(k): v for k, v in dict(moods).items()}
         self.session.mood_events = list(mood_events or ())
+        if detached is not None:
+            self.session.set_detached(list(detached))      # 名单同步进 Schedule 与各班 world
         self._layout_sig = None
         # 整周期重算是同步的（实测 0.23~1.2s）：先把"在算什么"写出来再算，
         # 否则点了「全部满心情」这种大动作会像卡死。
@@ -934,10 +948,12 @@ class MoodSocApp(tk.Tk):
         self.recompute()
         which = ("第 " + "、".join(str(i + 1) for i in sorted(changes)) + " 班"
                  if changes else "未改动布局")
+        n_bench = len(self.session.bench_names())
         self.status.configure(
             text=f"设置已生效：{which}"
                  + (f"（{n_ops} 个位置）" if changes else "")
                  + f"　｜　手动起点心情 {len(moods)} 名，其余用导入值"
+                 + (f"　｜　不在基建 {n_bench} 名" if n_bench else "")
                  + (f"　｜　心情指定事件 {len(self.mood_events)} 条" if self.mood_events
                     else ""))
 

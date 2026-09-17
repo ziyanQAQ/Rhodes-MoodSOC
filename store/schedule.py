@@ -86,7 +86,7 @@ MIN_EVENT_GAP = Decimal("0.000001")     # 1e-6 小时 ≈ 3.6 毫秒
 # ============================================================================
 @dataclass
 class Shift:
-    """一个班次：一段时长 + 一份布局。"""
+    """一个班次：一段时长 + 一份布局（+ 可选的「不在基建」名单）。"""
     label: str
     hours: Decimal
     facilities: List[dict]
@@ -95,6 +95,9 @@ class Shift:
     entry_events: Optional[object] = None
     # 变量初始值（场景 JSON 的 `initial_global`；导入 v4 蓝图的 `scenario.initial_global`）
     initial_global: Dict[str, Decimal] = field(default_factory=dict)
+    # 「不在基建」名单：**既不在工作设施、也不在宿舍**的干员（场景 JSON 顶层 `detached`）。
+    # 语义：整段轨迹里心情恒定（净速率 0），且**不参与任何技能计数**。
+    detached: List[str] = field(default_factory=list)
     world: BaseLayout = field(init=False, repr=False)
 
     def __post_init__(self):
@@ -103,8 +106,11 @@ class Shift:
             raise ValueError(f"班次「{self.label}」时长不能为负，收到 {self.hours}")
         # 注：hours == 0 表示"时长未知"（MAA 班次名里没带 h 时），
         # 由 `_hours_from_hints` 补齐、并由 `Schedule` 校验必须为正。
+        self.detached = [str(n) for n in (self.detached or [])]
         self.world = build_base_layout({"facilities": self.facilities,
-                                        "initial_global": dict(self.initial_global or {})})
+                                        "initial_global": dict(self.initial_global or {}),
+                                        # 「不在基建」名单与 facilities 同层（场景 JSON 顶层）
+                                        "detached": list(self.detached)})
         if self.entry_events is not None:      # 顶层配置透传给 world
             self.world.entry_events = self.entry_events
         self._names = [o.name for o in self.world.all_operators()]
@@ -120,23 +126,26 @@ class Shift:
 
 
 def shift_from_facilities(label: str, hours, facilities: List[dict], source: str = "",
-                          entry_events=None, initial_global=None) -> Shift:
+                          entry_events=None, initial_global=None, detached=None) -> Shift:
     """由场景格式的 facilities 构建一个班次（`entry_events` 为可选进驻事件配置）。"""
     return Shift(label=label, hours=to_decimal(hours), facilities=list(facilities),
                  source=source, entry_events=entry_events,
-                 initial_global=dict(initial_global or {}))
+                 initial_global=dict(initial_global or {}),
+                 detached=list(detached or []))
 
 
 def shifts_from_import(imp, source: str = "") -> List[Shift]:
     """把 `importer.ImportResult` 的一个文件转成班次列表。
 
     - 每班的 `entry_events`（换心情）：沿用该文件解析出来的配置（挂在每个班次上）；
-    - `initial_global`（变量初始值）：挂到每个班次（同一份排班共用）。
+    - `initial_global`（变量初始值）：挂到每个班次（同一份排班共用）；
+    - `detached`（不在基建的人）：同样挂到每个班次（同一份排班共用）。
     """
     cfg = build_entry_event_config(imp.entry_events) if imp.entry_events else None
     return [Shift(label=s.label, hours=s.hours if s.hours is not None else ZERO,
                   facilities=list(s.facilities), source=source or imp.report.source,
-                  entry_events=cfg, initial_global=dict(imp.initial_global or {}))
+                  entry_events=cfg, initial_global=dict(imp.initial_global or {}),
+                  detached=list(s.detached or []))
             for s in imp.shifts]
 
 
@@ -204,10 +213,16 @@ class Schedule:
     它**只是显示口径**——「从 1 点开始到第二天 1 点为一个周期」就是把 `start_clock` 设成 1，
     所有时刻标签（滑块 / 看板头部 / 曲线刻度 / 逐次表组头）按 `周期内时刻 + start_clock` 渲染；
     引擎的数值、判定、积分**一字不变**（模型本来就是相对时间）。
+
+    `detached`：**「不在基建」名单**（场景 JSON 顶层 `detached`）——既不在工作设施、
+    也不在宿舍的干员。语义见 `simulate_schedule`：整段轨迹**心情恒定**（净速率 0），
+    且**不参与任何技能计数**（他们不在 `world` 里）。
+    它属于**整份排班**（不是逐班），`__post_init__` 会把各班的并集归一化后写回每一班。
     """
     shifts: List[Shift]
     cycle_hours: Decimal = DEFAULT_CYCLE_HOURS
     start_clock: Decimal = ZERO
+    detached: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.shifts:
@@ -222,6 +237,16 @@ class Schedule:
         if total != self.cycle_hours:
             raise ValueError(f"各班长之和 {total}h ≠ 周期 {self.cycle_hours}h"
                              f"（改班次时长或改周期，两者必须相等）")
+        # ——「不在基建」名单归一化：整份排班共用一份（各班的并集，保序去重）——
+        merged: List[str] = [str(n) for n in (self.detached or [])]
+        for s in self.shifts:
+            for n in (s.detached or []):
+                if n not in merged:
+                    merged.append(n)
+        self.detached = merged
+        for s in self.shifts:
+            s.detached = list(merged)
+            s.world.detached = list(merged)
         self._starts: List[Decimal] = []
         t = ZERO
         for s in self.shifts:
@@ -254,7 +279,26 @@ class Schedule:
         return t - self._starts[self.index_at(t)]
 
     def operator_names(self) -> List[str]:
-        """周期内出现过的全部干员（按班次顺序去重保序）。"""
+        """周期内出现过的全部干员（按班次顺序去重保序）**含「不在基建」的人**。
+
+        为什么把不在基建的人也算进来：他们要能设心情、要能在曲线/全员一览里看到
+        （一天一条平线），也要能被程序接口读到。数值上他们**不参与任何技能**
+        ——见 `simulate_schedule` 的说明。
+        """
+        seen, out = set(), []
+        for n in (self.detached or []):
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+        for s in self.shifts:
+            for n in s.operators:
+                if n not in seen:
+                    seen.add(n)
+                    out.append(n)
+        return out
+
+    def stationed_names(self) -> List[str]:
+        """**进驻在某个设施里**的干员（副手不算；跨班次去重保序）= `all_operators()` 的并集。"""
         seen, out = set(), []
         for s in self.shifts:
             for n in s.operators:
@@ -262,6 +306,14 @@ class Schedule:
                     seen.add(n)
                     out.append(n)
         return out
+
+    def bench_names(self) -> List[str]:
+        """**「不在基建」的干员**：名单里明确点名的 + 整个排班都没排到位置的人（去重保序）。
+
+        = `detached` ∪ (`operator_names() − stationed_names()`)
+        """
+        stationed = set(self.stationed_names())
+        return [n for n in self.operator_names() if n in set(self.detached or ()) or n not in stationed]
 
     def hour_labels(self) -> List[str]:
         """各班次的"起始小时"标签（如 ['0:00', '12:00', '18:00']）。"""
@@ -275,22 +327,31 @@ class Schedule:
         new = [Shift(label=s.label, hours=to_decimal(h),
                      facilities=copy.deepcopy(s.facilities), source=s.source,
                      entry_events=s.entry_events,
-                     initial_global=dict(getattr(s, "initial_global", {}) or {}))
+                     initial_global=dict(getattr(s, "initial_global", {}) or {}),
+                     detached=list(getattr(s, "detached", []) or []))
                for s, h in zip(self.shifts, hours)]
-        return Schedule(new, sum((s.hours for s in new), ZERO), self.start_clock)
+        return Schedule(new, sum((s.hours for s in new), ZERO), self.start_clock,
+                        list(self.detached))
 
     def with_start_clock(self, clock) -> "Schedule":
         """改「周期起点钟点」（纯显示口径，返回新的 Schedule）。"""
-        return Schedule(copy.deepcopy(self.shifts), self.cycle_hours, to_decimal(clock))
+        return Schedule(copy.deepcopy(self.shifts), self.cycle_hours, to_decimal(clock),
+                        list(self.detached))
 
     def replaced_shift(self, index: int, facilities: List[dict]) -> "Schedule":
         """替换某个班次的布局（返回新的 Schedule）。"""
         new = [Shift(label=s.label, hours=s.hours,
                      facilities=(list(facilities) if i == index else copy.deepcopy(s.facilities)),
                      source=s.source, entry_events=s.entry_events,
-                     initial_global=dict(getattr(s, "initial_global", {}) or {}))
+                     initial_global=dict(getattr(s, "initial_global", {}) or {}),
+                     detached=list(getattr(s, "detached", []) or []))
                for i, s in enumerate(self.shifts)]
-        return Schedule(new, self.cycle_hours, self.start_clock)
+        return Schedule(new, self.cycle_hours, self.start_clock, list(self.detached))
+
+    def with_detached(self, names: Sequence[str]) -> "Schedule":
+        """改「不在基建」名单（返回新的 Schedule；各班的副本同步更新）。"""
+        return Schedule(copy.deepcopy(self.shifts), self.cycle_hours, self.start_clock,
+                        [str(n) for n in (names or [])])
 
     def entry_config(self):
         """本排班的进驻事件配置（取第一个班次的；MAA 排班没有则为默认值）。"""
@@ -605,12 +666,26 @@ def default_initial_moods(schedule: Schedule) -> Dict[str, Decimal]:
 
     为什么不是一律 24：场景/排班文件可以带起始心情（`{"name":"x","mood":10}`），
     直接导入时那个值就是"这个周期的起点"。界面上手动设的心情也走同一入口。
+
+    ⚠️ 两类人**不在第一班的 facilities 里**，这里要单独照顾：
+      - **只在别的班次出场**的人（如只在第 2 班顶班）——去所有班次里找他写的 `mood`；
+      - **「不在基建」的人**（`schedule.bench_names()`）——谁都没他的 `mood` 字段，
+        缺省给满心情 24（要改就由 `initial_moods` 覆盖，见 `ui/batch.py` 那一段）。
     """
     base = {n: MOOD_MAX for n in schedule.operator_names()}
     if schedule.shifts:
         for op in schedule.shifts[0].world.all_operators():
             if op.name in base:
                 base[op.name] = to_decimal(op.mood)
+        # 第一班里没有的那些人：逐个去所有班次里找他写的 mood
+        for name in list(base):
+            if schedule.shifts[0].world.get_operator(name) is not None:
+                continue
+            for s in schedule.shifts:
+                op = s.world.get_operator(name)
+                if op is not None:
+                    base[name] = to_decimal(op.mood)
+                    break
     return base
 
 
@@ -705,6 +780,14 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
 
     数值说明：单段内心情是精确的线性函数；误差只来自 Decimal 除法在 28 位有效数字处的
     舍入（量级 1e-26），界面上按"显示边界"舍入到 2 位小数即可。
+
+    **「不在基建」的人**（`schedule.bench_names()`，来自场景 JSON 顶层 `detached`）：
+    他们在轨迹里**是一条平线**，心情恒等于起点心情。这不是特例代码，而是三条既有规矩的
+    自然结果 —— ① `names` 含他们（`iterator.operator_names()` 已并上名单）；
+    ② 他们不在任何 `world` 里 ⇒ `rates_in_world` 给 0 ⇒ 心情不消耗也不回复；
+    ③ `_next_event` 遇到 `r == 0` 直接跳过 ⇒ 不会为他们生成事件。
+    另外他们**不参与任何技能计数**（计数读的是 `world.facilities` 里的进驻者），
+    这条有测试钉死（`tests/test_equivalence.py::Test不在基建`）。
 
     实现说明：每个班次都会**深拷贝一份布局副本**（`worlds`）供模拟使用——
     这样 `entry_restore_back=False`（位置也互换）只在这次模拟里生效，不会污染排班本身；

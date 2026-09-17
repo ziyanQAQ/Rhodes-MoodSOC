@@ -43,7 +43,7 @@ from mood_soc.scenario import DEFAULT_OPERATOR_LEVEL
 
 from ui import theme
 from ui.dialogs import ask_operator, parse_mood
-from ui.schedule import MoodSetEvent
+from ui.schedule import MoodSetEvent, all_operator_names
 from ui.scroll import VScroll
 
 # 表格默认可视高度（独立使用时的值；设置中心里传 `"auto"` → 吃掉内容区的剩余高度）
@@ -56,6 +56,14 @@ LEVEL_GAP = 14
 TABLE_H_MIN = 160
 # 心情输入的防抖（毫秒）：一次落地＝宿主那边一整轮重算（0.23~1.2s），别设得太短
 NOTIFY_DEBOUNCE_MS = 500
+# 「不在基建」那一段在表格里的**设施下标哨兵**：该段的行统一用这个值当 key 的第一项。
+# 真设施的合法下标是 `0 ≤ fi < len(facilities)`，所以 `-1` 不会与之冲突。
+DETACHED_FI = -1
+DETACHED_ROOM = "不在基建"          # 该段的行首标签（表格「房间」列）
+DETACHED_HINT = "既不在工作设施、也不在宿舍：心情整段不变（不消耗、不回复）"
+# 说明文字的最大换行宽度：**必须给**，否则一条长 tk.Label 会把设置中心的内容区撑宽
+# （实测「干员与心情」因此从 816px 涨到 1247px，超宽被裁）。口径说明都走这个值。
+HINT_WRAP = 700
 
 # 滚轮的接线在 `ui/scroll.py`（本实例专属 bindtag；见那里的注释）
 ROW_PAD = 1
@@ -96,7 +104,7 @@ class BatchMixin:
                          current_t=Decimal("0"), on_change=None, pool=None,
                          table_height=TABLE_H, page_height=0,
                          cycles: int = 1, mood_events=None, moods_at=None,
-                         follow_var=None):
+                         follow_var=None, detached=None):
         """装好状态 + 建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
 
         `pool`：**干员池**（`[{"name","elite","level","own"}]`，来自「导入 v4 蓝图」这类
@@ -110,6 +118,11 @@ class BatchMixin:
         心情列"该时刻的实际值"就是它算出来的；`moods_now` 是它不可用时的兜底（测试里用）。
         `follow_var`：「跟随滑块」的变量——**由宿主给**（`app.follow_slider`，唯一真源），
         否则这一页被标脏重建时勾选就丢了（切个页回来勾选没了，实测过）。
+
+        `detached`：**「不在基建」名单**（既不在工作设施、也不在宿舍的人；场景 JSON 顶层
+        `"detached": [...]`）。表格里会多出**一段**「不在基建」——
+        自动列出「本班未排班」的人（含名单里的人），也可以点「＋ 添加干员…」手动加。
+        这些人的心情**整段恒定**（不消耗、不回复），而且**不参与任何技能计数**。
         """
         self._on_change = on_change
         self.follow = follow_var if follow_var is not None else tk.BooleanVar(value=False)
@@ -152,6 +165,12 @@ class BatchMixin:
         self._elite_vars: Dict[str, tk.StringVar] = {}   # 干员 → 练度下拉
         self._draft: Dict[int, List[dict]] = {}      # 改过的班次：下标 → 工作副本
         self._fac_index: int = -1                    # 当前载入 `_fac_names` 的是哪一班
+        # ——「不在基建」名单（既不在工作设施、也不在宿舍）——
+        # `_detached`：用户**显式**加的（写进排班 JSON 顶层 `detached`）；
+        # `_detached_auto`：自动列出来的「本班未排班」的人（不进 JSON，只是让人看得见、能设心情）。
+        self._detached: List[str] = [str(n) for n in (detached or []) if str(n).strip()]
+        self._detached_edited = False                # 用户动过名单没有（没动就不往结果里塞）
+        self._detached_auto: List[str] = []
         self._rows: List[dict] = []                  # 行控件（结构没变时复用）
         self._mood_vars: Dict[str, tk.StringVar] = {}
         # 「这一格刚才是我们写的什么值」——`_collect_moods` 靠它区分"用户改过"与"只是刷新过"
@@ -180,6 +199,7 @@ class BatchMixin:
         self._build_table()
 
         self.err = tk.Label(self, text="", bg=theme.BG, fg=theme.DANGER, anchor="w",
+                            justify="left", wraplength=HINT_WRAP,
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.err.pack(fill="x")
         self._rebuild_rows()
@@ -583,14 +603,13 @@ class BatchMixin:
         self._events = []
 
     def _table_names(self) -> List[str]:
-        """表格里出现过的干员名。"""
+        """表格里出现过的干员名（含「不在基建」那一段）。"""
         return [n for n in self._mood_vars if n]
 
     def _bulk_names(self) -> List[str]:
         """一键动作的作用范围：**周期起点**对全排班的人都有意义（老口径也是这个范围）；
         其余时刻只对"表格里这些位置"有意义（那一刻她得在基建里）。"""
         return list(self._moods) if self._is_start_view() else self._table_names()
-
     def _view_moods(self) -> Dict[str, Decimal]:
         """**这一刻的实际心情**。
 
@@ -598,17 +617,26 @@ class BatchMixin:
           周期起点用的那组值（缺省＝导入值），也就是老口径的"周期起点心情"；
         - **其余时刻**：由轨迹算出来的**实际值**（锚点已生效在轨迹里），
           所以换时刻就能看到各人心情按正常演化变成多少。
+
+        ⚠️ 「不在基建」的人**不一定**在轨迹的 `moods_at` 里（例如手工加进来、还没重算过的），
+        所以这里按 `self._moods` 兜一层底：他们的心情**整段恒定**，用起点值显示是对的。
         """
         if self._is_start_view():
             return {n: v for n, v in self._moods.items()}
+        out: Dict[str, Decimal] = {}
         if self._moods_at is not None:
             try:
                 got = self._moods_at(self._view_abs())
             except Exception:                     # 没轨迹 / 还没算完 → 退到兜底值
                 got = None
             if got:
-                return {n: Decimal(str(v)) for n, v in got.items()}
-        return dict(self._now)
+                out = {n: Decimal(str(v)) for n, v in got.items()}
+        else:
+            out = dict(self._now)
+        for n in self._detached_all():
+            if n not in out:
+                out[n] = self._moods.get(n, Decimal(str(self._imported.get(n, MOOD_MAX))))
+        return out
 
     def _sync_anchor_note(self) -> None:
         """锚点一览（按绝对时刻排序）：让人知道"哪一刻被指定过、指定成了多少"。"""
@@ -678,6 +706,110 @@ class BatchMixin:
                                 if n else "已恢复导入值")
         self._notify()
 
+    # ---------------------------------------------------------------- 不在基建
+    def _detached_all(self) -> List[str]:
+        """「不在基建」那一段要列的人：用户**显式**加的 + 自动列出的（去重保序）。"""
+        out: List[str] = []
+        for n in list(self._detached) + list(self._detached_auto):
+            n = str(n or "").strip()
+            if n and n not in out:
+                out.append(n)
+        return out
+
+    def _sync_detached(self) -> None:
+        """重算自动名单：**本班次没排到位置**的人（含"整个排班都没排到"的）。
+
+        口径：`schedule.operator_names()`（全排班人员 + 显式「不在基建」名单）
+        减去**当前这一班的房间里的位置**。所以"某个班换下来休息的人"会自动出现，
+        "整个排班都没安排的板凳干员"要么在名单里、要么用「＋ 添加干员…」加进来。
+        """
+        if self._schedule is None:
+            self._detached_auto = []
+            return
+        idx = max(0, min(self._shift_index, len(self._schedule.shifts) - 1))
+        here = set()
+        for f in self._schedule.shifts[idx].world.facilities:
+            here.update(o.name for o in f.operators)
+            here.update(o.name for o in f.deputies)
+        auto = [n for n in self._schedule.operator_names() if n not in here]
+        for n in self._detached:                 # 显式加的人一律列出（哪怕本班在岗）
+            if n not in auto:
+                auto.append(n)
+        self._detached_auto = auto
+
+    def _detached_out(self) -> Optional[List[str]]:
+        """结果里的「不在基建」名单：用户**动过**才给（否则 `None` = 别覆盖已有的）。"""
+        return list(self._detached) if self._detached_edited else None
+
+    def _set_detached_names(self, names: Sequence[str]) -> None:
+        """整份替换**显式**名单（去重保序）并刷新表格。"""
+        out: List[str] = []
+        for n in names:
+            n = str(n or "").strip()
+            if n and n not in out:
+                out.append(n)
+        self._detached = out
+        self._detached_edited = True
+        self._sync_detached()
+        self._rebuild_rows()
+        self._notify()
+
+    def _detach_operator(self, name: str) -> None:
+        """把某人放进「不在基建」：**先从所有班次的位置里摘下来**，再进名单。
+
+        为什么要摘位置：留在位置上她其实在岗（有消耗、能被选中当技能对象），
+        与"不在基建"自相矛盾；而且那样她会在表格里出现两次（房间那一段 + 不在基建那一段）。
+        """
+        name = str(name or "").strip()
+        if not name:
+            return
+        moved = 0
+        for i, shift in enumerate(self._schedule.shifts):
+            facs = self._draft.get(i)
+            if facs is None:
+                facs = [dict(f, operators=list(f.get("operators", [])))
+                        for f in shift.facilities]
+            hit = False
+            for f in facs:
+                ops = [n for n in f.get("operators", []) if n != name]
+                if len(ops) != len(f.get("operators", [])):
+                    hit = True
+                    f["operators"] = ops
+            if hit:
+                self._draft[i] = facs
+                moved += 1
+        self._collect_moods()
+        self._set_detached_names(list(self._detached) + [name])
+        self.err.configure(text=f"已把 {name} 移到「不在基建」"
+                                + (f"（并从 {moved} 个班次的位置上摘下）" if moved else "")
+                                + "；她的心情整段不变")
+
+    def _undetach_operator(self, name: str) -> None:
+        """把某人移出**显式**名单（房间位置不会自动恢复，要回岗请在上面的表里选人）。"""
+        self._collect_moods()
+        self._set_detached_names([n for n in self._detached if n != name])
+        self.err.configure(text=f"已把 {name} 移出「不在基建」名单"
+                                + ("" if name not in self._detached_auto
+                                   else "（本班仍未排班，所以她还在这一段的自动名单里）"))
+
+    def _add_detached(self) -> None:
+        """「＋ 添加干员…」：从全量名册 / 干员池里选一个人，放进「不在基建」。"""
+        self._collect_moods()
+        names = list(self._schedule.operator_names()) if self._schedule else []
+        for n in self._pool_names():
+            if n not in names:
+                names.append(n)
+        for n in all_operator_names():           # 全量名册（含从没排过班的人）
+            if n not in names:
+                names.append(n)
+        picked = ask_operator(self, names, "",
+                              title="添加「不在基建」的干员（不在工作设施、也不在宿舍）")
+        if not picked:
+            return
+        self._detach_operator(picked)
+        self._sync_facilities()                  # 位置可能被摘掉了 → 上面那段表格也要刷
+        self._rebuild_rows()
+
     # ================================================================ 干员区
     def _build_op_bar(self) -> None:
         box = tk.LabelFrame(self, text="干员（只改上面选中的这一班）", bg=theme.BG,
@@ -693,17 +825,21 @@ class BatchMixin:
                                                                           padx=(6, 0))
         ttk.Button(row, text="全部设为 E2", command=lambda: self._set_all_elite(2)).pack(
             side="left", padx=(6, 0))
+        ttk.Button(row, text="＋ 添加干员…", command=self._add_detached).pack(
+            side="left", padx=(6, 0))
         self.show_empty = tk.BooleanVar(value=True)
         tk.Checkbutton(row, text="显示空位", variable=self.show_empty, bg=theme.BG,
                        activebackground=theme.BG, highlightthickness=0,
                        command=self._rebuild_rows).pack(side="left", padx=(10, 0))
         self.pool_note = tk.Label(box, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
+                                  justify="left", wraplength=HINT_WRAP,
                                   font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.pool_note.pack(fill="x", padx=theme.GAP)
         self._sync_pool_note()
         tk.Label(box, text="「批量粘贴名单」＝一行一个（逗号/空格也行），按房间顺序依次填入；"
                            "点表格里的干员名可以搜索更换。",
-                 bg=theme.BG, fg=theme.MUTED, anchor="w",
+                 bg=theme.BG, fg=theme.MUTED, anchor="w", justify="left",
+                 wraplength=HINT_WRAP,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(fill="x", padx=theme.GAP,
                                                                pady=(0, 6))
 
@@ -719,8 +855,10 @@ class BatchMixin:
             return
         names = "、".join(p["name"] for p in self._pool[:6])
         more = f" 等 {len(self._pool)} 名" if len(self._pool) > 6 else ""
+        bench = self._detached_all()
+        hint = (f"　｜　不在基建 {len(bench)} 名（表格末尾那一段）" if bench else "")
         self.pool_note.configure(text=f"干员池：{names}{more}（选人时可搜到，"
-                                      f"练度用池里的值）")
+                                      f"练度用池里的值）{hint}")
 
     def _pool_names(self) -> List[str]:
         return [p["name"] for p in self._pool]
@@ -781,6 +919,7 @@ class BatchMixin:
         self._fac_index = idx          # "现在载入的是哪一班的布局"（切班次/换时刻的判据）
         if idx in self._draft:
             self._fac_names = self._draft[idx]
+            self._sync_detached()
             return
         shift = self._schedule.shifts[idx]
         self._fac_names = []
@@ -806,6 +945,7 @@ class BatchMixin:
         for p in self._pool:                             # 池里的练度也算缺省（v4 蓝图用得上）
             if p.get("elite") is not None:
                 self._elite.setdefault(p["name"], int(p["elite"]))
+        self._sync_detached()        # 「不在基建」那一段的自动名单（本班未排班的人）
 
     def _mark_dirty(self) -> None:
         """记下"这一班的干员被改过"，并把工作副本留给切班次后复用。"""
@@ -826,7 +966,11 @@ class BatchMixin:
         return self._schedule.shifts[self._shift_index].world.facilities[fac_index].display_name
 
     def _row_plan(self) -> List[Tuple[int, int, str, str]]:
-        """表格要画哪些行 → `[(设施下标, 位次, 干员名, 房间名或 "")]`（房间名只在该组首行）。"""
+        """表格要画哪些行 → `[(设施下标, 位次, 干员名, 房间名或 "")]`（房间名只在该组首行）。
+
+        最后一段是**「不在基建」**（`DETACHED_FI = -1`）：既不在工作设施、也不在宿舍的人，
+        每个一行（`位次` 只是行号，没有"位置"含义）。
+        """
         plan: List[Tuple[int, int, str, str]] = []
         for fi, fac in enumerate(self._fac_names):
             ops = list(fac.get("operators", []))
@@ -837,6 +981,11 @@ class BatchMixin:
                     continue
                 plan.append((fi, si, name, self._room_name(fi) if first else ""))
                 first = False
+        detached = self._detached_all()
+        if detached:
+            plan.append((DETACHED_FI, 0, "", DETACHED_ROOM))     # 段首：写一次段名
+            for i, name in enumerate(detached):
+                plan.append((DETACHED_FI, i + 1, name, ""))
         return plan
 
     # ---------------------------------------------------------------- 练度缺省
@@ -915,15 +1064,20 @@ class BatchMixin:
             w.destroy()
         self._rows = []
         for row_i, (fi, si, name, room) in enumerate(plan):
+            detached = fi == DETACHED_FI
+            header = detached and not name          # 「不在基建」的段首行
             bg = theme.zebra(row_i)                     # 隔行底色：一行一行看得清
             row = tk.Frame(self.inner, bg=bg)
             row.pack(fill="x", padx=4, pady=ROW_PAD)
-            room_lbl = tk.Label(row, text=room, bg=bg, fg=theme.TEXT, width=11,
+            room_lbl = tk.Label(row, text=room, bg=bg,
+                                fg=(theme.OK if detached else theme.TEXT), width=11,
                                 anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL))
             room_lbl.pack(side="left")
-            tk.Label(row, text=f"{si + 1}", bg=bg, fg=theme.MUTED, width=3, anchor="w",
+            tk.Label(row, text="" if detached else f"{si + 1}", bg=bg, fg=theme.MUTED,
+                     width=3, anchor="w",
                      font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
-            op = self._op_label(row, fi, si, name, bg=bg)
+            op = self._op_label(row, fi, si, name, bg=bg,
+                                detached_header=header)
             op.pack(side="left", fill="x", expand=True)
             entry = ttk.Entry(row, width=6)
             elite = ttk.Combobox(row, state="readonly", width=3,
@@ -931,8 +1085,15 @@ class BatchMixin:
             elite.bind("<<ComboboxSelected>>", lambda _e, n=name: self._on_elite_change(n))
             dash = tk.Label(row, text="—", bg=bg, fg=theme.MUTED, width=8,
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
-            self._rows.append({"key": (fi, si), "room": room_lbl, "op": op,
-                               "entry": entry, "elite": elite, "dash": dash})
+            remove_btn = ttk.Button(row, text="×", width=2,
+                                    command=lambda n=name: self._undetach_operator(n))
+            if header:
+                tk.Label(row, text=DETACHED_HINT, bg=bg, fg=theme.MUTED, anchor="w",
+                         font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left",
+                                                                        padx=(6, 4))
+            self._rows.append({"key": (fi, si), "room": room_lbl, "op": op, "header": header,
+                               "entry": entry, "elite": elite, "dash": dash,
+                               "remove": remove_btn})
             self.vs.join(row)
         if not plan:
             tk.Label(self.inner, text="（这一班没有位置）", bg=theme.PANEL, fg=theme.MUTED,
@@ -943,16 +1104,24 @@ class BatchMixin:
         self.canvas.yview_moveto(0)
 
     def _fill_rows(self, plan) -> None:
-        """把计划写进行控件（心情输入框按干员名重新绑定，空位显示 —）。"""
+        """把计划写进行控件（心情输入框按干员名重新绑定，空位显示 —）。
+
+        「不在基建」那一段（`fi == DETACHED_FI`）没有练度下拉（练度对他们无意义），
+        换成一个「×」按钮：把她移出**显式**名单。
+        """
         self._mood_vars.clear()
         self._elite_vars.clear()
-        self._cells = [(fi, si) for fi, si, _n, _r in plan]
+        self._cells = [(fi, si) for fi, si, _n, _r in plan if fi != DETACHED_FI]
         view_moods = self._view_moods()
         for r, (fi, si, name, room) in zip(self._rows, plan):
+            detached = fi == DETACHED_FI
             r["room"].configure(text=room)
             elite = self._elite_of(name) if name else 2
-            r["op"].configure(text=self._op_text(name),
-                              fg=(theme.TEXT if name else theme.MUTED))
+            r["op"].configure(text=(DETACHED_ROOM if r.get("header") else self._op_text(name)),
+                              fg=(theme.TEXT if name else theme.MUTED),
+                              cursor=("arrow" if detached else "hand2"))
+            if not detached and r["op"].cget("text") != self._op_text(name):
+                r["op"].configure(text=self._op_text(name))
             if name:
                 shown = view_moods.get(name, self._moods.get(name, MOOD_MAX))
                 shown = Decimal(str(shown))
@@ -966,23 +1135,36 @@ class BatchMixin:
                     r["entry"].pack(side="left", padx=(6, 4))
                 if r["dash"].winfo_manager():
                     r["dash"].pack_forget()
-                ev = tk.StringVar(value=f"E{elite}")            # 练度：决定技能能不能生效
-                self._elite_vars[name] = ev
-                r["elite"].configure(textvariable=ev)
-                if not r["elite"].winfo_manager():
-                    r["elite"].pack(side="left", padx=(0, 4))
+                if detached:
+                    if r["elite"].winfo_manager():
+                        r["elite"].pack_forget()
+                    if not r["remove"].winfo_manager():
+                        r["remove"].pack(side="left", padx=(0, 4))
+                else:
+                    if r["remove"].winfo_manager():
+                        r["remove"].pack_forget()
+                    ev = tk.StringVar(value=f"E{elite}")        # 练度：决定技能能不能生效
+                    self._elite_vars[name] = ev
+                    r["elite"].configure(textvariable=ev)
+                    if not r["elite"].winfo_manager():
+                        r["elite"].pack(side="left", padx=(0, 4))
             else:
-                if r["entry"].winfo_manager():
-                    r["entry"].pack_forget()
-                if r["elite"].winfo_manager():
-                    r["elite"].pack_forget()
+                for w in ("entry", "elite", "remove"):
+                    if r[w].winfo_manager():
+                        r[w].pack_forget()
                 if not r["dash"].winfo_manager():
                     r["dash"].pack(side="left", padx=(6, 4))
 
 
     def _op_label(self, row, fac_index: int, slot_index: int, name: str,
-                  bg: str = theme.PANEL) -> tk.Label:
-        """干员单元格：可点的文字（点开搜索窗换人 / 选人 / 清空）。"""
+                  bg: str = theme.PANEL, detached_header: bool = False) -> tk.Label:
+        """干员单元格：可点的文字（点开搜索窗换人 / 选人 / 清空）。
+
+        「不在基建」的**段首行**（`detached_header`）不是干员，只是段名 + 一句口径说明。
+        """
+        if detached_header:
+            return tk.Label(row, text=DETACHED_ROOM, bg=bg, fg=theme.OK, anchor="w",
+                            font=(theme.FONT_FAMILY, theme.FS_SMALL, "bold"))
         label = tk.Label(row, text=(name or "（空位 · 点这里选人）"), bg=bg,
                          fg=(theme.TEXT if name else theme.MUTED), anchor="w", cursor="hand2",
                          font=(theme.FONT_FAMILY, theme.FS_SMALL))
@@ -1157,11 +1339,12 @@ class BatchMixin:
         self.bell()
 
     def value(self):
-        """收成 `(changes, moods, mood_events)`；有非法输入时返回 `None`（并在 `err` 里写原因）。
+        """收成 `(changes, moods, mood_events, detached)`；非法输入时返回 `None`（并写 `err`）。
 
         - `changes`：改过干员的班次 → `{班次下标: 布局}`
         - `moods`：周期起点心情（只含与导入值不同的项）
         - `mood_events`：心情指定事件（锚点）整份
+        - `detached`：**「不在基建」名单**整份（`[]` = 空；只有用户**显式加过/删过**才非 `None`）
         """
         bad = [n for n, var in self._mood_vars.items() if parse_mood(var.get()) is None]
         if bad:
@@ -1174,7 +1357,7 @@ class BatchMixin:
                        for f in facs] for i, facs in self._draft.items()}
         moods = {n: v for n, v in self._moods.items()
                  if Decimal(str(self._imported.get(n, MOOD_MAX))) != v}
-        return changes, moods, list(self._events)
+        return changes, moods, list(self._events), self._detached_out()
 
     # ================================================================ 窗口杂务
     def _center(self, parent) -> None:
@@ -1202,14 +1385,15 @@ class BatchPanel(tk.Frame, BatchMixin):
                  moods_now: Optional[Dict[str, Decimal]] = None,
                  current_t=Decimal("0"), on_change=None, pool=None,
                  table_height=TABLE_H, page_height=0,
-                 cycles: int = 1, mood_events=None, moods_at=None, follow_var=None):
+                 cycles: int = 1, mood_events=None, moods_at=None, follow_var=None,
+                 detached=None):
         super().__init__(master, bg=theme.BG)
         self._init_batch_body(master, schedule, shift_index=shift_index,
                               initial_moods=initial_moods, imported_moods=imported_moods,
                               moods_now=moods_now, current_t=current_t, on_change=on_change,
                               pool=pool, table_height=table_height, page_height=page_height,
                               cycles=cycles, mood_events=mood_events, moods_at=moods_at,
-                              follow_var=follow_var)
+                              follow_var=follow_var, detached=detached)
 
     def destroy(self) -> None:
         """销毁时取消还没落地的防抖任务（否则会对着已销毁的控件报 invalid command name）。"""

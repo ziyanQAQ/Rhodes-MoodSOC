@@ -114,8 +114,15 @@ class Test批量设置(unittest.TestCase):
         shift = app.schedule.shifts[0]
         expected = sum(max(f.capacity, len(f.operators), 1) for f in shift.world.facilities)
         self.assertEqual(len(dlg._cells), expected)
-        self.assertEqual(len(dlg._mood_vars), len(shift.operators))
-        self.assertEqual(set(dlg._mood_vars), set(shift.operators))
+        # 房间那一段的心情列＝本班在岗的人；「不在基建」那一段是**本班未排班**的人
+        stationed = set(shift.operators)
+        for name in stationed:
+            self.assertIn(name, dlg._mood_vars)
+        self.assertEqual(set(dlg._mood_vars),
+                         stationed | set(dlg._detached_all()))
+        # 「不在基建」段 = 全排班人员 − 本班在岗（本项目示例排班每班人员不同）
+        self.assertEqual(set(dlg._detached_all()),
+                         set(app.schedule.operator_names()) - stationed)
         # 预填＝当前起点（缺省 24；没有手动设过的心情）
         self.assertEqual(dlg._mood_vars["菲亚梅塔"].get(), "24")
         # 房间名按模型口径（带序号的如 制造站#2）
@@ -618,9 +625,9 @@ class Test批量设置(unittest.TestCase):
         res = panel.value()
         if res is None:                          # 报错时面板还在，能读到提示
             self.fail(f"收结果失败：{panel.err.cget('text')}")
-        changes, moods, events = res
+        changes, moods, events, detached = res
         app = self.app
-        app.apply_batch(changes, moods, events)
+        app.apply_batch(changes, moods, events, detached)
         return changes, moods, events
 
 

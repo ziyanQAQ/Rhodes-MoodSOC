@@ -1168,7 +1168,7 @@ class Test新增交互(unittest.TestCase):
             app.update()
             cap = panel._slot_count(panel._fac_names[1], 1)
             self.assertGreaterEqual(cap, facility_slots(ftype, 2))
-            changes, _moods, _events = panel.value()
+            changes, _moods, _events, _detached = panel.value()
         finally:
             top.destroy()
         self.assertIn(0, changes)

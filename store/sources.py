@@ -43,6 +43,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from mood_soc.battery import to_decimal
 from mood_soc.config import DORM_LEVEL_TABLE, min_level_for_slots, parse_facility_type
+from .layout import build_detached
 from .maa import ROOM_KEY_BY_LABEL, ROOM_MAP, ROOM_ORDER, parse_duration_hint
 
 # ---------------------------------------------------------------------------
@@ -174,6 +175,8 @@ class ImportedShift:
     hours: Optional[Decimal] = None
     facilities: List[dict] = field(default_factory=list)
     entry_events: Optional[dict] = None
+    # 「不在基建」名单（场景 JSON 顶层 `detached`）：只有本工具场景类文件可能有
+    detached: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -185,6 +188,7 @@ class ImportResult:
     initial_global: Dict[str, Decimal] = field(default_factory=dict)   # 变量初始值
     entry_enabled: Optional[bool] = None                    # 菲亚梅塔开关（None = 文件没说）
     entry_events: Optional[dict] = None                     # 场景格式的 `entry_events`（上层直接用）
+    detached: List[str] = field(default_factory=list)       # 「不在基建」名单（场景 JSON 顶层）
     scenario: Optional[dict] = None                         # 场景类文件原样透传
     report: ImportReport = field(default_factory=ImportReport)
 
@@ -424,6 +428,10 @@ def _import_scenario(data: dict, report: ImportReport, source: str = "") -> Impo
         report.notes.append("idle_to_dorm（闲置入宿）")
     if data.get("initial_global"):
         report.notes.append("initial_global（变量初始值）")
+    detached = build_detached(data.get("detached"))
+    if detached:
+        report.notes.append("detached（不在基建：" + "、".join(detached[:6])
+                            + ("…" if len(detached) > 6 else "") + "）")
     names = [o if isinstance(o, str) else (o or {}).get("name")
              for f in data["facilities"] for o in f.get("operators", [])]
     report.scan_names([n for n in names if n])
@@ -433,10 +441,12 @@ def _import_scenario(data: dict, report: ImportReport, source: str = "") -> Impo
         kind="scenario", scenario=data,
         shifts=[ImportedShift(label=label, hours=None,
                               facilities=list(data["facilities"]),
-                              entry_events=entry if isinstance(entry, dict) else None)],
+                              entry_events=entry if isinstance(entry, dict) else None,
+                              detached=list(detached))],
         report=report,
         entry_events=entry if isinstance(entry, dict) else None,
-        entry_enabled=(bool(entry.get("enabled")) if isinstance(entry, dict) else None))
+        entry_enabled=(bool(entry.get("enabled")) if isinstance(entry, dict) else None),
+        detached=list(detached))
 
 
 # ---------------------------------------------------------------------------

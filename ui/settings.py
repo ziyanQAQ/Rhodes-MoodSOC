@@ -345,6 +345,8 @@ class SettingsDialog(tk.Toplevel):
                           cycles=app.cycles,
                           mood_events=app.mood_events,
                           moods_at=app.moods_at_abs,
+                          # 「不在基建」名单（既不在工作设施、也不在宿舍的人）
+                          detached=app.detached,
                           # 「跟随滑块」的开关状态存在 app 上：这一页被标脏重建也不会丢勾选
                           follow_var=app.follow_slider)
 

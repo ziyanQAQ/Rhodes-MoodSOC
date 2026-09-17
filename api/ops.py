@@ -194,14 +194,15 @@ def op_load_schedule(session: Session, args: dict) -> dict:
       - `facilities`（必需）：房间数组，与本工具场景 JSON 完全同构；
       - `hours`：这一班的时长（默认 24）；
       - `label`：班次名（默认「班次 1」）；
-      - 顶层还可带 `entry_events` / `idle_to_dorm` / `initial_global`（与场景 JSON 同义）。
+      - 顶层还可带 `entry_events` / `idle_to_dorm` / `initial_global` / `detached`
+        （与场景 JSON 同义；见 `store/layout.build_base_layout`）。
     """
     facilities = args.get("facilities")
     _require(facilities=facilities)
     if not isinstance(facilities, list):
         raise ValueError("facilities 应当是数组")
     data = {"facilities": facilities}
-    for key in ("entry_events", "idle_to_dorm", "initial_global"):
+    for key in ("entry_events", "idle_to_dorm", "initial_global", "detached"):
         if key in args:
             data[key] = args[key]
     session.load_layout(data, hours=args.get("hours"), label=args.get("label") or "班次 1")
@@ -544,6 +545,55 @@ def op_trajectory(session: Session, args: dict) -> dict:
             "operators": {n: [_num(v) for v in traj.moods[n]] for n in traj.names}}
 
 
+def op_set_detached(session: Session, args: dict) -> dict:
+    """**「不在基建」名单**（既不在工作设施、也不在宿舍的干员）。
+
+    - `names`（必需）：整份替换的名单数组（`[]` = 清空）；支持 `{"name": "某人"}` 写法；
+    - `add` / `remove`：增量写法（可选，与 `names` 二选一）；
+    - `with_moods`：顺便把 `moods` 里的心情设成**周期起点**值：
+      `{"names": ["某人"], "moods": {"某人": 12}}`。
+
+    语义：这些人在整条轨迹里**心情恒定**（净速率 0），且**不参与任何技能计数**
+    （他们不在基建的房间列表里）。他们照样出现在 `moods` / `trajectory` 里（一条平线）。
+    """
+    _require_session(session)
+    if args.get("names") is not None:
+        names = args["names"]
+        if not isinstance(names, (list, tuple)):
+            raise ValueError("names 应当是数组（可为空数组表示清空）")
+        session.set_detached([n.get("name") if isinstance(n, dict) else n for n in names])
+    if args.get("add"):
+        for n in (args["add"] if isinstance(args["add"], (list, tuple)) else [args["add"]]):
+            session.add_detached(n.get("name") if isinstance(n, dict) else n)
+    if args.get("remove"):
+        for n in (args["remove"] if isinstance(args["remove"], (list, tuple)) else [args["remove"]]):
+            session.remove_detached(n.get("name") if isinstance(n, dict) else n)
+    for name, value in (args.get("moods") or {}).items():
+        session.set_initial_mood(name, value)
+    session.recompute()
+    return {"detached": session.bench_names(),
+            "detached_explicit": list(session.detached),
+            "not_in_shift": session.not_in_shift(0),
+            "initial_moods": {n: session.initial_moods[n] for n in session.bench_names()
+                              if n in session.initial_moods}}
+
+
+def op_bench_names(session: Session, args: dict) -> dict:
+    """只读：**「不在基建」的人**（名单点名的 ∪ 整个排班都没排到位置的人）。
+
+    `shift_index` 给了就顺带返回"该班次没排到位置的人"（界面那一段的自动名单）。
+    """
+    _require_session(session)
+    out = {"detached": session.bench_names(),
+           "explicit": list(session.detached),
+           "stationed": session.schedule.stationed_names()}
+    if args.get("shift_index") is not None:
+        idx = int(args["shift_index"]) - 1
+        out["shift_index"] = idx + 1
+        out["not_in_shift"] = session.not_in_shift(idx)
+    return out
+
+
 def op_mood_ledger(session: Session, args: dict) -> dict:
     """**流水账**：某人此刻的净速率是怎么来的（逐条来源 + 叠加规则），可解释性入口。"""
     _require_session(session)
@@ -591,11 +641,20 @@ def op_bottleneck(session: Session, args: dict) -> dict:
 
 
 def op_export_schedule(session: Session, args: dict) -> dict:
-    """把当前排班导回**本工具场景 JSON**（每班一份 `{"facilities": [...]}`）。"""
+    """把当前排班导回**本工具场景 JSON**（每班一份 `{"facilities": [...]}`）。
+
+    `detached`（不在基建名单）与 `initial_global` 写在**场景顶层**，与导入时同键同层，
+    所以「导出 → 再导入」能原样还原（含这些人）。
+    """
     _require_session(session)
     return {"shifts": [{"label": s.label, "hours": _num(s.hours),
-                        "scenario": {"facilities": s.facilities}}
+                        "scenario": {"facilities": s.facilities,
+                                     **({"detached": list(s.detached)}
+                                        if getattr(s, "detached", None) else {}),
+                                     **({"initial_global": dict(s.initial_global)}
+                                        if getattr(s, "initial_global", None) else {})}}
                        for s in session.shifts()],
+            "detached": session.bench_names(),
             "start_clock": _num(session.schedule.start_clock),
             "cycles": session.cycles}
 
@@ -632,6 +691,8 @@ OPERATIONS = {
     "fill_from_pool": op_fill_from_pool,
     "set_entry_events": op_set_entry_events,
     "set_idle_to_dorm": op_set_idle_to_dorm,
+    "set_detached": op_set_detached,
+    "bench_names": op_bench_names,
     # 结果
     "moods": op_moods,
     "trajectory": op_trajectory,

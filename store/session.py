@@ -120,6 +120,10 @@ class Session:
     #: 逐次设置 `{(周期, 班次, 干员): (参与, 目标标签)}`（序号均为 1 基）
     idle_entries: Dict[Tuple[int, int, str], Tuple[bool, Optional[str]]] = field(default_factory=dict)
 
+    #: 「不在基建」名单（既不在工作设施、也不在宿舍的人；场景 JSON 顶层 `detached`）。
+    #: 语义：轨迹里**一条平线**（心情恒定），且**不参与任何技能计数**。见 `store.schedule`。
+    detached: List[str] = field(default_factory=list)
+
     #: 最近一次重算耗时（毫秒），状态栏与 `status_text()` 用
     last_recompute_ms: float = 0.0
 
@@ -142,19 +146,22 @@ class Session:
         """直接给一份**布局 dict**（本工具场景格式）建一个单班排班。
 
         `data = {"facilities": [...]}`；可选顶层 `entry_events` / `idle_to_dorm` /
-        `initial_global` 与场景 JSON 完全同义（见 `store/layout.build_base_layout`）。
+        `initial_global` / `detached` 与场景 JSON 完全同义（见 `store/layout.build_base_layout`）。
         """
+        top = {k: v for k, v in data.items()
+               if k in ("entry_events", "idle_to_dorm", "detached")}
         shift = Shift(label=label, hours=to_decimal(hours if hours is not None else 24),
                       facilities=list(data.get("facilities") or []),
                       source="api:inline",
                       entry_events=None,
-                      initial_global=dict(data.get("initial_global") or {}))
+                      initial_global=dict(data.get("initial_global") or {}),
+                      detached=list(data.get("detached") or []))
         world = build_base_layout({"facilities": shift.facilities,
                                    "initial_global": dict(shift.initial_global or {}),
-                                   **{k: v for k, v in data.items()
-                                      if k in ("entry_events", "idle_to_dorm")}})
+                                   **top})
         shift.world = world
-        self.schedule = Schedule([shift], to_decimal(hours if hours is not None else 24))
+        self.schedule = Schedule([shift], to_decimal(hours if hours is not None else 24),
+                                 detached=list(world.detached or []))
         self.loaded = LoadedSchedule(schedule=self.schedule)
         self.initial_moods.clear()
         self.mood_events.clear()
@@ -165,6 +172,7 @@ class Session:
         """把排班自带（场景 JSON 顶层）的设置同步到会话（导入后调一次）。"""
         if self.schedule is None:
             return
+        self.detached = list(getattr(self.schedule, "detached", []) or [])
         cfg = self.schedule.entry_config()
         self.entry_events = bool(cfg.enabled)
         self.entry_swap_with = cfg.swap_with
@@ -191,6 +199,9 @@ class Session:
         if self.schedule is None:
             self.traj = None
             return None
+        # 「不在基建」名单是**排班级**设置：重算前同步进 Schedule（界面/接口改的是会话字段）
+        if list(getattr(self.schedule, "detached", []) or []) != list(self.detached):
+            self.schedule = self.schedule.with_detached(self.detached)
         self.traj = simulate_schedule(
             self.schedule, cycles=self.cycles,
             initial_moods=self.initial_moods,
@@ -255,6 +266,55 @@ class Session:
     def shift_index_at(self, t) -> int:
         return self.schedule.index_at(t) if self.schedule else 0
 
+    # ================================================================ 不在基建
+    def bench_names(self) -> List[str]:
+        """**「不在基建」的干员** = 名单里点名的 ∪ 整个排班都没排到位置的人（去重保序）。
+
+        「不在基建」= **既不在工作设施、也不在宿舍**：他们在 `world` 里没有位置，
+        所以不消耗、不回复、也不参与任何技能计数；轨迹里是一条**平线**（心情恒定）。
+        """
+        return self.schedule.bench_names() if self.schedule else []
+
+    def not_in_shift(self, shift_index: int = 0) -> List[str]:
+        """**本班次没排到位置**的人（含"不在基建"名单）——界面「不在基建」那一段的自动名单。
+
+        = `operator_names()` − 该班次里**进驻/副手**的人。
+        注意：他们此刻可能在**别的班次**上班，所以这一段的标题是
+        「不在工作、也不在宿舍（**本班未排班**）」。
+        """
+        if self.schedule is None:
+            return []
+        idx = min(max(int(shift_index), 0), len(self.schedule.shifts) - 1)
+        here = {o.name for o in self.schedule.shifts[idx].world.all_operators()}
+        return [n for n in self.schedule.operator_names() if n not in here]
+
+    def set_detached(self, names: Sequence[str]) -> None:
+        """整份替换「不在基建」名单（去重保序；**不重算**，调用方自己决定何时重算）。"""
+        out: List[str] = []
+        for n in (names or []):
+            n = str(n).strip()
+            if n and n not in out:
+                out.append(n)
+        self.detached = out
+        if self.schedule is not None:
+            self.schedule = self.schedule.with_detached(out)
+            self._sync_from_schedule()      # 名单也写回每班的 Shift/world
+
+    def add_detached(self, name: str) -> bool:
+        """把某人加进「不在基建」名单（已在名单里返回 False）。"""
+        name = str(name or "").strip()
+        if not name or name in self.detached:
+            return False
+        self.set_detached(self.detached + [name])
+        return True
+
+    def remove_detached(self, name: str) -> bool:
+        """把某人从「不在基建」名单里移除（**不**动他在房间里的位置）。"""
+        if name not in self.detached:
+            return False
+        self.set_detached([n for n in self.detached if n != name])
+        return True
+
     # ================================================================ 校验与摘要
     def validate(self) -> Validation:
         """逐班次跑布局自检（房间数上限 / 建造位 9 / 人数 ≤ 等级容量）。"""
@@ -291,6 +351,8 @@ class Session:
                                        for f in s.world.facilities]}
                        for i, s in enumerate(sch.shifts)],
             "operators": self.operator_names(),
+            "detached": self.bench_names(),
+            "detached_explicit": list(self.detached),
             "pool": list(getattr(self.loaded, "pool", []) or []),
             "import_reports": [r.to_dict() for r in (getattr(self.loaded, "reports", []) or [])],
             "settings": self.settings_dict(),
@@ -303,6 +365,7 @@ class Session:
             "cycles": self.cycles,
             "start_clock": str(self.schedule.start_clock) if self.schedule else "0",
             "initial_moods": {n: str(v) for n, v in self.initial_moods.items()},
+            "detached": list(self.detached),
             "mood_events": [{"name": e.name, "cycle": e.cycle, "t": str(e.t),
                              "mood": str(e.mood)} for e in self.mood_events],
             "entry_events": {
@@ -334,12 +397,15 @@ class Session:
         self.cycles = max(1, int(cycles))
 
     def set_timeline(self, hours: Optional[Sequence] = None,
-                     cycle_hours=None, start_clock=None) -> None:
-        """「时间轴」：改各班时长 / 周期 / 周期起点钟点，然后重算。
+                     cycle_hours=None, start_clock=None,
+                     detached: Optional[Sequence[str]] = None) -> None:
+        """「时间轴」：改各班时长 / 周期 / 周期起点钟点 / **不在基建名单**，然后重算。
 
         - `hours`：各班时长（长度必须等于班次数），改完周期**自动等于各班长之和**；
         - `cycle_hours`：只校验用（与各班长之和不等就抛 `ValueError`）；
-        - `start_clock`：周期起点是几点，**纯显示口径**，引擎数值一字不变。
+        - `start_clock`：周期起点是几点，**纯显示口径**，引擎数值一字不变；
+        - `detached`：**「不在基建」名单**（既不在工作设施、也不在宿舍的人）——
+          整份替换（`[]` = 清空）。
         """
         if self.schedule is None:
             raise ValueError("尚未载入排班")
@@ -352,6 +418,8 @@ class Session:
                              f"{to_decimal(cycle_hours)}h")
         if start_clock is not None:
             self.schedule = self.schedule.with_start_clock(start_clock)
+        if detached is not None:
+            self.set_detached(detached)
         self.recompute()
 
     def set_start_clock(self, clock) -> None:

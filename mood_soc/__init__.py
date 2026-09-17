@@ -41,8 +41,22 @@ from .rules import (
     time_to_mood,
     work_rest_ratio,
 )
-from .scenario import build_base_layout
 from .simulator import simulate
+
+
+def __getattr__(name):
+    """**惰性**再导出 `build_base_layout`（`store.layout`）。
+
+    为什么不能写成模块级 `from .scenario import build_base_layout`：
+    `store.layout` 会 `import mood_soc.battery`，于是**先跑完本文件的 __init__**；
+    如果这里反过来又要 `store.layout` 已经建好，就会撞上"部分初始化的模块"
+    （实测：`from store.layout import build_base_layout` 直接 ImportError）。
+    做成惰性导出后，`mood_soc.build_base_layout` 的用法一字不变（PEP 562）。
+    """
+    if name == "build_base_layout":
+        from store.layout import build_base_layout
+        return build_base_layout
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "INF",

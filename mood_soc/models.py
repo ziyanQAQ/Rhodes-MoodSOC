@@ -532,6 +532,11 @@ class BaseLayout:
     # 本项目的变量默认是"从布局里的产出者推导"（`variables.collect_variables`），
     # 这里允许额外给一份**初始值**——上游求解器的 `initial_global` 就是这种输入。
     initial_variables: Dict[str, Decimal] = field(default_factory=dict)
+    # **「不在基建」名单**：既不在工作设施、也不在宿舍的干员（场景 JSON 顶层 `detached`）。
+    # ⚠️ 他们**不在 `facilities` 里**，所以：不占位、不消耗、不回复、**不参与任何技能计数**
+    # （「基建内每有 1 名 XX 干员」数的是进驻者）。唯一的作用是"有个心情值、能被查到/画出来"
+    # —— 多班排班里由 `store.schedule.Schedule.detached` 承载，见那里的说明。
+    detached: List[str] = field(default_factory=list)
 
     # ================================================================ 单数查询
     def get_facility(self, ftype) -> Optional[Facility]:
