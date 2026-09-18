@@ -111,6 +111,7 @@ class BaseBoard(tk.Frame):
         self.chip_by_operator: Dict[str, MoodChip] = {}
         self._chips: Dict[tuple, MoodChip] = {}      # (设施下标, 座位号) → 芯片（复用用）
         self._struct_sig = None                      # 房间结构签名：没变就只换内容，不重建控件
+        self._shift_label = ""                       # 班次名（传布局副本时要靠它，见 `set_layout`）
 
         self.header = tk.Label(self, text="（未导入排班）", bg=theme.BG, fg=theme.TEXT,
                                font=(theme.FONT_FAMILY, theme.FS_TITLE), anchor="w")
@@ -171,17 +172,33 @@ class BaseBoard(tk.Frame):
         就不该销毁重建 50 个芯片——那正是"切换班次卡顿"的来源。
         """
         return tuple((f.display_name, f.capacity, self._slots_of(f))
-                     for f in shift.world.facilities)
+                     for f in self._facilities(shift))
+
+    @staticmethod
+    def _facilities(shift):
+        """这一份布局里的房间列表。
+
+        `shift` 既可以是 `Shift`（用它的排班快照），也可以是**引擎那份布局副本**
+        （`BaseLayout`）—— 界面显示"她这一刻在哪"要传后者，见 `ui/app.py: _engine_world`。
+        """
+        world = getattr(shift, "world", shift)
+        return getattr(world, "facilities", ())
 
     def _header_text(self, shift, sub_title: str) -> str:
-        n_slots = sum(self._slots_of(f) for f in shift.world.facilities)
-        base = f"{shift.label}　{sub_title}　·　" if sub_title else f"{shift.label}　·　"
-        return (f"{base}{len(shift.world.facilities)} 间房 / "
-                f"{n_slots} 个位置 / {len(shift.operators)} 名干员")
+        facs = self._facilities(shift)
+        n_slots = sum(self._slots_of(f) for f in facs)
+        # 班次名：传 `Shift` 时用它自己的 `label`；传**引擎布局副本**时由调用方用
+        # `shift_label=` 补上（副本上没有班次名 —— 它是布局，不是排班）
+        label = getattr(shift, "label", "") or self._shift_label or ""
+        base = f"{label}　{sub_title}　·　" if sub_title else (f"{label}　·　" if label else "")
+        n_ops = len(getattr(shift, "operators", ()) or
+                    [o for f in facs for o in f.operators])
+        return f"{base}{len(facs)} 间房 / {n_slots} 个位置 / {n_ops} 名干员"
+
     def _group(self, shift) -> List[tuple]:
         """按设施类型分组 → [(类型名, [设施下标...])]，顺序按 ROW_ORDER。"""
         groups: List[tuple] = []
-        for i, f in enumerate(shift.world.facilities):
+        for i, f in enumerate(self._facilities(shift)):
             label = FACILITY_LABELS.get(f.ftype, str(f.ftype))
             for g in groups:
                 if g[0] == label:
@@ -225,12 +242,16 @@ class BaseBoard(tk.Frame):
                 columns[-1].append((label, idxs))
         return [c for c in columns if c]
 
-    def set_layout(self, shift, sub_title: str = "") -> None:
-        """按某个班次刷新看板。
+    def set_layout(self, shift, sub_title: str = "", shift_label: str = "") -> None:
+        """按某个班次/布局刷新看板。
 
         - **房间结构没变**（多数班次切换）→ 只把芯片内容换一遍（快，无控件增删）；
         - 结构变了（换布局/换房间数）→ 重建控件树。
+
+        `shift` 可以是 `Shift`，也可以是**引擎那份布局副本**（`BaseLayout`）——
+        后者才是"这一刻她实际在哪"（闲置入宿换过人的是它）；这时用 `shift_label` 补班次名。
         """
+        self._shift_label = shift_label or getattr(shift, "label", "") or self._shift_label
         sig = self._structure_signature(shift)
         if sig == self._struct_sig and self._chips:
             self._update_contents(shift, sub_title)
@@ -265,7 +286,7 @@ class BaseBoard(tk.Frame):
         self.header.configure(text=self._header_text(shift, sub_title))
         self.slots.clear()
         self.chip_by_operator.clear()
-        for i, f in enumerate(shift.world.facilities):
+        for i, f in enumerate(self._facilities(shift)):
             for si in range(self._slots_of(f)):
                 op = f.operators[si] if si < len(f.operators) else None
                 occupant = op.name if op is not None else None
@@ -289,9 +310,10 @@ class BaseBoard(tk.Frame):
 
     def _build_card(self, parent: tk.Frame, shift, fac_index: int,
                     horizontal: bool = False) -> tk.Frame:
-        facility = shift.world.facilities[fac_index]
+        facs = self._facilities(shift)
+        facility = facs[fac_index]
         label = FACILITY_LABELS.get(facility.ftype, str(facility.ftype))
-        same_type = [f for f in shift.world.facilities if f.ftype == facility.ftype]
+        same_type = [f for f in facs if f.ftype == facility.ftype]
         ordinal = same_type.index(facility) + 1 if len(same_type) > 1 else 0
 
         card = tk.Frame(parent, bg=theme.PANEL, highlightbackground=theme.BORDER,

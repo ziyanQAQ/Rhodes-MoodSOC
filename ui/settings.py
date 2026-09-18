@@ -345,6 +345,9 @@ class SettingsDialog(tk.Toplevel):
                           cycles=app.cycles,
                           mood_events=app.mood_events,
                           moods_at=app.moods_at_abs,
+                          # 位置列读**引擎那份布局**（模拟副本）：被闲置入宿换出去的人
+                          # 才能显示成"不在基建"，否则会画成"她在宿舍/在上班"（实测踩过）
+                          world_at=app.world_at_abs,
                           # 「不在基建」名单（既不在工作设施、也不在宿舍的人）
                           detached=app.detached,
                           # 「跟随滑块」的开关状态存在 app 上：这一页被标脏重建也不会丢勾选

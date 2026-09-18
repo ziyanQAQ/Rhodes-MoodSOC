@@ -598,6 +598,23 @@ class MoodSocApp(tk.Tk):
         self.status.configure(text=self.session.status_text()
                                    + f"　｜　{self._entry_status()}　｜　{self._idle_status()}")
 
+    def _engine_world(self, t=None):
+        """**引擎这一刻实际用的那份布局**（模拟副本）；拿不到就退回排班快照。
+
+        ⚠️ 界面要显示"她在哪"就用它，别用 `schedule.shifts[i].world` —— 后者是"你导入的排班"，
+        进驻事件的位置互换与**闲置入宿的换人都只改副本**，换过人之后两份会不一样
+        （实测：快照说"贸易站#3 在上班"，引擎里她其实已经被换出去、心情平线 0）。
+        """
+        t = self.current_t if t is None else t
+        traj = getattr(self, "traj", None)
+        if traj is not None:
+            w = traj.world_at(t)
+            if w is not None:
+                return w
+        if self.schedule is None:
+            return None
+        return self.schedule.shift_at(t).world
+
     def _refresh_layout(self, quick: bool = False):
         """看板只在"当前时刻所在班次的布局"变化时刷新（房间结构没变则只换内容）。
 
@@ -605,35 +622,44 @@ class MoodSocApp(tk.Tk):
         否则拖过班次边界时要额外重画 57 个芯片，会噎一下。
         """
         idx = self.schedule.index_at(self.current_t)
-        shift = self.schedule.shifts[idx]
+        world = self._engine_world()
         # 签名里带上练度：精英化一变，芯片上的 `E0/E1` 角标要跟着变
-        # （否则结构"看起来没变"，看板就不会刷新内容）
-        sig = (idx, tuple((f.display_name, tuple((o.name, o.elite) for o in f.operators))
-                          for f in shift.world.facilities))
+        # （否则结构"看起来没变"，看板就不会刷新内容）；也带上"谁在哪"（闲置入宿会换人）
+        sig = (world is not None and id(world), tuple(
+            (f.display_name, tuple((o.name, o.elite) for o in f.operators))
+            for f in (world.facilities if world is not None else ())))
         if sig != self._layout_sig:
-            self.board.set_layout(shift, sub_title=self._shift_span_text(idx))
+            self.board.set_layout(world, sub_title=self._shift_span_text(idx),
+                                  shift_label=self.schedule.shifts[idx].label)
             self._layout_sig = sig
         if quick:
             self._roster_dirty = True
         else:
-            self.roster.set_context(self._room_tags(shift), bench=self.session.bench_names())
+            self.roster.set_context(self._room_tags(world), bench=self.session.bench_names())
             self._roster_dirty = False
 
     def _flush_roster_context(self) -> None:
         """补上拖动期间推迟的「全员一览」位置标记。"""
         if self._roster_dirty and self.schedule is not None:
-            self.roster.set_context(self._room_tags(self.schedule.shift_at(self.current_t)),
+            self.roster.set_context(self._room_tags(self._engine_world()),
                                    bench=self.session.bench_names())
             self._roster_dirty = False
 
-    def _room_tags(self, shift) -> dict:
-        """干员 → 当前班次所在房间的标记（`制1`/`宿3`/`中`…）；不在本班次的不在表里。"""
+    def _room_tags(self, world) -> dict:
+        """干员 → 这一刻所在房间的标记（`制1`/`宿3`/`中`…）；不在基建的不在表里。
+
+        `world` 传**引擎那份副本**（`_engine_world()`）或 `Shift`：被闲置入宿换出去的人不在
+        这里面，于是「全员一览」上她会显示成"休/不"，与她的平线心情对得上。
+        """
         tags = {}
+        if world is None:
+            return tags
+        facs = getattr(getattr(world, "world", world), "facilities", ())
         counts = {}
-        for f in shift.world.facilities:
+        for f in facs:
             counts[f.ftype] = counts.get(f.ftype, 0) + 1
         seen = {}
-        for f in shift.world.facilities:
+        for f in facs:
             seen[f.ftype] = seen.get(f.ftype, 0) + 1
             tag = facility_tag(f, seen[f.ftype] if counts[f.ftype] > 1 else 0)
             for op in f.operators:
@@ -840,6 +866,15 @@ class MoodSocApp(tk.Tk):
     def moods_at_abs(self, t) -> dict:
         """**任意**绝对时刻的实际心情（「干员与心情」按指定时刻显示心情列用的口子）。"""
         return self.session.moods_at(t)
+
+    def world_at_abs(self, t):
+        """**任意**绝对时刻**引擎实际用的那份布局**（模拟副本）。
+
+        「干员与心情」的位置列用它：显示"引擎这一刻怎么排的"。拿不到（还没有轨迹）就给 `None`，
+        面板会退回排班快照。
+        """
+        traj = getattr(self, "traj", None)
+        return traj.world_at(t) if traj is not None else None
 
     # ------------------------------------------------------------ 闲置入宿
     def _idle_entry_list(self):
@@ -1229,8 +1264,8 @@ class MoodSocApp(tk.Tk):
     def _facility_at(self, t: Decimal) -> str:
         if self.schedule is None:
             return ""
-        idx = self.schedule.index_at(t)
-        fac = self.schedule.shifts[idx].world.facility_of(self.curve_operator)
+        world = self._engine_world(t)          # 引擎那份（被闲置入宿换出去的人 → 未排班）
+        fac = world.facility_of(self.curve_operator) if world is not None else None
         return fac.display_name if fac else "未排班"
 
     # ================================================================== 班次条

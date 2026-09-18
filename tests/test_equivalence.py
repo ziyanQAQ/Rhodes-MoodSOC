@@ -318,6 +318,48 @@ class Test闲置入宿优先级(unittest.TestCase):
         self.assertIn("优先级③", detail)
         self.assertIn("阿米娅", detail)
 
+    def test_轨迹带着每段实际用的布局(self):
+        """`Trajectory.world_at(t)`：界面显示"她这一刻在哪"必须读它（引擎那份 = 模拟副本）。
+
+        两份账的区别：`schedule.shifts[i].world` 是**排班快照**（进驻事件的位置互换、
+        闲置入宿的换人都**不改它**）；`world_at(t)` 给的是**引擎实际用的副本**。
+        这条钉住三件事：① 段信息齐全；② 边界取右侧（与 `mood_at`/`rate_at` 同口径）；
+        ③ 闲置入宿换过人之后，两份账**确实不一样**（否则界面就没必要改）。
+        """
+        from store.schedule import Schedule, Shift
+
+        dorm = ["阿米娅", "德克萨斯", "Mon3tr", "澄闪", "伊内丝"]
+        sch = Schedule([
+            Shift("A", D("12"), [{"type": "制造站", "level": 3, "operators": ["普通甲", "普通乙"]},
+                                 {"type": "宿舍", "name": "宿舍#1", "level": 5,
+                                  "operators": dorm}]),
+            Shift("B", D("12"), [{"type": "制造站", "level": 3,
+                                  "operators": ["泡泡", "普通甲", "普通乙"]},
+                                 {"type": "宿舍", "name": "宿舍#1", "level": 5,
+                                  "operators": dorm}]),
+        ], D("24"))
+        s = Session()
+        s.schedule = sch
+        s.set_initial_moods({"泡泡": 10, **{n: 24 for n in dorm}})
+        s.idle_to_dorm = True
+        s.recompute()
+        tr = s.traj
+        # ① 段信息：两个班次段
+        self.assertEqual(len(tr.segments), 2)
+        self.assertEqual(tr.segments[0][:2], (D(0), D(12)))
+        self.assertEqual(tr.segments[1][:2], (D(12), D(24)))
+        # ② 边界取右侧
+        self.assertIs(tr.world_at(D("11.99")), tr.segments[0][2])
+        self.assertIs(tr.world_at(D("12")), tr.segments[1][2])
+        # ③ 第 1 班把泡泡换进了宿舍（引擎），而快照里她还是"未排班"
+        self.assertIsNotNone(tr.world_at(D(1)).facility_of("泡泡"))
+        self.assertIsNone(sch.shifts[0].world.facility_of("泡泡"))
+        # 第 2 班她自己上班 → 快照与引擎一致（她就是那个班的在岗人）
+        self.assertIsNotNone(tr.world_at(D(13)).facility_of("泡泡"))
+        # 每个班次段给的都必须是"这一班"的副本（房间结构跟着班次走）
+        for a, b, w in tr.segments:
+            self.assertTrue(w.facilities)
+
     def test_换心情先于闲置入宿且用换后的实时心情(self):
         """**顺序与实时性**：换心情先结算，闲置入宿用**换完之后**的实时心情判优先级。
 

@@ -471,18 +471,39 @@ class Mark:
 
 @dataclass
 class Trajectory:
-    """整周期的分段线性心情轨迹（节点＝事件时刻，节点之间线性）。"""
+    """整周期的分段线性心情轨迹（节点＝事件时刻，节点之间线性）。
+
+    `segments`：每个班次段的 `(起, 止, 那一份**布局副本**)` —— 副本是模拟真正用的那一份
+    （入驻事件的位置互换、闲置入宿的换人都只改它，**不改排班快照**）。
+    界面要显示"引擎这一刻怎么排的"就读它（`world_at`），别去读 `schedule.shifts[i].world`
+    —— 那是"你导入的排班"，两者在换过人之后会不一样。
+    """
     names: List[str]
     times: List[Decimal]
     moods: Dict[str, List[Decimal]]
     schedule: Schedule
     cycles: int = 1
     marks: List[Mark] = field(default_factory=list)
+    segments: List[Tuple[Decimal, Decimal, "BaseLayout"]] = field(default_factory=list)
 
     # ------------------------------------------------------------------ 查询
     @property
     def total_hours(self) -> Decimal:
         return self.times[-1]
+
+    def world_at(self, t) -> Optional["BaseLayout"]:
+        """时刻 `t` 生效的那份**模拟布局副本**（`None` = 这个轨迹没记段信息）。
+
+        ⚠️ 落在班次边界上取**右侧**（那一刻开始生效的班次），与 `mood_at` / `rate_at`
+        的"同刻取跳变后"一致：`t = 12` 给出"12:00 起上班的那一班"的布局。
+        """
+        if not self.segments:
+            return None
+        t = to_decimal(t)
+        i = bisect.bisect_right([s[0] for s in self.segments], t) - 1
+        if i < 0:
+            i = 0
+        return self.segments[i][2]
 
     def mood_at(self, name: str, t) -> Decimal:
         """时刻 t 的心情（节点之间线性插值；超界取端点值）。
@@ -879,8 +900,12 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             segments.append((t, end, i))
             t = end
 
+    # 每段**实际用的那份布局副本**（界面要显示"引擎这一刻怎么排的"，见 `Trajectory.world_at`）
+    seg_worlds: List[BaseLayout] = []
+
     for seg_i, (t0, seg_end, idx) in enumerate(segments):
         world = worlds[idx]                 # 本班次的**可变副本**（位置互换只发生在副本里）
+        seg_worlds.append(world)            # 界面读"这一刻实际的排布"就用它（见 `Trajectory.world_at`）
         eff = effs[idx]                     # 本班次的**有效**进驻事件配置（含按班次覆盖）
         # ⚠️ 位置也可能被改过（`restore_back=False` 的「位置也一起互换」）：那就**从计划重建**
         #    这一班的副本。副本是跨班次 / 跨周期复用的，不重建就会带着上一轮换过的位置——
@@ -998,7 +1023,8 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
 
     # 红脸区间记成标记（画图时画阴影）
     traj = Trajectory(names=names, times=times, moods=series, schedule=schedule,
-                      cycles=cycles, marks=marks)
+                      cycles=cycles, marks=marks,
+                      segments=[(a, b, w) for (a, b, _i), w in zip(segments, seg_worlds)])
     for n in names:
         for a, b in traj.red_face_spans(n):
             marks.append(Mark(a, "redface", n))

@@ -97,7 +97,8 @@ class Test批量设置(unittest.TestCase):
                            cycles=app.cycles,
                            mood_events=(app.mood_events if mood_events is None
                                         else mood_events),
-                           moods_at=app.moods_at_abs)
+                           moods_at=app.moods_at_abs,
+                           world_at=app.world_at_abs)
         panel.pack(fill="both", expand=True)
         app.update()
         return panel
@@ -270,6 +271,58 @@ class Test批量设置(unittest.TestCase):
         self.assertIn("Lv", text)
         self.assertIn("人", text)
         self.assertIn("·", text)
+
+    def test_位置列以引擎为准并标出换出的人(self):
+        """「位置列」读**引擎那份布局**（模拟副本），不是排班快照；不一致时打 `⇄` 并写说明。
+
+        为什么要有这一条：进驻事件的位置互换与**闲置入宿的换人只改副本** —— 快照里她可能还
+        写着"在宿舍"，而引擎里她已经被换出去（不在基建、速率 0、心情平线）。
+        面板必须把这件事写出来，否则看起来就是"人在宿舍、速率为 0"的怪 bug。
+        """
+        import json
+        import tempfile
+        from pathlib import Path
+
+        app = self.app
+        # 造一个"宿舍全满 + 里面坐着白板"的布局：兜底层（优先级③）会真的换人
+        facs = [{"type": "制造站", "level": 3, "operators": ["普通甲", "普通乙"]},
+                {"type": "宿舍", "name": "宿舍#1", "level": 5,
+                 "operators": ["阿米娅", "德克萨斯", "Mon3tr", "澄闪", "伊内丝"]}]
+        tmp = Path(tempfile.gettempdir()) / "moodsoc_swap_scenario.json"
+        tmp.write_text(json.dumps({"facilities": facs}, ensure_ascii=False), encoding="utf-8")
+        app.load_paths([tmp])
+        app.update()
+        # 把「板凳甲」加进「不在基建」名单，再开闲置入宿 → 她会被换进宿舍、换出一个人
+        app.session.set_detached(["板凳甲"], recompute=False)
+        app.session.set_initial_moods({"板凳甲": 10})
+        app.idle_to_dorm.set(True)
+        app.apply_idle_to_dorm(True, {})
+        app.update()
+
+        dlg = self._open(0)
+        self.assertTrue(dlg._where_mismatch, "应当有「快照位置 ≠ 引擎位置」的行")
+        # 引擎里她确实进宿舍了；快照里没有她
+        world = app.world_at_abs(Decimal("0"))
+        self.assertIsNotNone(world)
+        self.assertIsNotNone(world.facility_of("板凳甲"), "板凳甲应当被换进宿舍")
+        self.assertIsNone(app.schedule.shifts[0].world.facility_of("板凳甲"))
+        joined = " / ".join(dlg._where_mismatch)
+        self.assertIn("板凳甲", joined)
+        self.assertIn("⇄ 本班已进", joined)
+        # 被换出去的那个人：引擎里已经不在基建，快照里还在宿舍
+        out = [n for n in ("阿米娅", "德克萨斯", "Mon3tr", "澄闪", "伊内丝")
+               if world.facility_of(n) is None]
+        self.assertEqual(len(out), 1, "应当恰好换出一个")
+        self.assertIsNotNone(app.schedule.shifts[0].world.facility_of(out[0]),
+                             "快照里她还在宿舍（这就是两份账不一致）")
+        self.assertIn(out[0], joined)
+        self.assertIn("⇄ 本班被闲置入宿换出", joined)
+        # 收尾：把设置与名单都还原，免得上一条用例的痕迹留到后面的用例
+        app.idle_to_dorm.set(False)
+        app.apply_idle_to_dorm(False, {})
+        app.session.set_detached([], recompute=True)
+        app.load_paths([SAMPLE])
+        app.update()
 
     def test_等宽列与对齐(self):
         """位置行的各列都**落在同一列**上（共享 grid 等宽）。

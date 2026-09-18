@@ -245,11 +245,11 @@ class Test界面冒烟(unittest.TestCase):
         self.assertEqual(app.initial_moods.get(target), Decimal("7"))
 
     def test_看板位置标记与班次一致(self):
-        """位置标记（制1/贸3/宿2/中…）应当与当前班次的布局一致。"""
+        """位置标记（制1/贸3/宿2/中…）应当与**引擎这一刻的布局**一致（不是排班快照）。"""
         app = self.app
         app.set_time(Decimal("0"))
-        shift = app.schedule.shifts[0]
-        tags = app._room_tags(shift)
+        world = app._engine_world()                    # 引擎那份（闲置入宿会改它）
+        tags = app._room_tags(world)
         # 示例排班（333）：3 间制造站 / 3 间贸易站 / 1 间办公室
         self.assertEqual(tags.get("森蚺"), "制1")
         self.assertEqual(tags.get("结城理"), "制2")

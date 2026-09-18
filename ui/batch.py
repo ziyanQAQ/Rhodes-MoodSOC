@@ -147,7 +147,7 @@ class BatchMixin:
                          current_t=Decimal("0"), on_change=None, pool=None,
                          table_height=TABLE_H, page_height=0,
                          cycles: int = 1, mood_events=None, moods_at=None,
-                         follow_var=None, detached=None):
+                         follow_var=None, detached=None, world_at=None):
         """装好状态 + 建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
 
         `pool`：**干员池**（`[{"name","elite","level","own"}]`，来自「导入 v4 蓝图」这类
@@ -159,6 +159,10 @@ class BatchMixin:
         `cycles` / `mood_events`：周期数（时刻行的「周期」下拉有 1~cycles 项）与**已有锚点**；
         `moods_at`：`(绝对时刻) -> {干员: 心情}` 的取值口子（app 给的是轨迹的 `moods_at`），
         心情列"该时刻的实际值"就是它算出来的；`moods_now` 是它不可用时的兜底（测试里用）。
+        `world_at`：`(绝对时刻) -> BaseLayout`（app 给的是 `world_at_abs`）——
+        **位置列读它**（引擎实际用的那份布局副本）。给不了就退回排班快照。
+        ⚠️ 两者会不一样：进驻事件的位置互换与**闲置入宿的换人只改副本**，
+        快照里她可能还写着"在宿舍"，而引擎里她已经被换出去（速率为 0）。
         `follow_var`：「跟随滑块」的变量——**由宿主给**（`app.follow_slider`，唯一真源），
         否则这一页被标脏重建时勾选就丢了（切个页回来勾选没了，实测过）。
 
@@ -186,6 +190,8 @@ class BatchMixin:
         self._imported: Dict[str, Decimal] = dict(imported_moods or {})
         self._now: Dict[str, Decimal] = dict(moods_now or {})
         self._moods_at = moods_at                  # (绝对时刻) -> {干员: 心情}；可为 None
+        self._world_at = world_at                  # (绝对时刻) -> 引擎那份布局；可为 None
+        self._where_mismatch: List[str] = []       # 位置与引擎不符的行说明（表头那句提示用）
         self._cycles = max(1, int(cycles or 1))
         self._events: List[MoodSetEvent] = [self._as_event(e) for e in (mood_events or [])]
         # —— 视图（表格在看哪一周期、哪一刻）——
@@ -876,6 +882,40 @@ class BatchMixin:
             marks.append(f"{i + 1}{facility_tag(fac)}")
         return ("其他班：" + " ".join(marks)) if marks else ""
 
+    def _engine_world(self):
+        """**引擎这一刻实际用的那份布局**（模拟副本）；拿不到就返回 `None`。
+
+        ⚠️ 位置列要读它，别读 `self._schedule.shifts[i].world`（那是"你导入的排班"）：
+        进驻事件的位置互换与**闲置入宿的换人只改副本** —— 换过人之后，快照里她可能还写着
+        "在宿舍 / 在贸易站"，而引擎里她已经被换出去（不在基建、速率 0、心情平线）。
+        """
+        if self._world_at is None:
+            return None
+        try:
+            return self._world_at(self._view_abs())
+        except Exception:            # noqa: BLE001 —— 宿主给的口子坏了不该拖垮表格
+            return None
+
+    def _where_note(self, name: str, snap_where: str) -> str:
+        """她**这一刻引擎把她放在哪**，与快照不一致时返回一句人话；一致就返回 `""`。
+
+        典型两种（实测都出现过）：
+          · `本班已被闲置入宿换出（快照写 宿舍#1）` —— 引擎里她不在基建、速率是 0；
+          · `本班已进 宿舍#4（快照未写）` —— 引擎把她放进宿舍恢复，快照里她是"未排班"。
+        """
+        world = self._engine_world()
+        if world is None:
+            return ""
+        fac = world.facility_of(name)
+        engine_where = fac.display_name if fac is not None else "不在基建"
+        if engine_where == (snap_where or ""):
+            return ""
+        if engine_where == "不在基建":
+            return f"⇄ 本班被闲置入宿换出（快照写 {snap_where}）"
+        if not snap_where or snap_where == "不在基建":
+            return f"⇄ 本班已进 {engine_where}（快照未写）"
+        return f"⇄ 实际在 {engine_where}（快照写 {snap_where}）"
+
     def _add_detached(self) -> None:
         """「＋ 添加干员…」：从全量名册 / 干员池里选一个人，放进「不在基建」。"""
         self._collect_moods()
@@ -1527,12 +1567,21 @@ class BatchMixin:
         self._elite_vars.clear()
         self._cells = [(fi, si) for kind, fi, si, _n, _l in plan if kind == self.KIND_SLOT]
         view_moods = self._view_moods()
+        mismatches: List[str] = []              # 「快照位置 ≠ 引擎位置」那几行
         for r, (kind, fi, si, name, label) in zip(self._rows, plan):
             if kind == self.KIND_ROOM:
                 continue                       # 卡片标题在建的时候已经写好了
             bench = kind == self.KIND_BENCH
             elite = self._elite_of(name) if name else 2
-            r["op"].configure(text=self._op_text(name), cursor="hand2",
+            # 位置列的**引擎口径**：这一刻引擎真正把她放在哪（闲置入宿会把人换出宿舍/换进来）
+            note = ""
+            if name:
+                snap = "不在基建" if bench else (self._room_name(fi) if fi >= 0 else "")
+                note = self._where_note(name, snap)
+                if note:
+                    mismatches.append(f"{name}：{note}")
+            r["op"].configure(text=(self._op_text(name) + ("　⇄" if note else "")),
+                              cursor="hand2",
                               fg=(theme.TEXT if name else theme.MUTED))
             if name:
                 shown = view_moods.get(name, self._moods.get(name, MOOD_MAX))
@@ -1557,7 +1606,11 @@ class BatchMixin:
                 else:
                     if r["remove"].winfo_manager():
                         r["remove"].grid_remove()
-                    if r["dash"].winfo_manager():
+                    if note:                    # 位置对不上：写在「说明」列（并给个浅黄底提示）
+                        r["dash"].configure(text=note, fg=theme.DANGER)
+                        if not r["dash"].winfo_manager():
+                            r["dash"].grid(row=r["grid_row"], column=5, sticky="ew")
+                    elif r["dash"].winfo_manager():
                         r["dash"].grid_remove()
                     ev = tk.StringVar(value=f"E{elite}")        # 练度：决定技能能不能生效
                     self._elite_vars[name] = ev
@@ -1570,6 +1623,18 @@ class BatchMixin:
                         r[key].grid_remove()
                 if not r["dash"].winfo_manager() and not bench:
                     r["dash"].grid(row=r["grid_row"], column=5, sticky="ew")
+        self._where_mismatch = mismatches
+        if hasattr(self, "head_note"):
+            self._sync_head_note()
+
+    def _sync_head_note(self) -> None:
+        """表头第二行的口径说明：有"位置对不上"的行就补一句（`⇄` 是什么意思）。"""
+        if self._where_mismatch:
+            self.head_note.configure(
+                text=DETACHED_HINT + f"　｜　⇄ 位置以引擎为准（{len(self._where_mismatch)} 处，"
+                                     f"见「说明」列）", fg=theme.DANGER)
+        else:
+            self.head_note.configure(text=DETACHED_HINT, fg=theme.MUTED)
 
     def _op_label(self, parent, fac_index: int, slot_index: int, name: str,
                   bg: str = theme.PANEL, grid_row: int = 0) -> tk.Label:
@@ -1800,14 +1865,14 @@ class BatchPanel(tk.Frame, BatchMixin):
                  current_t=Decimal("0"), on_change=None, pool=None,
                  table_height=TABLE_H, page_height=0,
                  cycles: int = 1, mood_events=None, moods_at=None, follow_var=None,
-                 detached=None):
+                 detached=None, world_at=None):
         super().__init__(master, bg=theme.BG)
         self._init_batch_body(master, schedule, shift_index=shift_index,
                               initial_moods=initial_moods, imported_moods=imported_moods,
                               moods_now=moods_now, current_t=current_t, on_change=on_change,
                               pool=pool, table_height=table_height, page_height=page_height,
                               cycles=cycles, mood_events=mood_events, moods_at=moods_at,
-                              follow_var=follow_var, detached=detached)
+                              follow_var=follow_var, detached=detached, world_at=world_at)
 
     def destroy(self) -> None:
         """销毁时取消还没落地的防抖任务（否则会对着已销毁的控件报 invalid command name）。"""
