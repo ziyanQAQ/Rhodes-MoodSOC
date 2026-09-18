@@ -882,19 +882,46 @@ def _idle_candidates(world: BaseLayout, idle=None, only=None):
 #
 #   ① 有空位 → 直接住进去（不换人）
 #   ② 宿舍全满 → 换「宿舍#2~#4 的第 2~5 位」里**实时满心情**的那位
-#   ③ 还找不到 → 退到「宿舍里其余任何位置」的实时满心情者（含每间第 1 位）
+#   ③ 还找不到 → 只在**白板**（不属于任何已记录阵营的干员）里挑满心情的那位；
+#                **连白板都没有 → 这一班不换**（有阵营的不动）
 #   ④ 都不满足 → 这一班不动
 #
 # **同优先级内的顺序：优先 4、最后 1** ——
 #   宿舍之间：`#4 → #3 → #2 → #1`；同一宿舍内：第 2 位 → 第 5 位 → 第 1 位。
 # 为什么：用户指定"优先 4 最后 1"（最远的宿舍#4 当蓄水池，主力宿舍#1 最后动）；
-#   位次 1 排在同宿舍最后，是因为 P2 的点名范围本来就只含"第 2~5 位"，
-#   第 1 位只在 P3 兜底时才轮到。
+#   位次 1 排在同宿舍最后，是因为 ② 的点名范围本来就只含"第 2~5 位"。
 # ----------------------------------------------------------------------------
-#: P2 的点名范围：这些**宿舍序号**（1 基、按布局里的出现顺序，与界面「宿舍NN」一致）
+#: ② 的点名范围：这些**宿舍序号**（1 基、按布局里的出现顺序，与界面「宿舍NN」一致）
 DORM_PREFERRED_RANGE = (2, 3, 4)
-#: P2 的点名**位次**（1 基；第 1 位不在其中，留给 P3 兜底）
+#: ② 的点名**位次**（1 基；第 1 位不在其中，第 1 位只在 ③ 兜底时才轮到）
 DORM_PREFERRED_SLOTS = (2, 3, 4, 5)
+
+
+def _factionless(op: Operator) -> bool:
+    """她是不是**「白板」**（不属于**任何已记录阵营**）？
+
+    判据：`OPERATOR_FACTIONS`（由 `data/factions.txt` + 人工补充表生成）里**没有她的名字**，
+    且她自己也没有 `factions` / `trait` 之类的额外标注。
+    ⚠️ "已记录"＝**数据表的全集**（那两张表里出现过的每一个阵营），
+    与"这一刻基建里有没有该阵营的人"无关。
+
+    用途：闲置入宿的**兜底层（③）只肯换白板**（用户口径）—— 白板没有阵营联动技能，
+    换出去不会连带打断别人的阵营类加成；有阵营的人优先留在宿舍。
+    """
+    return not _factions_of(op)
+
+
+def _self_recovering_in_dorm(op: Operator) -> bool:
+    """她**在宿舍里能靠自己回心情**吗？（有 `M10` 宿舍自身回复类技能 → 换出去最亏）
+
+    为什么要把这类人排除在"可被换出"之外（用户口径）：像菲亚梅塔「自律」这种
+    "+2/h 且拒绝其它一切来源"的干员，**自己就能把心情拉满**，把她当"备用容量"换出去
+    等于白白丢掉一份恢复能力；而且换出去之后她变成闲置、心情一条平线（看起来像心情卡住）。
+    ⚠️ 只影响"**她被选为被换出者**"这一件事：她自己要入宿照旧（她是候选时不受影响）。
+    """
+    if not _active(op):
+        return False
+    return any(s.kind == SkillKind.DORM_SELF for s in _skills_of(op, SkillKind.DORM_SELF))
 
 
 def _dorm_order(world: BaseLayout) -> List[Facility]:
@@ -949,14 +976,18 @@ def _swap_mate(world: BaseLayout, exclude: Optional[set] = None):
     by_no = dict(_dorm_numbered(world))                      # 宿舍序号（1 基）→ 设施
 
     def _pickable(dorm, op) -> bool:
-        """这个人此刻**真的还在**这间宿舍里、没被换出去、且实时满心情？
+        """这个人此刻**真的还在**这间宿舍里、没被换出去、实时满心情、**且不是"自回型"**？
 
         ⚠️ 必须查 `world.facility_of`：`dorm.operators` 是"跑了一整轮模拟"的那个副本，
         可能残留**已经不在基建里**的陈旧对象（她早先被换出去过）。只比对成员列表的话，
         会挑到一个不在宿舍里的人来换 —— 换了个寂寞（`dorm.operators[idx] = op` 改的是
         一个早已不在世界里的槽位）。
+        ⚠️ `_self_recovering_in_dorm`：有宿舍自身回复技能的人（菲亚梅塔「自律」）**不被换出**
+        —— 她自己就能回满，换出去只会白丢一份恢复能力、还让她的曲线"平线卡住"。
         """
         if op.name in skip or op.mood < MOOD_MAX:
+            return False
+        if _self_recovering_in_dorm(op):
             return False
         here = world.facility_of(op.name)
         return here is not None and here is dorm
@@ -973,13 +1004,14 @@ def _swap_mate(world: BaseLayout, exclude: Optional[set] = None):
             if _pickable(dorm, op):
                 return dorm, op, 2
 
-    # --- 第 ③ 级：其余任何位置（同样"优先 4 最后 1"；每间先第 2~5 位，再第 1 位）---
+    # --- 第 ③ 级：兜底**只换白板**（不属于任何已记录阵营的人）；没有白板就不换 ---
+    #     顺序同"优先 4 最后 1"；每间先第 2~5 位，再第 1 位。
     for dorm in dorms:
         for slot in list(DORM_PREFERRED_SLOTS) + [1]:
             if slot - 1 >= len(dorm.operators):
                 continue
             op = dorm.operators[slot - 1]
-            if _pickable(dorm, op):
+            if _factionless(op) and _pickable(dorm, op):
                 return dorm, op, 3
     return None, None, None
 
@@ -998,11 +1030,15 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
     |---|---|---|
     | ① | 任一间宿舍**还有未占满的位次** | **直接住进去**（有空位就不换人）；顺序"优先 4 最后 1" |
     | ② | 宿舍**全满** | 换「宿舍 **#4 → #3 → #2** 的**第 2~5 位**」里**实时心情已满**的那位 |
-    | ③ | ②找不到 | 退到「宿舍里**其余任何位置**」的实时满心情者（含宿舍#1 全部位次、以及②那些宿舍的第 1 位） |
+    | ③ | ②找不到 | 只在**白板**（不属于任何已记录阵营的干员）里挑实时满心情的那位；**连白板都没有 → 这一班不换** |
     | ④ | 都不满足 | 这一班不动，记一条说明（group=`idle_to_dorm_skipped`） |
 
     - **同优先级内的顺序：优先 4、最后 1** —— 宿舍 `#4 → #3 → #2 → #1`；
       同一宿舍内 第 2 位 → 第 5 位 → 第 1 位（位次 1 只在③兜底时轮到）。
+    - **"白板"**＝`_factionless(op)`：`OPERATOR_FACTIONS`（`data/factions.txt` + 人工补充表）
+      里没有她。为什么兜底层只肯换白板：白板没有阵营联动技能，换出去不会连带打断别人的
+      阵营类加成 —— **有阵营的人优先留在宿舍**（用户口径）。
+    - 交换的**首要前提**永远是"被换出者 = 实时满 24 心情"；白板只是③这一级的附加筛选。
     - 被换出的那位（满心情）**离开宿舍 → 既不工作也不在宿舍**（心情不变，因为已经满了）。
       进来的人**接替他被换出的那个位次**（不是排到末尾）。
     - 候选按**心情从低到高**依次安排（最需要恢复的先来）；每处理一位都用**那一刻的实时心情**

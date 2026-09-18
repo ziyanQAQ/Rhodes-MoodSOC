@@ -919,6 +919,7 @@ class Test新增交互(unittest.TestCase):
         title, scope, rows = groups[0]
         name = rows[0][0]
         before = app.traj.mood_at(name, 24)
+        before_marks = len([m for m in app.traj.marks if m.kind == "idle"])
 
         seen = []
 
@@ -940,8 +941,12 @@ class Test新增交互(unittest.TestCase):
             self.assertTrue(seen, "改动必须回调（实时重算）")
             self.assertTrue(app.idle_to_dorm.get())
             self.assertIn("闲置入宿：已开启", app._idle_status())
-            self.assertTrue([m for m in app.traj.marks if m.kind == "idle"])
-            self.assertGreater(app.traj.mood_at(name, 24), before)   # 入宿后心情变好
+            self.assertTrue([m for m in app.traj.marks if m.kind == "idle"],
+                            "开启后应当出现「闲置入宿」的结算标记（入宿成功或「排不上」的说明）")
+            self.assertEqual(before_marks, 0, "开启之前不该有闲置入宿标记")
+            # ⚠️ 不再断言"她一定回满"：口径收过（兜底层只换白板 + 自回型不被换出），
+            #    示例排班在宿位全满、无白板时**一个人都不会被换出去**（走优先级④）。
+            self.assertEqual(app.traj.mood_at(name, 24), before)
             enabled, entries = panel.value()
         finally:
             top.destroy()

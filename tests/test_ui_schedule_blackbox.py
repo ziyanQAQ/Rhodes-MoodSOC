@@ -605,23 +605,56 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         cls.sch = load_schedule([SAMPLE_MAA])
 
     def test_开启后未满的闲置干员会回满(self):
-        """示例排班里"未排班且未满"的人会被安排进宿舍恢复。
+        """**有宿位 / 有白板可换**时，"未排班且未满"的人才能进宿舍恢复。
 
-        注意挑人：地灵/梅 整个周期都没排班 ⇒ 入宿后能一路回到 24；
-        虎狼丸只在**第 2 班**闲置（第 3 班又在会客室上班）⇒ 只看第 2 班末回到 24。
+        ⚠️ 口径在 2026-09 收过一次（用户口径）：兜底层（优先级③）**只肯换白板**
+        （不属于任何已记录阵营的人）。示例排班 4 间宿舍全满，而"宿舍里满心情的人"
+        要么有阵营（莱茵生命/龙门近卫局/叙拉古…），要么是**有阵营自身回复技能**的
+        （菲亚梅塔/缪尔赛思）—— **一个白板都没有** ⇒ 这两班老实走优先级④"不动"。
+        所以这里改成用**专门造的布局**验"能进"，示例排班的"进不去"另有用例钉住。
+        """
+        from store.schedule import Schedule, Shift
+
+        # 宿舍里第 4 位是**白板**（阿米娅）且满心情 → 兜底层允许换她；泡泡进去后回满
+        # （泡泡只在第 2 班上班 ⇒ 第 1 班她是"本班未排班"的闲置候选；两班都要给布局，
+        #   否则她的名字不在排班名册里、`mood_at` 会取不到）
+        # ⚠️ 宿舍容量恒为 5（上游表），所以要**放满 5 人**才有"互换"；
+        #    其中两位是白板（阿米娅 / 德克萨斯），兜底层会从白板里挑。
+        dorm = ["菲亚梅塔", "缪尔赛思", "塞雷娅", "阿米娅", "德克萨斯"]
+        sch = Schedule([
+            Shift("A", D("12"), [
+                {"type": "制造站", "level": 3, "operators": ["普通甲", "普通乙"]},
+                {"type": "宿舍", "name": "宿舍#1", "level": 5, "operators": dorm}]),
+            Shift("B", D("12"), [
+                {"type": "制造站", "level": 3, "operators": ["泡泡", "普通甲", "普通乙"]},
+                {"type": "宿舍", "name": "宿舍#1", "level": 5, "operators": dorm}]),
+        ], D("24"))
+        on = simulate_schedule(sch, cycles=1, idle_to_dorm=True,
+                               initial_moods={"泡泡": 10, "菲亚梅塔": 24, "缪尔赛思": 24,
+                                              "塞雷娅": 24, "阿米娅": 24, "德克萨斯": 24})
+        self.assertMood(on.mood_at("泡泡", D("12")), D("24"),
+                        "第 1 班与白板互换后应当回满（宿舍 Lv5 满氛围 4/h → 3.5h 回满）")
+        idle = [m for m in on.marks if m.kind == "idle"]
+        self.assertTrue(any(("阿米娅" in m.label or "德克萨斯" in m.label) for m in idle),
+                        "应当与白板互换")
+
+    def test_示例排班全满且无白板时不换人(self):
+        """示例排班：4 间宿舍全满 + 宿舍里没有白板 ⇒ **一次都不换**（优先级④）。
+
+        这是"不拿有阵营的人去填坑"的直接后果：宁可那几位闲置者不进宿舍，
+        也不把莱茵生命/龙门近卫局这类有阵营联动的人换出去。
         """
         off = simulate_schedule(self.sch, cycles=1)
         on = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True)
-        for name in ("地灵", "梅"):
-            self.assertLess(off.mood_at(name, 24), D("24"))
-            self.assertMood(on.mood_at(name, 24), D("24"), f"{name} 入宿后应当回满")
-        self.assertLess(off.mood_at("虎狼丸", 18), D("24"))
-        self.assertMood(on.mood_at("虎狼丸", 18), D("24"), "虎狼丸 第 2 班入宿后应当回满")
-        self.assertGreater(on.mood_at("虎狼丸", 24), off.mood_at("虎狼丸", 24))
-        # 事件流水账：真的记了"谁进宿舍 / 与谁互换"
+        for name in ("地灵", "梅", "虎狼丸", "跃跃", "承曦格雷伊", "幽灵鲨"):
+            self.assertEqual(on.mood_at(name, 24), off.mood_at(name, 24),
+                             f"{name} 这一班没进宿舍 → 与不开时应当逐位相同")
         idle = [m for m in on.marks if m.kind == "idle"]
-        self.assertTrue(idle)
-        self.assertTrue(any("进宿舍" in m.label or "互换" in m.label for m in idle))
+        self.assertTrue(idle, "应当记下「谁想入宿但没位置」")
+        self.assertTrue(all("优先级④" in m.label for m in idle))
+        # 宿舍里那两位"自己就能回"的人没被换出去（菲亚梅塔/缪尔赛思 整段满心情）
+        self.assertEqual(on.mood_at("菲亚梅塔", 24), D("24"))
+        self.assertEqual(on.mood_at("缪尔赛思", 24), D("24"))
 
     def test_默认关闭时一切照旧(self):
         """不传 idle_to_dorm（默认 False）→ 轨迹与"没有这个功能"时逐位相同。"""
@@ -640,6 +673,8 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         self.assertFalse([m for m in skip.marks
                           if m.kind == "idle" and "地灵" in m.label])
         self.assertLess(skip.mood_at("地灵", 24), D("24"))       # 没被安排 → 还是没满
+        # 指定与「塞雷娅」互换：严格按指定 → 那位不在宿舍 / 心情不满就跳过这一位
+        # （塞雷娅在宿舍里但不是白板，走③兜底时不会被自动挑中；这里靠显式指定）
         pick = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True,
                                  idle_entries=[IdleToDormEntry(name="地灵", swap_with="塞雷娅")])
         evs = [m for m in pick.marks if m.kind == "idle" and "地灵" in m.label]
@@ -665,12 +700,12 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
                                                                 shift=3)])
         self.assertFalse([m for m in only3.marks if m.kind == "idle" and "地灵" in m.label])
         self.assertLess(only3.mood_at("地灵", 24), D("24"))
-        # 限定成"第 1 班不参与" → 第 3 班照样入宿
+        # 限定成"第 1 班不参与" → 第 3 班照样**参与判定**（能不能换到人是另一回事：
+        # 示例排班里没有白板可换，所以事件只会是"优先级④不动"的说明）
         only1 = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True,
                                   idle_entries=[IdleToDormEntry(name="地灵", enabled=False,
                                                                 shift=1)])
         self.assertTrue([m for m in only1.marks if m.kind == "idle" and "地灵" in m.label])
-        self.assertMood(only1.mood_at("地灵", 24), D("24"))
 
 
 class Test速率读数(MoodAssertMixin, unittest.TestCase):

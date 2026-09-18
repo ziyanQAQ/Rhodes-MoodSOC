@@ -287,6 +287,37 @@ class Test闲置入宿优先级(unittest.TestCase):
         # 而进来的人（板凳甲）在宿舍里按 4/h 恢复
         self.assertEqual(q(s.mood_at("板凳甲", D(1))), D("14"))
 
+    def test_兜底只换白板_有阵营的不动(self):
+        """**优先级③只肯换白板**：② 命不中、宿舍里满心情的又全"有阵营" → **不换**。
+
+        规则（用户口径）：兜底层只换**不属于任何已记录阵营**的满 24 心情干员；
+        连白板都没有 → 这一班不换（宁可闲置者不进宿舍，也不拿有阵营联动的人去填坑）。
+        ⚠️ 布局要让"①② 命不中"：宿舍全部**住满 5 人**（① 没空位可进），
+        且**第 2~5 位的人心情都不满**（② 只吃第 2~5 位、且要求实时满 24）。
+        """
+        _s, detail = self._跑([("宿舍#1", ["菲亚梅塔", "普1a", "普1b", "普1c", "普1d"]),
+                               ("宿舍#2", ["缪尔赛思", "普2a", "普2b", "普2c", "普2d"]),
+                               ("宿舍#3", ["塞雷娅", "普3a", "普3b", "普3c", "普3d"]),
+                               ("宿舍#4", ["赫默", "普4a", "普4b", "普4c", "普4d"])],
+                              moods={n: 5 for n in
+                                     ["菲亚梅塔", "缪尔赛思", "塞雷娅", "赫默"]
+                                     + [f"普{i}{c}" for i in (1, 2, 3, 4) for c in "abcd"]})
+        self.assertIn("优先级④", detail)
+        self.assertNotIn("互换", detail)
+
+    def test_兜底换白板而不是有阵营的(self):
+        """③ 命中白板：**优先换白板**（哪怕"有阵营"的人位次更靠前、宿舍序号更靠后）。"""
+        # 宿舍#4 第 1 位是白板（阿米娅）且满心情；宿舍#1~#3 的第 1 位都是"有阵营"、不满
+        _s, detail = self._跑([("宿舍#1", ["菲亚梅塔", "普1a", "普1b", "普1c", "普1d"]),
+                               ("宿舍#2", ["缪尔赛思", "普2a", "普2b", "普2c", "普2d"]),
+                               ("宿舍#3", ["塞雷娅", "普3a", "普3b", "普3c", "普3d"]),
+                               ("宿舍#4", ["阿米娅", "普4a", "普4b", "普4c", "普4d"])],
+                              moods={n: 5 for n in
+                                     ["菲亚梅塔", "缪尔赛思", "塞雷娅"]
+                                     + [f"普{i}{c}" for i in (1, 2, 3, 4) for c in "abcd"]})
+        self.assertIn("优先级③", detail)
+        self.assertIn("阿米娅", detail)
+
     def test_换心情先于闲置入宿且用换后的实时心情(self):
         """**顺序与实时性**：换心情先结算，闲置入宿用**换完之后**的实时心情判优先级。
 
@@ -310,6 +341,50 @@ class Test闲置入宿优先级(unittest.TestCase):
         # 换完之后 菲亚梅塔 = 5（不满）→ 她不该再被当成"满心情可换出"的对象
         self.assertEqual(q(s.mood_at("菲亚梅塔", D(0))), D("5"))
         self.assertNotIn("菲亚梅塔", " / ".join(m.label for m in s.traj.marks if m.kind == "idle"))
+
+    def test_自回型干员不被换出宿舍(self):
+        """**有宿舍自身回复技能的人（菲亚梅塔「自律」）不当"备用容量"被换出去。**
+
+        踩过的 bug：她在宿舍里自己就能 +2/h 回满，却因为"满心情 + 坐在宿舍"被闲置入宿
+        当成可换出的容量 —— 换出去之后她变成闲置、心情一条平线（看起来像"心情卡住不动"），
+        而且白白丢掉一份恢复能力。
+
+        本用例造的场景只差一个变量：宿舍里**除了她**没有别的满心情的人 ——
+        修之前她会（作为③兜底的最后一位）被换出，修之后这一班应当走优先级④"不动"。
+        """
+        facs = [{"type": "制造站", "level": 3, "operators": ["普通甲", "普通乙"]},
+                {"type": "宿舍", "name": "宿舍#1", "level": 5,
+                 "operators": ["菲亚梅塔", "路人乙", "路人丙", "路人丁", "路人戊"]}]
+        s = Session()
+        s.load_layout({"facilities": facs}, hours=24)
+        # 除她之外宿舍里全是没满的人；她是唯一的"满心情"
+        s.set_initial_moods({"菲亚梅塔": 24, "路人乙": 5, "路人丙": 6,
+                             "路人丁": 7, "路人戊": 8, "板凳甲": 10})
+        s.set_detached(["板凳甲"], recompute=False)
+        s.idle_to_dorm = True
+        s.recompute()
+        detail = " / ".join(m.label for m in s.traj.marks if m.kind == "idle")
+        self.assertNotIn("菲亚梅塔", detail, "自回型干员不该被换出宿舍")
+        self.assertIn("优先级④", detail)
+        self.assertEqual(q(s.mood_at("板凳甲", D(1))), D("10"))     # 没入宿 → 平线
+        self.assertEqual(q(s.mood_at("菲亚梅塔", D(1))), D("24"))    # 她留在宿舍（已是满心情）
+        self.assertEqual(q(s.rate_at("菲亚梅塔", D("0.5"))), D("0"))  # 满心情 → 速率 0
+
+    def test_自回型干员自己仍能入宿(self):
+        """保护只作用于"**被选为被换出者**"：她自己是闲置候选时照旧能进宿舍恢复。"""
+        facs = [{"type": "制造站", "level": 3, "operators": ["普通甲", "普通乙"]},
+                {"type": "宿舍", "name": "宿舍#1", "level": 5,
+                 "operators": ["路人甲", "路人乙", "路人丙", "路人丁", "路人戊"]}]
+        s = Session()
+        s.load_layout({"facilities": facs}, hours=24)
+        s.set_initial_moods({"菲亚梅塔": 10,
+                             **{n: 24 for n in ("路人甲", "路人乙", "路人丙", "路人丁", "路人戊")}})
+        s.set_detached(["菲亚梅塔"], recompute=False)
+        s.idle_to_dorm = True
+        s.recompute()
+        # 宿舍全满、全员满心情 → 她被安排进某个位次，并靠「自律」+2/h 上升
+        self.assertEqual(q(s.rate_at("菲亚梅塔", D("0.5"))), D("-2"))
+        self.assertEqual(q(s.mood_at("菲亚梅塔", D(1))), D("12"))
 
 
 
