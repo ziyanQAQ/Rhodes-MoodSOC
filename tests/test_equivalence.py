@@ -191,6 +191,128 @@ class Test整周期轨迹快照(unittest.TestCase):
         self.assertGreater(q(s.mood_at("泡泡", D("24"))), q(s.mood_at("泡泡", D("12"))))
 
 
+class Test闲置入宿优先级(unittest.TestCase):
+    """闲置入宿的**四级优先级**（用户口径）：
+
+    | 级 | 条件 | 动作 |
+    |---|---|---|
+    | ① | 任意宿舍还有未占满的位次 | 直接住进去（有空位就不换人），顺序"优先 4 最后 1" |
+    | ② | 宿舍全满 | 换「宿舍 #4→#3→#2 的第 2~5 位」里**实时满心情**的那位 |
+    | ③ | ②找不到 | 退到「宿舍里其余任何位置」的实时满心情者 |
+    | ④ | 都不满足 | 这一班不动 |
+
+    两个容易写错、也最容易回归的点：**宿舍序号必须取自"未排序"的布局顺序**（否则"优先 #4"
+    会挑中布局里的第 1 间）；**同优先级内 位次 2~5 先于第 1 位、宿舍 #4 先于 #1**。
+    """
+
+    @staticmethod
+    def _布局(dorms):
+        """`dorms` = [(宿舍名, [成员])]，成员默认满心情 24。"""
+        facs = [{"type": "制造站", "level": 3, "operators": ["普通甲", "普通乙"]}]
+        for name, ops in dorms:
+            facs.append({"type": "宿舍", "name": name, "level": 5, "operators": list(ops)})
+        return facs
+
+    def _跑(self, dorms, moods=None, who="板凳甲", mood=10):
+        s = Session()
+        s.load_layout({"facilities": self._布局(dorms)}, hours=24)
+        s.set_initial_moods({"板凳甲": mood, **(moods or {})})
+        s.set_detached([who], recompute=False)
+        s.idle_to_dorm = True
+        s.recompute()
+        detail = " / ".join(m.label for m in s.traj.marks if m.kind == "idle")
+        return s, detail
+
+    def test_有空位就直接住不换人(self):
+        """**优先级①**：宿舍#4 还有空位 → 住进去，谁也不换（哪怕别的宿舍有人满心情）。"""
+        s, detail = self._跑([("宿舍#1", ["A1", "A2", "A3", "A4", "A5"]),
+                              ("宿舍#2", ["B1", "B2", "B3", "B4", "B5"]),
+                              ("宿舍#3", ["C1", "C2", "C3", "C4", "C5"]),
+                              ("宿舍#4", ["D1", "D2"])])
+        self.assertIn("优先级①", detail)
+        self.assertIn("宿舍#4", detail)
+        self.assertNotIn("互换", detail)
+        # 她从 10 开始按宿舍回复（Lv5 满氛围 4/h）→ 1h 后 14
+        self.assertEqual(q(s.mood_at("板凳甲", D(1))), D("14"))
+
+    def test_全满时换宿舍4的第2位(self):
+        """**优先级②**：全满 → 换 宿舍#4 的**第 2 位**（不是第 1 位、也不是宿舍#1）。"""
+        s, detail = self._跑([("宿舍#1", ["A1", "A2", "A3", "A4", "A5"]),
+                              ("宿舍#2", ["B1", "B2", "B3", "B4", "B5"]),
+                              ("宿舍#3", ["C1", "C2", "C3", "C4", "C5"]),
+                              ("宿舍#4", ["D1", "D2", "D3", "D4", "D5"])])
+        self.assertIn("优先级②", detail)
+        self.assertIn("宿舍#4 第 2 位", detail)
+        self.assertIn("D2", detail)
+        self.assertEqual(q(s.mood_at("板凳甲", D(1))), D("14"))
+
+    def test_只有三间宿舍时优先第三间(self):
+        """宿舍不足 4 间 → "优先 4 最后 1"自动前移（3 间 → #3 → #2 → #1）。"""
+        _s, detail = self._跑([("宿舍#1", ["A1", "A2", "A3", "A4", "A5"]),
+                               ("宿舍#2", ["B1", "B2", "B3", "B4", "B5"]),
+                               ("宿舍#3", ["C1", "C2", "C3", "C4", "C5"])])
+        self.assertIn("宿舍#3 第 2 位", detail)
+
+    def test_位次1只能靠兜底(self):
+        """**位次 1 不在②的点名范围**：宿舍#4 只有第 1 位满心情时，走③兜底换第 1 位。"""
+        _s, detail = self._跑([("宿舍#1", ["A1", "A2", "A3", "A4", "A5"]),
+                               ("宿舍#2", ["B1", "B2", "B3", "B4", "B5"]),
+                               ("宿舍#3", ["C1", "C2", "C3", "C4", "C5"]),
+                               ("宿舍#4", ["D1", "D2", "D3", "D4", "D5"])],
+                              moods={"D1": 24, "D2": 5, "D3": 5, "D4": 5, "D5": 5,
+                                     "B1": 5, "B2": 5, "B3": 5, "B4": 5, "B5": 5,
+                                     "A1": 5, "A2": 5, "A3": 5, "A4": 5, "A5": 5,
+                                     "C1": 5, "C2": 5, "C3": 5, "C4": 5, "C5": 5})
+        self.assertIn("优先级③", detail)
+        self.assertIn("D1", detail)
+
+    def test_都不满足就这一班不动(self):
+        """**优先级④**：宿舍全满且没有满心情的人 → 不动，心情平线（+ 记一条说明）。"""
+        s, detail = self._跑([("宿舍#1", ["A1", "A2", "A3", "A4", "A5"]),
+                              ("宿舍#2", ["B1", "B2", "B3", "B4", "B5"])],
+                             moods={**{f"A{i}": 5 for i in range(1, 6)},
+                                    **{f"B{i}": 5 for i in range(1, 6)}})
+        self.assertIn("优先级④", detail)
+        self.assertEqual(q(s.mood_at("板凳甲", D(1))), D("10"))     # 没进宿舍 → 平线
+
+    def test_被换出者变成不在基建(self):
+        """被换出的那位：**既不工作也不在宿舍** ⇒ 她的心情也是一条平线（不参与任何计数）。"""
+        s, _detail = self._跑([("宿舍#1", ["A1", "A2", "A3", "A4", "A5"]),
+                               ("宿舍#2", ["B1", "B2", "B3", "B4", "B5"]),
+                               ("宿舍#3", ["C1", "C2", "C3", "C4", "C5"]),
+                               ("宿舍#4", ["D1", "D2", "D3", "D4", "D5"])])
+        # D2 被换出来（她本来满心情 24 → 闲置不掉心情，整段平线）
+        self.assertEqual(q(s.mood_at("D2", D(1))), D("24"))
+        self.assertEqual(q(s.mood_at("D2", D(12))), D("24"))
+        # 而进来的人（板凳甲）在宿舍里按 4/h 恢复
+        self.assertEqual(q(s.mood_at("板凳甲", D(1))), D("14"))
+
+    def test_换心情先于闲置入宿且用换后的实时心情(self):
+        """**顺序与实时性**：换心情先结算，闲置入宿用**换完之后**的实时心情判优先级。
+
+        菲亚梅塔（M15a 患难之交）与宿舍里某人互换心情后，两人的心情**当场变化** ——
+        闲置入宿必须看到变化后的值（否则会挑一个"其实已经不满"的人来换 / 漏掉刚变满的人）。
+        """
+        facs = [{"type": "制造站", "level": 3, "operators": ["普通甲", "普通乙"]},
+                {"type": "宿舍", "name": "宿舍#1", "level": 5,
+                 "operators": ["菲亚梅塔", "路人乙", "路人丙", "路人丁", "路人戊"]}]
+        s = Session()
+        s.load_layout({"facilities": facs}, hours=24)
+        # 让 路人乙 没满（5）：菲亚梅塔满心情进驻 → 与「前一位进驻」互换…… 这里直接指定对象
+        s.set_initial_moods({"菲亚梅塔": 24, "路人乙": 5, "板凳甲": 10})
+        s.set_detached(["板凳甲"], recompute=False)
+        s.entry_events = True
+        s.entry_swap_with = "路人乙"
+        s.entry_when = "immediate"
+        s.entry_scope = "dorm"
+        s.idle_to_dorm = True
+        s.recompute()
+        # 换完之后 菲亚梅塔 = 5（不满）→ 她不该再被当成"满心情可换出"的对象
+        self.assertEqual(q(s.mood_at("菲亚梅塔", D(0))), D("5"))
+        self.assertNotIn("菲亚梅塔", " / ".join(m.label for m in s.traj.marks if m.kind == "idle"))
+
+
+
 class Test不在基建(unittest.TestCase):
     """**「不在基建」的人**（既不在工作设施、也不在宿舍）：平线 + 不参与技能计数。
 

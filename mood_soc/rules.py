@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import List, Optional
 
 from .battery import INF, ZERO, ampere_hour_integration, to_decimal
 from .config import (
@@ -876,35 +877,111 @@ def _idle_candidates(world: BaseLayout, idle=None, only=None):
     return out
 
 
-def _dorm_with_free_slot(world: BaseLayout):
-    """有空位的宿舍（氛围高的优先——进去恢复更快）。"""
-    from .config import FacilityType as _FT
+# ----------------------------------------------------------------------------
+# 「闲置入宿」的四级优先级（用户口径，见 `apply_idle_to_dorm`）
+#
+#   ① 有空位 → 直接住进去（不换人）
+#   ② 宿舍全满 → 换「宿舍#2~#4 的第 2~5 位」里**实时满心情**的那位
+#   ③ 还找不到 → 退到「宿舍里其余任何位置」的实时满心情者（含每间第 1 位）
+#   ④ 都不满足 → 这一班不动
+#
+# **同优先级内的顺序：优先 4、最后 1** ——
+#   宿舍之间：`#4 → #3 → #2 → #1`；同一宿舍内：第 2 位 → 第 5 位 → 第 1 位。
+# 为什么：用户指定"优先 4 最后 1"（最远的宿舍#4 当蓄水池，主力宿舍#1 最后动）；
+#   位次 1 排在同宿舍最后，是因为 P2 的点名范围本来就只含"第 2~5 位"，
+#   第 1 位只在 P3 兜底时才轮到。
+# ----------------------------------------------------------------------------
+#: P2 的点名范围：这些**宿舍序号**（1 基、按布局里的出现顺序，与界面「宿舍NN」一致）
+DORM_PREFERRED_RANGE = (2, 3, 4)
+#: P2 的点名**位次**（1 基；第 1 位不在其中，留给 P3 兜底）
+DORM_PREFERRED_SLOTS = (2, 3, 4, 5)
 
-    dorms = [f for f in world.facilities
-             if f.ftype == _FT.DORMITORY and f.enabled and len(f.operators) < f.capacity]
-    if not dorms:
-        return None
-    dorms.sort(key=lambda f: (-float(f.atmosphere if f.atmosphere is not None else 0),
-                              world.facilities.index(f)))
-    return dorms[0]
+
+def _dorm_order(world: BaseLayout) -> List[Facility]:
+    """全部**可用**宿舍，按"优先 4 最后 1"排好序（`#4 → #3 → #2 → #1`，不足 4 间则前移）。
+
+    宿舍序号 = 它是布局 `facilities` 里的第几间宿舍（1 基）—— 与界面「宿舍NN」一致。
+    ⚠️ 排序**不是**"按氛围"：氛围只影响恢复快慢，与"先动哪一间"无关（用户口径）。
+    """
+    return [f for _no, f in _dorm_numbered(world)[::-1]]
 
 
-def _full_dorm_mate(world: BaseLayout, exclude: Optional[set] = None):
-    """挑一个「宿舍里心情已满」的干员来互换 → `(宿舍, 干员)`；没有就返回 `(None, None)`。
+def _dorm_numbered(world: BaseLayout) -> List[tuple]:
+    """→ `[(宿舍序号（1 基）, 设施), ...]`，**按布局里的出现顺序**。
 
-    规则：氛围最高的宿舍优先，同一宿舍里取**排位最靠后**的那位（简单、可预期）。
-    `exclude`：已经被换出去的人不再参与（同一班次内不会来回换）。
+    ⚠️ 序号必须从"未被排序的原始顺序"里取（曾经拿排序后的列表下标当序号，
+    于是"优先 #4"挑中的其实是布局里的第 1 间，换人换错了房间）。
     """
     from .config import FacilityType as _FT
 
     dorms = [f for f in world.facilities if f.ftype == _FT.DORMITORY and f.enabled]
-    dorms.sort(key=lambda f: (-float(f.atmosphere if f.atmosphere is not None else 0),
-                              world.facilities.index(f)))
+    return list(enumerate(dorms, start=1))
+
+
+def _dorm_with_free_slot(world: BaseLayout):
+    """**第 ① 级**：还有未占满位次的宿舍（"优先 4 最后 1"）；都没有就返回 `None`。
+
+    为什么"有空位"排在换人之前：换人会**打断一个正在恢复的人**，而空位是白捡的。
+    """
+    for dorm in _dorm_order(world):
+        if len(dorm.operators) < dorm.capacity:
+            return dorm
+    return None
+
+
+def _swap_mate(world: BaseLayout, exclude: Optional[set] = None):
+    """挑一个「宿舍里**实时心情已满**」的干员互换 → `(宿舍, 干员, 第几优先级)`。
+
+    两级回退（顺序即优先级）：
+
+    | 级 | 范围 | 说明 |
+    |---|---|---|
+    | `2` | 宿舍 `#4 → #3 → #2` 的**第 2~5 位** | 点名范围；每间内部按第 2 位→第 5 位 |
+    | `3` | 宿舍里**其余任何位置**（含宿舍#1 的全部位次、以及上面那些宿舍的第 1 位） | 兜底 |
+
+    都找不到 → `(None, None, None)`，调用方走第 ④ 级"这一班不动"。
+
+    ⚠️ **必须用"调用那一刻"的实时心情**（`op.mood`）：调用方在班次开始时已经
+    `_sync_moods`，而且**先把进驻事件（换心情）结算完**才走到这里。
+    """
+    dorms = _dorm_order(world)
+    skip = exclude or set()
+    by_no = dict(_dorm_numbered(world))                      # 宿舍序号（1 基）→ 设施
+
+    def _pickable(dorm, op) -> bool:
+        """这个人此刻**真的还在**这间宿舍里、没被换出去、且实时满心情？
+
+        ⚠️ 必须查 `world.facility_of`：`dorm.operators` 是"跑了一整轮模拟"的那个副本，
+        可能残留**已经不在基建里**的陈旧对象（她早先被换出去过）。只比对成员列表的话，
+        会挑到一个不在宿舍里的人来换 —— 换了个寂寞（`dorm.operators[idx] = op` 改的是
+        一个早已不在世界里的槽位）。
+        """
+        if op.name in skip or op.mood < MOOD_MAX:
+            return False
+        here = world.facility_of(op.name)
+        return here is not None and here is dorm
+
+    # --- 第 ② 级：宿舍 #4 → #3 → #2 的第 2~5 位 ---
+    for no in sorted(DORM_PREFERRED_RANGE, reverse=True):
+        dorm = by_no.get(no)
+        if dorm is None:
+            continue
+        for slot in DORM_PREFERRED_SLOTS:                    # 位次（1 基）
+            if slot - 1 >= len(dorm.operators):
+                break
+            op = dorm.operators[slot - 1]
+            if _pickable(dorm, op):
+                return dorm, op, 2
+
+    # --- 第 ③ 级：其余任何位置（同样"优先 4 最后 1"；每间先第 2~5 位，再第 1 位）---
     for dorm in dorms:
-        for op in reversed([o for o in dorm.operators
-                            if o.mood >= MOOD_MAX and o.name not in (exclude or set())]):
-            return dorm, op
-    return None, None
+        for slot in list(DORM_PREFERRED_SLOTS) + [1]:
+            if slot - 1 >= len(dorm.operators):
+                continue
+            op = dorm.operators[slot - 1]
+            if _pickable(dorm, op):
+                return dorm, op, 3
+    return None, None, None
 
 
 def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
@@ -915,18 +992,24 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
     所以同样不进 `consume_ledger` / `recovery_ledger`，由调用方在"班次开始"显式结算
     （CLI `--idle-to-dorm`、界面上的开关、或 `ui.schedule.simulate_schedule`）。
 
-    规则（用户口径）：
+    规则（用户口径，**四级优先级**）：
 
-    1. **只动"没在上班、也不在宿舍、心情还没满"的人**——挂件位（加工站/训练室）与本班未排班
-       都算；正在上班的人不动（他们本来就在消耗，换走会打乱排班）。心情满的人也不用动。
-    2. 按**心情从低到高**依次安排（最需要恢复的先来）。
-    3. 每人：**先看宿舍有没有空位** → 有就直接放进去（氛围最高的宿舍优先）；
-       没有空位才**与宿舍里心情已满的那位互换**（她去宿舍，那位换出来**变成未排班/闲置**——
-       他已是满心情，闲置不会掉心情）。
-    4. 宿舍全满、且里面一个满心情的都没有 → 这一人不动，记一条说明
-       （group=`idle_to_dorm_skipped`）。
-    5. **指定了交换对象**（`swap_with[name]`）时严格按指定：那一班若他不在宿舍 / 心情不是满的，
-       就**跳过这一位**（不退回自动）。
+    | 级 | 条件 | 动作 |
+    |---|---|---|
+    | ① | 任一间宿舍**还有未占满的位次** | **直接住进去**（有空位就不换人）；顺序"优先 4 最后 1" |
+    | ② | 宿舍**全满** | 换「宿舍 **#4 → #3 → #2** 的**第 2~5 位**」里**实时心情已满**的那位 |
+    | ③ | ②找不到 | 退到「宿舍里**其余任何位置**」的实时满心情者（含宿舍#1 全部位次、以及②那些宿舍的第 1 位） |
+    | ④ | 都不满足 | 这一班不动，记一条说明（group=`idle_to_dorm_skipped`） |
+
+    - **同优先级内的顺序：优先 4、最后 1** —— 宿舍 `#4 → #3 → #2 → #1`；
+      同一宿舍内 第 2 位 → 第 5 位 → 第 1 位（位次 1 只在③兜底时轮到）。
+    - 被换出的那位（满心情）**离开宿舍 → 既不工作也不在宿舍**（心情不变，因为已经满了）。
+      进来的人**接替他被换出的那个位次**（不是排到末尾）。
+    - 候选按**心情从低到高**依次安排（最需要恢复的先来）；每处理一位都用**那一刻的实时心情**
+      重判优先级与候选（前面几位换人后，"还有没有空位/还有谁满心情"都会变）。
+    - 正在上班的人**不动**（换走会打乱排班）；挂件位（加工站/训练室）与本班未排班都算候选。
+    - 指定了"放进哪一间宿舍的空位"（`dorm`）或指定了交换对象（`swap_with[name]`）都**优先于**
+      上面这套自动规则，且**严格按指定**（不满足就跳过这一位，不退回自动）。
 
     参数：
         enabled  三态；`None` = 用 `world.idle_to_dorm.enabled`，都没有则**默认不结算**
@@ -998,21 +1081,23 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
                     f"宿舍{entry.dorm:02d}（{dorm.display_name}）的第 {pos} 个空位{extra}）")))
             continue
 
+        # ① **有空位就直接住**（最高优先级；"优先 4 最后 1"）
         dorm = _dorm_with_free_slot(world)
-        if dorm is not None:                              # ① 有空位：直接进
+        if dorm is not None:
             if op is None:
                 op = build_operator({"name": name, "mood": mood})
             # ⚠️ 顺序要紧：**先离开原设施、再进宿舍**——反过来的话"离开"会把刚放进去的人删掉
             _leave_previous_facility(world, name)
+            pos = len(dorm.operators) + 1
             dorm.operators.append(op)
             events.append(Contribution(
                 Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
                 owner=name, target=dorm.display_name, detail=(
                     f"（{name} 心情 {mood} 没满且在闲置（{where}）→ 进 {dorm.display_name} "
-                    f"恢复；该宿舍还有空位）")))
+                    f"的第 {pos} 个空位恢复；有空位就不换人 —— 优先级①）")))
             continue
 
-        # ② 没有空位：挑一个"宿舍里心情已满"的与之互换
+        # ②③ **宿舍全满**：按优先级挑一位"实时心情已满"的宿舍成员互换
         if want:
             target_dorm = None
             target_op = None
@@ -1030,27 +1115,35 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
                     owner=name, target=want, detail=(
                         f"（指定的「{want}」这一班不在宿舍 / 心情不是满的 → 跳过这一位）")))
                 continue
-            dorm, mate = target_dorm, target_op
+            dorm, mate, tier = target_dorm, target_op, 0     # 点名：用户显式指定，走指定口径
         else:
-            dorm, mate = _full_dorm_mate(world, exclude=swapped_out)
+            dorm, mate, tier = _swap_mate(world, exclude=swapped_out)
         if mate is None:
             events.append(Contribution(
                 Bucket.EVENT, "闲置入宿未执行", ZERO, group="idle_to_dorm_skipped",
                 owner=name, target="", detail=(
-                    f"（{name} 心情 {mood} 想入宿，但宿舍没有空位、也没有心情已满的人可换 → 这一班不动）")))
+                    f"（{name} 心情 {mood} 想入宿，但宿舍全满、也没有心情已满的人可换 "
+                    f"→ 这一班不动 —— 优先级④）")))
             continue
 
         if op is None:
             op = build_operator({"name": name, "mood": mood})
         _leave_previous_facility(world, name)
-        mate_idx = dorm.operators.index(mate)
-        dorm.operators[mate_idx] = op                     # 她进宿舍
-        swapped_out.add(mate.name)                        # 满心情那位**换出来 → 闲置**（不占位）
+        mate_slot = dorm.operators.index(mate) + 1           # 被换出者的位次（1 基）
+        mate_idx = mate_slot - 1
+        # ⚠️ 让进来的人**接替被换出者的那个位次**（而不是排到末尾）：这样"换的是第 2~5 位"
+        #    才名副其实；末尾追加会让位次随人数漂移、P2 的点名范围就说不清了。
+        dorm.operators[mate_idx] = op                        # 她进宿舍
+        swapped_out.add(mate.name)                           # 满心情那位**换出来 → 闲置**（不占位）
+        how = ("由你指定的" if tier == 0 else
+               ("宿舍#2~#4 的第 2~5 位（优先级②）" if tier == 2 else
+                "宿舍其余位置（优先级③）"))
         events.append(Contribution(
             Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
             owner=name, target=mate.name, detail=(
-                f"（{name} 心情 {mood} 没满且在闲置（{where}）→ 与 {dorm.display_name} 里"
-                f"心情已满的 {mate.name} 互换：{name} 进宿舍恢复，{mate.name} 换出来闲置）")))
+                f"（{name} 心情 {mood} 没满且在闲置（{where}）→ 与 {dorm.display_name} 第 "
+                f"{mate_slot} 位、心情已满的 {mate.name} 互换：{name} 进宿舍恢复，"
+                f"{mate.name} 换出来闲置（既不工作也不在宿舍）—— {how}）")))
     return events
 
 
