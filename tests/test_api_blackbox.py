@@ -1453,6 +1453,25 @@ class Test闲置入宿(unittest.TestCase):
         self.assertEqual(apply_idle_to_dorm(world3), [])
         self.assertEqual(self._where(world3, "丙"), "加工站")
 
+    def test_候选顺序_不在工作也不在宿舍的排前面(self):
+        """**候选顺序**（用户口径）：**先"不在工作也不在宿舍"的人**（本班未排班 /
+        「不在基建」名单），**再**挂件位（加工站/训练室）入驻者；每组内部**心情从低到高**。
+
+        为什么有意义：候选是**依次**处理的（每人依次找空位 / 找换人对象）⇒
+        这个顺序决定"谁先拿到空位、谁先挑换人对象"。这里让挂件位那位**心情更低**，
+        看谁先被处理（修复前按纯心情排 ⇒ 挂件位那位先）。
+        """
+        # 甲（加工站挂件位，心情 5）比 乙（未排班，心情 10）更低 → 旧口径甲先，新口径乙先
+        world = self._layout(dorm=[("丙", "24")], others=[("加工站", [("甲", "5")])])
+        events = apply_idle_to_dorm(world, enabled=True, idle={"乙": "10"})
+        self.assertEqual([e.owner for e in events], ["乙", "甲"],
+                         "「不在工作也不在宿舍」的人要排在挂件位入驻者之前")
+        # 同一组内部仍按心情从低到高
+        world2 = self._layout(dorm=[("丙", "24")], others=[("加工站", [("甲", "5")])])
+        events2 = apply_idle_to_dorm(world2, enabled=True, idle={"乙": "10", "丁": "3"})
+        self.assertEqual([e.owner for e in events2], ["丁", "乙", "甲"],
+                         "同一组内仍是最需要恢复的（心情最低）先安排")
+
     def test_空位优先(self):
         """宿舍有空位：直接放进去（不动宿舍里的人）。"""
         world = self._layout(dorm=[("甲", "24"), ("乙", "10")],

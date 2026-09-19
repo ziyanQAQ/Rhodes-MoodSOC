@@ -109,7 +109,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 460 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 461 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
@@ -163,6 +163,9 @@ documents/
     ②③ 的目标是实时满 24、候选必定 <24 ⇒ 天然满足，**实际只在 ④ 生效**（实测示例：梅 19.5↔温蒂 12.3、
     幽灵鲨 20.1↔温蒂 12.3 被拦下 ⇒ 温蒂留下回满 24、幽灵鲨留在外面 20.1）。
     **点名只在 ④ 生效**（①②③ 能挑到人时点名不生效，但它优先于④的默认兜底）；
+    **候选顺序（2026-09 用户口径）**：**先"不在工作也不在宿舍"的人**（本班未排班 /「不在基建」名单），
+    **再**挂件位（加工站/训练室）入驻者，**每组内部按心情从低到高** —— 候选是**依次**处理的，
+    这个顺序决定"谁先拿到空位 / 谁先挑换人对象"（回归 `test_候选顺序_不在工作也不在宿舍的排前面`）；
     界面上「换谁」列的是**宿舍里的所有人**（标签带心情如 `巫恋 23.4`，由 `store.session.idle_target_name` 剥标签）。顺序上**先换心情、再判闲置入宿**，
     判定用**实时**心情，候选还要过 `world.facility_of` 校验（跑过一轮的副本里会残留已离开宿舍的陈旧对象）。
     常量 `rules.DORM_PREFERRED_RANGE` / `DORM_PREFERRED_SLOTS` / `TIER3_EXTRA_NAMES`，门 `rules._factionless` /
