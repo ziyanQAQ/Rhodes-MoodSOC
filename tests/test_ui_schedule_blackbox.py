@@ -714,17 +714,18 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         要么有阵营（莱茵生命/龙门近卫局/叙拉古…），要么是**有阵营自身回复技能**的
         （菲亚梅塔/缪尔赛思）—— **一个白板都没有** ⇒ 这两班老实走优先级④"不动"。
         所以这里改成用**专门造的布局**验"能进"，示例排班的"进不去"另有用例钉住。
-        ⚠️ 又收了一次（用户口径"先选不是挂件"）：**挂件**（她一走别人就要吃亏）也不换。
-        这一篮子里 **阿米娅**是白板、却在给同宿舍其他人 +0.15/h 群体回复（「小提琴独奏」）
-        ⇒ ③ 必须跳过她，换出去的是**纯白板德克萨斯**（位次第 5，排在阿米娅之后）。
+        ⚠️ 口径又收了一次（2026-09 用户裁决）：**阵营门只看工作区**（`_faction_protected`）——
+        有阵营的人只有在"工作区（中枢/制造/贸易/发电/会客/办公）里有同阵营同伴"时才受保护，
+        而且"自回型不被换出"那道门**已取消**。这一篮子里 `缪尔赛思`（莱茵生命，但工作区里
+        只有白板 `普通甲/普通乙`）⇒ 按位次顺序（第 2 位）先轮到她被换出；
+        **挂件 阿米娅 仍然不被换出**（挂件门没变）。
         """
         from store.schedule import Schedule, Shift
 
-        # 宿舍里第 4 位是**白板**（阿米娅）且满心情 → 兜底层允许换她；泡泡进去后回满
+        # 宿舍里第 4 位是**白板挂件**（阿米娅）→ 挂件门必须跳过她；泡泡进去后回满
         # （泡泡只在第 2 班上班 ⇒ 第 1 班她是"本班未排班"的闲置候选；两班都要给布局，
         #   否则她的名字不在排班名册里、`mood_at` 会取不到）
-        # ⚠️ 宿舍容量恒为 5（上游表），所以要**放满 5 人**才有"互换"；
-        #    其中两位是白板（阿米娅 / 德克萨斯），兜底层会从白板里挑。
+        # ⚠️ 宿舍容量恒为 5（上游表），所以要**放满 5 人**才有"互换"。
         dorm = ["菲亚梅塔", "缪尔赛思", "塞雷娅", "阿米娅", "德克萨斯"]
         sch = Schedule([
             Shift("A", D("12"), [
@@ -738,11 +739,13 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
                                initial_moods={"泡泡": 10, "菲亚梅塔": 24, "缪尔赛思": 24,
                                               "塞雷娅": 24, "阿米娅": 24, "德克萨斯": 24})
         self.assertMood(on.mood_at("泡泡", D("12")), D("24"),
-                        "第 1 班与白板互换后应当回满（宿舍 Lv5 满氛围 4/h → 3.5h 回满）")
+                        "第 1 班与宿舍里的人互换后应当回满（宿舍 Lv5 满氛围 4/h → 3.5h 回满）")
         idle = [m for m in on.marks if m.kind == "idle"]
-        self.assertTrue(any("德克萨斯" in m.label for m in idle), "应当与纯白板互换")
+        self.assertTrue(idle, "应当有入宿事件（泡泡进宿舍）")
         self.assertFalse([m for m in idle if "阿米娅" in m.label],
                          "阿米娅在给别人群体回复 ⇒ 她是挂件，不该被换出")
+        self.assertTrue(any(("缪尔赛思" in m.label) or ("塞雷娅" in m.label) for m in idle),
+                        "工作区里没有同阵营同伴 ⇒ 她们也吃不到联动、可以被换出")
 
     def test_示例排班全满时换出满24的菲亚梅塔(self):
         """示例排班：4 间宿舍全满、白板一个都没有 —— 但 **满 24 的菲亚梅塔**在 ③ 被放行
@@ -805,14 +808,18 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         from mood_soc.models import IdleToDormEntry
         from store.schedule import Shift
 
-        # 宿舍满员（容量恒为 5）、5 位都有阵营（③ 只换白板 ⇒ 挑不到）、也没有菲亚梅塔
+        # 宿舍满员（容量恒为 5）、5 位都有阵营**且工作区里有同阵营同伴**（阵营门保护 ⇒ 挑不到）、
+        # 也没有菲亚梅塔
         dorm = [{"name": f"有阵营{j}", "mood": "24" if j != 5 else "10",
                  "factions": ["测试阵营"]} for j in range(1, 6)]
+        mate = {"name": "同伴甲", "factions": ["测试阵营"]}
         sch = Schedule([
-            Shift("A", D("12"), [{"type": "制造站", "level": 3, "operators": ["普通甲"]},
+            Shift("A", D("12"), [{"type": "制造站", "level": 3,
+                                  "operators": ["普通甲", dict(mate)]},
                                  {"type": "宿舍", "name": "宿舍#1", "level": 5,
                                   "operators": list(dorm)}]),
-            Shift("B", D("12"), [{"type": "制造站", "level": 3, "operators": ["普通甲", "丙"]},
+            Shift("B", D("12"), [{"type": "制造站", "level": 3,
+                                  "operators": ["普通甲", "丙", dict(mate)]},
                                  {"type": "宿舍", "name": "宿舍#1", "level": 5,
                                   "operators": list(dorm)}]),
         ], D("24"))

@@ -1506,10 +1506,16 @@ class Test闲置入宿(unittest.TestCase):
         self.assertEqual(self._where(world, "丙"), "宿舍")
         self.assertEqual(self._where(world, "甲"), "未排班")
 
-    def test_第四级连白板都没有就这一班不动(self):
-        """④ 的默认兜底**也只挑白板**：宿舍里一个有阵营的人 —— 挑不到 → 记一条说明。"""
+    def test_第四级连没有可换的人就这一班不动(self):
+        """④ 的默认兜底只挑**"吃不到阵营联动"的人**（白板，或阵营在工作区里没有同伴）。
+
+        这里宿舍里那位有阵营、而**制造站里有同阵营的同伴** ⇒ 受阵营门保护 ⇒ 挑不到 → 记一条说明。
+        （反面见 `test_工作区没同阵营就当白板换出`：没有同伴时她会被换出。）
+        """
         facs = [{"type": "宿舍", "level": 5, "slots": 1, "operators": [
                     {"name": "有阵营甲", "mood": "12", "factions": ["测试阵营"]}]},
+                {"type": "制造站", "level": 3, "operators": [
+                    {"name": "同伴甲", "mood": "12", "factions": ["测试阵营"]}]},
                 {"type": "加工站", "level": 1, "operators": [{"name": "丙", "mood": "6"}]}]
         world = build_base_layout(scenario(*facs))
         self.assertEqual([e.group for e in apply_idle_to_dorm(world, enabled=True)],
@@ -1523,7 +1529,8 @@ class Test闲置入宿(unittest.TestCase):
 
         这里用**阿米娅**：她是白板，但「小提琴独奏」（`dorm_rec_all_010#1`）给同宿舍其他人
         各 +0.15/h 群体回复 ⇒ 把她摘掉别人就变差 ⇒ 判据判她是挂件。
-        宿舍里只有她（没满）和一位有阵营的人 ⇒ ③④ 都挑不到可换的**白板** ⇒ 这一班不动；
+        宿舍里只有她（没满）和一位**受阵营门保护**的有阵营的人（制造站里有同阵营同伴）
+        ⇒ ③④ 都挑不到可换的人 ⇒ 这一班不动；
         点名（`swap_with`）不受这道闸限制，那是"主动换"。
         """
         from mood_soc.rules import _is_pendant
@@ -1532,6 +1539,8 @@ class Test闲置入宿(unittest.TestCase):
             facs = [{"type": "宿舍", "level": 5, "slots": 2, "operators": [
                         {"name": "阿米娅", "mood": "12"},
                         {"name": "有阵营甲", "mood": "24", "factions": ["测试阵营"]}]},
+                    {"type": "制造站", "level": 3, "operators": [
+                        {"name": "同伴甲", "mood": "12", "factions": ["测试阵营"]}]},
                     {"type": "加工站", "level": 1, "operators": [{"name": "丙", "mood": "6"}]}]
             w = build_base_layout(scenario(*facs))
             w.idle_to_dorm = build_idle_to_dorm_config({"enabled": True})
@@ -1539,7 +1548,7 @@ class Test闲置入宿(unittest.TestCase):
 
         w = world()
         self.assertTrue(_is_pendant(w, "阿米娅"), "她在给别人 +0.15/h ⇒ 挂件")
-        self.assertFalse(_is_pendant(w, "有阵营甲"), "没给别人东西（有阵营由另一道闸管）")
+        self.assertFalse(_is_pendant(w, "有阵营甲"), "没给别人东西（阵营由阵营门管）")
         self.assertEqual([e.group for e in apply_idle_to_dorm(w, enabled=True)],
                          ["idle_to_dorm_skipped"])
         self.assertEqual(self._where(w, "阿米娅"), "宿舍")
@@ -1561,12 +1570,15 @@ class Test闲置入宿(unittest.TestCase):
 
     def test_点名换人是第4级的替代动作_不限心情(self):
         """点名（`swap_with`）退到**第④级**（用户口径）：①②③ 都挑不到人时才用他；
-        而且是**主动换** —— 不要求他满 24，也不受"只换白板 / 自回型不换出"限制。"""
+        而且是**主动换** —— 不要求他满 24，也不受"阵营门 / 挂件门"限制。"""
         def world(mood="10"):
-            # 宿舍全满、两位都有阵营（不是白板）、也没有满 24 的菲亚梅塔 ⇒ ②③ 都不成立
+            # 宿舍全满、两位都有阵营且**工作区里有同阵营同伴**（受阵营门保护）、
+            # 也没有满 24 的菲亚梅塔 ⇒ ②③④ 都不成立
             facs = [{"type": "宿舍", "level": 5, "slots": 2, "operators": [
                         {"name": "有阵营甲", "mood": "24", "factions": ["测试阵营"]},
                         {"name": "有阵营乙", "mood": mood, "factions": ["测试阵营"]}]},
+                    {"type": "制造站", "level": 3, "operators": [
+                        {"name": "同伴甲", "mood": "12", "factions": ["测试阵营"]}]},
                     {"type": "加工站", "level": 1, "operators": [{"name": "丙", "mood": "6"}]}]
             w = build_base_layout(scenario(*facs))
             w.idle_to_dorm = build_idle_to_dorm_config({"enabled": True})
@@ -1592,7 +1604,7 @@ class Test闲置入宿(unittest.TestCase):
         self.assertEqual(ev3[0].target, "乙")           # ③ 从"第 2 位"先挑，轮不到点名的甲
 
     def test_兜底层也放行满24的菲亚梅塔(self):
-        """③ 兜底除"白板"外，**还放行满 24 的菲亚梅塔**（用户裁决）。
+        """③ 兜底除"吃不到联动的人"外，**还放行满 24 的菲亚梅塔**（用户裁决）。
 
         她的价值在「患难之交」（M15a）：**进驻宿舍那一刻**把心情换给上一位，满 24 就够、
         不靠"待在宿舍里"；她「自律」（M14）又能自己回满 ⇒ 满心情时换出去不亏。
@@ -1602,6 +1614,8 @@ class Test闲置入宿(unittest.TestCase):
             facs = [{"type": "宿舍", "level": 5, "slots": 2, "operators": [
                         {"name": "有阵营甲", "mood": "24", "factions": ["测试阵营"]},
                         {"name": "菲亚梅塔", "mood": mood}]},
+                    {"type": "制造站", "level": 3, "operators": [
+                        {"name": "同伴甲", "mood": "12", "factions": ["测试阵营"]}]},
                     {"type": "加工站", "level": 1, "operators": [{"name": "丙", "mood": "6"}]}]
             w = build_base_layout(scenario(*facs))
             w.idle_to_dorm = build_idle_to_dorm_config({"enabled": True})
@@ -1612,10 +1626,12 @@ class Test闲置入宿(unittest.TestCase):
         self.assertEqual([e.group for e in events], ["idle_to_dorm"])
         self.assertEqual(events[0].target, "菲亚梅塔")
         self.assertEqual(self._where(w, "丙"), "宿舍")
-        # 没满 24 → 不放行（③ 仍然只挑"实时满心情"的）
+        # 没满 24 → **③ 的例外不放行**（③ 只挑"实时满心情"的）；她这时只能靠 ④ 默认兜底被换出
         w2 = world("23")
-        self.assertEqual([e.group for e in apply_idle_to_dorm(w2, enabled=True)],
-                         ["idle_to_dorm_skipped"])
+        ev2 = apply_idle_to_dorm(w2, enabled=True)
+        self.assertEqual([e.group for e in ev2], ["idle_to_dorm"])
+        self.assertIn("优先级④的默认兜底", ev2[0].detail)
+        self.assertEqual(ev2[0].target, "菲亚梅塔")
 
     def test_在上班与心情满的人不动(self):
         """正在消耗心情的设施里的人不动（换走会打乱排班）；心情满的人也不用动。"""
@@ -1644,13 +1660,15 @@ class Test闲置入宿(unittest.TestCase):
     def test_逐次设置_按周期班次生效(self):
         """`scope=(周期, 班次)`：同一个人在不同班次/周期可以有不同的设置（最具体的优先）。
 
-        ⚠️ 点名只在**第④级**生效，所以这里让宿舍里两位都**有阵营**（③ 只换白板 ⇒ 挑不到人），
-        这样才能看到点名的那条真的被用上。
+        ⚠️ 点名只在**第④级**生效，所以这里让宿舍里两位都**有阵营、且工作区里有同阵营同伴**
+        （阵营门保护 ⇒ ③④ 都挑不到人），这样才能看到点名的那条真的被用上。
         """
         def world():
             facs = [{"type": "宿舍", "level": 5, "slots": 2, "operators": [
                         {"name": "甲", "mood": "24", "factions": ["测试阵营"]},
                         {"name": "乙", "mood": "24", "factions": ["测试阵营"]}]},
+                    {"type": "制造站", "level": 3, "operators": [
+                        {"name": "同伴甲", "mood": "12", "factions": ["测试阵营"]}]},
                     {"type": "加工站", "level": 1, "operators": [{"name": "丙", "mood": "6"}]}]
             w = build_base_layout(scenario(*facs))
             w.idle_to_dorm = build_idle_to_dorm_config({"enabled": True, "per_operator": [
