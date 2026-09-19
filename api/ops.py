@@ -79,7 +79,7 @@ def _times(value, session: Session, default=(0,)) -> List[Decimal]:
 
 def _require_session(session: Session) -> None:
     if session.schedule is None:
-        raise ValueError("尚未载入排班：先调 load_schedule（或 load_file / load_files）")
+        raise ValueError("尚未载入排班：先调 load_json（或 load_schedule / load_file / load_files）")
 
 
 def _num(value):
@@ -248,6 +248,44 @@ def op_load_files(session: Session, args: dict) -> dict:
     return {"loaded": True, "import": ld.summary(),
             "shifts": session.describe()["shifts"],
             "pool": list(ld.pool),
+            "validation": session.validate().to_dict()}
+
+
+def op_load_json(session: Session, args: dict) -> dict:
+    """**内联 JSON → 排班**（不落临时文件；把内存里的求解结果直接喂进来）。
+
+    参数：
+      - `data`（必需）：任意一种受支持的 JSON —— 本工具场景 / MAA 排班 /
+        **v3 求解输出**（`{"result": {...}}` 信封）/ v4 蓝图+干员池，自动识别；
+      - `hours`：各班时长（数组；只一个班时可写标量）。给了就按顺序覆盖文件里的时长；
+      - `cycle_hours`：只做一致性校验（与各班时长之和不相等就报错）；
+      - `cycles`：连跑几个周期（默认 1）；
+      - `apply_file_settings`：是否沿用**文件里的开关**（**默认 `false`**：不继承 v3 的
+        `Fiammetta.enable`，「换心情」保持关闭）；
+      - `entry_events`：显式开关「换心情」（缺省＝沿用上面那条规则）；
+      - `idle_to_dorm`：显式开关「闲置入宿」（**本入口默认开**，用本项目默认四级优先级）。
+
+    与 `load_file` 走**同一条装配路径**，同一份 JSON 走文件或走内存必须给出同一批数值。
+    """
+    data = args.get("data")
+    _require(data=data)
+    if not isinstance(data, dict):
+        raise ValueError("data 应当是一个 JSON 对象（不是数组 / 字符串）")
+    hours = args.get("hours")
+    if hours is not None and not isinstance(hours, (list, tuple)):
+        hours = [hours]                 # 单班时允许写标量（与 load_schedule 的手感一致）
+    ld = session.load_data(data, hours=hours,
+                           cycle_hours=args.get("cycle_hours"),
+                           cycles=args.get("cycles"),
+                           apply_file_settings=bool(args.get("apply_file_settings", False)),
+                           entry_events=args.get("entry_events"),
+                           idle_to_dorm=args.get("idle_to_dorm"))
+    return {"loaded": True, "import": ld.summary(),
+            "shifts": session.describe()["shifts"],
+            "pool": list(ld.pool),
+            "settings": {"cycles": session.cycles,
+                         "entry_events": session.entry_events,
+                         "idle_to_dorm": session.idle_to_dorm},
             "validation": session.validate().to_dict()}
 
 
@@ -562,6 +600,82 @@ def op_trajectory(session: Session, args: dict) -> dict:
             "operators": {n: [_num(v) for v in traj.moods[n]] for n in traj.names}}
 
 
+def _person_out(row: dict) -> dict:
+    """`Session.layout_at` 里的一行（干员）→ JSON（数值 6 位小数）。"""
+    out = {"name": row["name"], "mood": _num(row["mood"])}
+    if "slot" in row:
+        out["slot"] = row["slot"]
+    if "rate" in row:
+        out["rate"] = _num(row["rate"])
+    if "elite" in row:
+        out["elite"] = row["elite"]
+        out["level"] = row["level"]
+    return out
+
+
+def op_layout_at(session: Session, args: dict) -> dict:
+    """**时间节点 → 整座基地的布局 + 全员心情**（只给一个 `at`）。
+
+    ```jsonc
+    {"at": 8, "cycle": 1, "in_cycle": 8, "shift_index": 1, "shift_label": "1. alpha/beta · 12h",
+     "rooms": [{"index": 1, "type": "贸易站", "name": "贸易站#1", "level": 3, "capacity": 3,
+                "enabled": true,
+                "operators": [{"slot": 1, "name": "但书", "mood": 22.4, "rate": 0.85,
+                               "elite": 2, "level": 30}],
+                "deputies": []}],
+     "detached": [{"name": "歌蕾蒂娅", "mood": 24, "rate": 0}],   // 不在基建（心情一条平线）
+     "moods": {"但书": 22.4, ...}}
+    ```
+
+    ⚠️ 读的是**引擎那份布局副本**（`Trajectory.world_at`）——换心情 / 闲置入宿换过人之
+    后的**真实**排布，**不是**你导入的那份快照；落在班次边界取**右侧**。
+    `at` 支持小时数（绝对值，可跨周期）与钟点字符串（`"08:30"`，周期内）。
+    """
+    _require_session(session)
+    t = parse_time(args.get("at", 0), session.schedule.cycle_hours)
+    lay = session.layout_at(t)
+    if lay is None:
+        raise ValueError("尚未载入排班：先调 load_json（或 load_schedule / load_file）")
+    return {
+        "at": _num(lay["at"]),
+        "cycle": lay["cycle"],
+        "in_cycle": _num(lay["in_cycle"]),
+        "shift_index": lay["shift_index"],
+        "shift_label": lay["shift_label"],
+        "rooms": [{"index": r["index"], "type": r["type"], "name": r["name"],
+                   "level": r["level"], "capacity": r["capacity"], "enabled": r["enabled"],
+                   "operators": [_person_out(o) for o in r["operators"]],
+                   "deputies": [_person_out(o) for o in r["deputies"]]}
+                  for r in lay["rooms"]],
+        "detached": [_person_out(d) for d in lay["detached"]],
+        "moods": _num_map(lay["moods"]),
+    }
+
+
+def op_closure(session: Session, args: dict) -> dict:
+    """**闭环体检**：同一排班连跑 `cycles` 个周期，看心情是否收敛（＝能不能长期跑）。
+
+    - `cycles`：跑几个周期（默认 **3**；心情跨周期连续，所以第 k 个周期末＝下一轮开局）；
+    - 判据：第 k 与 k−1 个周期末**逐人相同**（容差 1e-9）⇒ 第 k 轮起进入固定点；
+    - 另附「周期末 vs 周期初」的逐人差值、最早红脸时刻与瓶颈。
+
+    ⚠️ **会改会话的 `cycles` 并重算**（与 `moods` 的 `cycles` 参数同一口径）。
+    """
+    _require_session(session)
+    cycles = int(args.get("cycles", 3))
+    if cycles < 1:
+        raise ValueError("cycles 至少为 1")
+    out = session.closure(cycles)
+    out["cycle_hours"] = _num(out["cycle_hours"])
+    out["cycle_start_moods"] = {k: _num_map(v) for k, v in out["cycle_start_moods"].items()}
+    out["cycle_end_moods"] = {k: _num_map(v) for k, v in out["cycle_end_moods"].items()}
+    out["delta_last_vs_first"] = _num_map(out["delta_last_vs_first"])
+    out["layout_sustain_hours"] = _num(out["layout_sustain_hours"])
+    out["red_face"] = {n: [[_num(a), _num(b)] for a, b in spans]
+                       for n, spans in out["red_face"].items()}
+    return out
+
+
 def op_set_detached(session: Session, args: dict) -> dict:
     """**「不在基建」名单**（既不在工作设施、也不在宿舍的干员）。
 
@@ -697,6 +811,7 @@ OPERATIONS = {
     "load_schedule": op_load_schedule,
     "load_file": op_load_file,
     "load_files": op_load_files,
+    "load_json": op_load_json,
     # 编辑
     "set_timeline": op_set_timeline,
     "set_slots": op_set_slots,
@@ -715,6 +830,8 @@ OPERATIONS = {
     # 结果
     "moods": op_moods,
     "trajectory": op_trajectory,
+    "layout_at": op_layout_at,
+    "closure": op_closure,
     "mood_ledger": op_mood_ledger,
     "time_to_mood": op_time_to_mood,
     "bottleneck": op_bottleneck,

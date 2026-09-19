@@ -32,7 +32,7 @@ from api import PROTOCOL_VERSION                                   # noqa: E402
 from api.ops import OPERATIONS, handle                             # noqa: E402
 from api.protocol import make_response, parse_request              # noqa: E402
 from api.server import serve                                       # noqa: E402
-from data.paths import MAA_SAMPLE                                  # noqa: E402
+from data.paths import MAA_SAMPLE, V3_SAMPLE_3SHIFTS                # noqa: E402
 from store.session import Session                                  # noqa: E402
 
 LAYOUT = {"facilities": [
@@ -233,6 +233,144 @@ class Test全流程(unittest.TestCase):
             self.assertGreaterEqual(len(d["shifts"]), 1)
             self.assertIn("已识别", d["import"])
             self.assertTrue(call(s, "import_report")["reports"])
+
+
+class Test求解器适配(unittest.TestCase):
+    """给外部求解器（Rust v3）的适配面：`load_json` / `layout_at` / `closure`。
+
+    三条口径（用户裁决）：
+    1. **内联 JSON** 与按文件载入走同一条装配路径 ⇒ 数值必须逐位相同；
+    2. 本入口**不继承**文件里的 `Fiammetta.enable`（换干员必须手动配置），
+       而**闲置入宿默认开**（本项目默认四级优先级）；
+    3. `layout_at` 读**引擎那份布局副本**（换过人的真实排布），不是导入快照。
+    """
+
+    SCEN = {"facilities": [
+        {"type": "制造站", "level": 3, "operators": ["路人甲"]},
+        {"type": "宿舍", "level": 1, "name": "宿舍#1",
+         "operators": ["路人1", "路人2", "路人3", "路人4", "路人5"]},
+    ], "detached": ["路人乙"]}
+
+    MAA_FIA = {"plans": [
+        {"name": "班次 1 · 12h", "Fiammetta": {"enable": True, "target": "巫恋"},
+         "rooms": {"trading": [{"operators": ["菲亚梅塔"]}],
+                   "dormitory": [{"operators": ["巫恋"]}]}},
+    ]}
+
+    # ---------------------------------------------------------------- load_json
+    def test_内联与按文件载入逐位一致(self):
+        raw = json.loads(V3_SAMPLE_3SHIFTS.read_text(encoding="utf-8"))
+        inline, byfile = Session(), Session()
+        call(inline, "load_json", data=raw, idle_to_dorm=False)
+        call(byfile, "load_file", path=str(V3_SAMPLE_3SHIFTS))
+        byfile.idle_to_dorm = False
+        byfile.recompute()
+        self.assertEqual(call(inline, "list_shifts")["shifts"],
+                         call(byfile, "list_shifts")["shifts"])
+        for at in (0, 8, 24):
+            self.assertEqual(call(inline, "moods", at=[at])["moods"],
+                             call(byfile, "moods", at=[at])["moods"], at)
+
+    def test_默认口径_周期取文件时长(self):
+        d = call(Session(), "load_json", data=self.SCEN, hours=[12])
+        self.assertEqual(d["settings"], {"cycles": 1, "entry_events": False,
+                                         "idle_to_dorm": True})
+        self.assertEqual(call(Session(), "load_json", data=self.SCEN)["shifts"][0]["hours"], "24")
+
+    def test_时长可写标量(self):
+        s = Session()
+        call(s, "load_json", data=self.SCEN, hours=12)
+        self.assertEqual(call(s, "list_shifts")["cycle_hours"], 12)
+
+    def test_不继承文件里的换心情开关(self):
+        off = call(Session(), "load_json", data=self.MAA_FIA)
+        self.assertFalse(off["settings"]["entry_events"])
+        on = call(Session(), "load_json", data=self.MAA_FIA, apply_file_settings=True)
+        self.assertTrue(on["settings"]["entry_events"])
+        # 显式传开关时以显式为准
+        self.assertTrue(call(Session(), "load_json", data=self.MAA_FIA,
+                             entry_events=True)["settings"]["entry_events"])
+
+    def test_闲置入宿默认开可显式关(self):
+        self.assertTrue(call(Session(), "load_json", data=self.SCEN)["settings"]["idle_to_dorm"])
+        self.assertFalse(call(Session(), "load_json", data=self.SCEN,
+                              idle_to_dorm=False)["settings"]["idle_to_dorm"])
+
+    def test_参数与格式校验(self):
+        with self.assertRaises(ValueError):
+            call(Session(), "load_json")
+        with self.assertRaises(ValueError):
+            call(Session(), "load_json", data=[1, 2])
+        with self.assertRaises(ValueError):
+            call(Session(), "load_json", data={"hello": 1})       # 认不出的格式
+
+    # ---------------------------------------------------------------- layout_at
+    def test_layout_at_给布局与心情(self):
+        s = Session()
+        call(s, "load_json", data=self.SCEN, hours=[24])
+        lay = call(s, "layout_at", at="06:00")
+        self.assertEqual(lay["at"], 6)
+        self.assertEqual(lay["in_cycle"], 6)
+        self.assertEqual(lay["shift_index"], 1)
+        dorm = next(r for r in lay["rooms"] if r["type"] == "宿舍")
+        self.assertEqual([o["slot"] for o in dorm["operators"]], [1, 2, 3, 4, 5])
+        self.assertTrue(all("mood" in o and "rate" in o for o in dorm["operators"]))
+        # 与 moods / 房间心情同源（同一套 6 位小数口径）
+        self.assertEqual(lay["moods"], call(s, "moods", at=[6])["moods"]["6"])
+        for room in lay["rooms"]:
+            for person in room["operators"]:
+                self.assertEqual(person["mood"], lay["moods"][person["name"]])
+
+    def test_layout_at_读引擎副本而非导入快照(self):
+        """闲置入宿把宿舍里的人换出去之后：`layout_at` 必须给**换过之后**的排布。
+
+        这正是 `AGENTS.md` 第 20 条那个坑（看板读引擎副本、不读排班快照）。
+        """
+        s = Session()
+        call(s, "load_json", data=self.SCEN, hours=[24])
+        call(s, "set_moods", moods={"路人乙": 12})      # 闲置且未满 ⇒ 会被安排进满员的宿舍
+        lay = call(s, "layout_at", at=0)
+        dorm = next(r for r in lay["rooms"] if r["type"] == "宿舍")
+        self.assertIn("路人乙", [o["name"] for o in dorm["operators"]])
+        self.assertEqual([d["name"] for d in lay["detached"]], ["路人2"])
+        # 导入快照**不变**：路人2 还在宿舍里，路人乙压根不在快照里
+        snapshot = call(s, "list_shifts")["shifts"][0]["operators"]
+        self.assertIn("路人2", snapshot)
+        self.assertNotIn("路人乙", snapshot)
+
+    def test_layout_at_需要先载入(self):
+        with self.assertRaises(ValueError) as ctx:
+            call(Session(), "layout_at")
+        self.assertIn("尚未载入排班", str(ctx.exception))
+
+    # ---------------------------------------------------------------- closure
+    def test_闭环体检_能收敛且判得出红脸(self):
+        """一个人 24h 不休息 ⇒ 心情单调降到 0 并钳住 ⇒ 第 2 周期起收敛，且必然红脸。"""
+        s = Session()
+        call(s, "load_json", data={"facilities": [
+            {"type": "制造站", "level": 3, "operators": ["泡泡"]}]}, hours=[24])
+        d = call(s, "closure", cycles=3)
+        self.assertEqual(d["cycles"], 3)
+        self.assertEqual(set(d["cycle_end_moods"]), {"1", "2", "3"})
+        self.assertTrue(d["converged"])
+        self.assertGreaterEqual(d["converged_from_cycle"], 2)
+        self.assertEqual(d["cycle_end_moods"]["2"], d["cycle_end_moods"]["3"])   # 已进入固定点
+        self.assertEqual(d["bottleneck"], "泡泡")
+        self.assertIsNotNone(d["layout_sustain_hours"])
+        self.assertLess(d["delta_last_vs_first"]["泡泡"], 0)     # 周期末比周期初更累
+        self.assertIn("泡泡", d["red_face"])
+        self.assertIn("红脸", d["verdict"])
+        # 与 moods 的 `cycles` 参数同一口径：会话的周期数被改成 3
+        self.assertEqual(call(s, "get_settings")["cycles"], 3)
+
+    def test_闭环体检_参数校验(self):
+        with self.assertRaises(ValueError) as ctx:
+            call(Session(), "closure")                    # 未载入排班
+        self.assertIn("尚未载入排班", str(ctx.exception))
+        s = Session()
+        call(s, "load_json", data=self.SCEN)
+        with self.assertRaises(ValueError):
+            call(s, "closure", cycles=0)
 
 
 class Test数值同源(unittest.TestCase):
