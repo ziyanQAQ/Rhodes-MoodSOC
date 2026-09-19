@@ -33,6 +33,14 @@
 核心公式：`SOC(t) = SOC(t0) − ∫ I(τ)dτ`，其中 **`I = 消耗速率 − 回复速率`**
 （`I>0` 下降 / `I<0` 上升 / `I=0` 不变），心情全程钳位 `[0, 24]`，全程 `decimal.Decimal`。
 
+**为谁服务（定位）**：`ArknightsInfraCalc-v3`（Rust，`E:\code_h\ArknightsInfraCalc-v3`）
+算"高效率的基建布局"，本项目**匹配那套布局**并生成它的**完整心情变化周期**；
+图形界面只负责让人直观地看，**真正的交付面是 `api/`**：v3 把求解结果内联喂进来
+（`load_json`），配好「换干员 / 闲置入宿 / 周期」三组口径，然后问
+「某人 + 时间节点 → 心情」（`operator_detail`）或「时间节点 → 整座基地的布局 + 心情」（`layout_at`）。
+**默认口径已定**：换干员**默认关**（手动配置）、闲置入宿**默认开**（本项目四级优先级）、
+周期**默认取文件里的各班时长**。见 `documents/12-v3接入.md`。
+
 ---
 
 ## 📚 文档索引（按门类）
@@ -50,7 +58,8 @@ documents/
 ├── 08-上游数据源分析.md     上游仓库结构分析（首次摸底留档）
 ├── 09-开发指南.md          运行与测试 / 公共 API 速查 / 改完代码自查清单
 ├── 10-图形界面.md          图形界面 ui/：导入多班排班 / 时间滑动 / 对点曲线
-└── 11-程序接口.md          ★ api/：NDJSON 常驻服务 + 一次性 CLI（Rust 接入）
+├── 11-程序接口.md          ★ api/：NDJSON 常驻服务 + 一次性 CLI + 求解器适配面
+└── 12-v3接入.md            ★ v3（Rust）侧接入：调用序列 / 三组配置 / 默认口径 / 踩坑
 ```
 
 **分层（依赖严格单向向下，`tests/test_layers.py` 静态扫描盯着）**：
@@ -100,7 +109,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 409 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 434 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（250 条 clause 逐条造场景
     核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `resources/skill_verify_report.md`。
@@ -108,6 +117,10 @@ documents/
 13. **「导入排班」认 4 种 JSON**（本工具场景 / MAA / **v3 求解输出** / **v4 蓝图+干员池**），
     识别与转换只有一处：`store/sources.py`（别再在 `ui/` 里写第二份格式判断）。
     合同与字段对照见 `documents/10-图形界面.md` §2。
+    **按文件（`load_file`/`load_files`）与内联（`load_json` / `Session.load_data`）走同一条装配路**
+    （`store.schedule.load_schedule_from_imports`）——同一份 JSON 两条入口必须逐位相同；
+    `load_json` 是**给 v3 的适配入口**，默认口径见 `documents/12-v3接入.md`（换干员不继承文件开关、
+    闲置入宿默认开）。
 14. **「干员与心情」的心情列＝"指定时刻那一刻的实际心情"**：改格子写的是**心情指定事件**
     （`store.schedule.MoodSetEvent`，只对指定周期生效、同刻跳变），只有**第 1 周期 0:00** 那一格
     写 `initial_moods`。面板的 `_collect_moods` **只收"和刚写进去的值不同"的格子**
@@ -139,7 +152,7 @@ documents/
 18. **分层别搞反**：`data/`（数据）← `mood_soc/`（纯计算）← `store/`（状态与 IO）← `ui/` `api/`。
     ① 资源路径一律 `from data.paths import X`（**别自己拼 `resources/…`**，有测试扫源码）；
     ② 给界面加**状态或重算**要改 `store/session.py`，别把业务状态写回 `ui/app.py`；
-    ③ 加程序接口能力 = 在 `api/ops.py` 加一个 op（步骤见 `documents/11-程序接口.md` §7）；
+    ③ 加程序接口能力 = 在 `api/ops.py` 加一个 op（步骤见 `documents/11-程序接口.md` §8）；
     ④ 老路径 `mood_soc.importer/output/scenario/maa`、`ui.schedule` 是**兼容转发壳**，别往里加逻辑。
 
 19. **表格的滚轮 / 搜索 / 对齐 / 高度是一套**（「干员与心情」）：
@@ -161,6 +174,8 @@ documents/
     看板、全员一览的位置标记、对点查询的所在设施、「干员与心情」的位置列都走它；
     面板里两次不一致的行打 `⇄` 并在「说明」列写明原因。
     ⚠️ **编辑仍写快照**（`set_slots` / 面板选人），改完 `recompute` 再重新派生副本。
+    ⚠️ 开着**闲置入宿**时，引擎**每段留一份深拷贝快照**（否则同一个副本跨周期复用，
+    `world_at(t)` 会在第 1/2 周期给出第 N 周期的排布——修过的 bug）；API 的 `layout_at` 读同一份。
 
 ---
 
@@ -180,9 +195,12 @@ python main.py --mode base --demo --period 12          # 先推进 12h 再评估
 .venv/Scripts/python.exe -m ui                          # 见 documents/10-图形界面.md
 .venv/Scripts/python.exe ui/__main__.py                 # 等价；IDE 里直接 Run 也行
 
-# 程序接口（给 Rust 调用；见 documents/11-程序接口.md）
+# 程序接口（给 Rust 调用；见 documents/11-程序接口.md、documents/12-v3接入.md）
 .venv/Scripts/python.exe -m api.server                   # 常驻 NDJSON（推荐）
 .venv/Scripts/python.exe -m api.cli --op capabilities    # 一次性调用
+# v3 求解结果内联喂进来 → 查某时刻整座基地的布局 + 心情 → 闭环体检
+.venv/Scripts/python.exe -m api.cli --op load_json --args @result.json \
+  --then '{"op":"layout_at","args":{"at":8}}' --then '{"op":"closure","args":{"cycles":3}}'
 
 # 数据管道（改完 data/*.txt 必须按顺序跑）
 python scripts/classify_skills.py --agd <ArknightsGameData>   # 挂模板 + 生成 755 行台账

@@ -21,6 +21,20 @@
 > 新增干员技能 = 认模板 + 填参数；上游全部 buff 都有覆盖台账，未归类会**硬报错**。
 > 见 `documents/05-技能分类大纲.md`（分类大纲 + 模板字典）与 `data/skills_registry.txt`（台账）。
 
+### 本项目为谁服务（定位）
+
+**ArknightsInfraCalc-v3（Rust）负责算出"高效率的基建布局"；本项目负责"匹配那套布局"，
+生成它的完整心情变化周期** —— 这套布局下每一刻谁在哪、心情多少、能撑多久、会不会红脸。
+
+图形界面只负责让人**直观地看**；真正的交付面是**程序接口**：v3 把求解结果**内联**喂进来
+（`load_json`），配好「换干员 / 闲置入宿 / 周期」三组口径，然后只要问两句：
+
+- 「**某人 + 时间节点** → 她的心情」 —— `operator_detail`；
+- 「**时间节点** → 整座基地的布局 + 全员心情」 —— `layout_at`。
+
+默认口径（已定）：**换干员默认关**（必须手动配置）、**闲置入宿默认按本项目四级优先级**、
+**周期默认取文件里的各班时长**。给 v3 侧照抄的一页纸见 `documents/12-v3接入.md`。
+
 ### 心情流水账（可解释）
 
 每条速率都能拆开看：谁 → 哪条技能 → 作用于谁 → 值多少 → 按哪条叠加规则合成。
@@ -502,7 +516,7 @@ Rhodes-MoodSOC/
 │   ├── maa.py             MAA 排班 JSON -> facilities（唯一的房间映射表）
 │   └── serialize.py       结果 -> JSON dict / 写入文件（inf -> null）
 ├── api/                   ★ **程序接口**（JSON 进 / JSON 出；见 documents/11-程序接口.md）
-│   ├── ops.py             能力表：33 个 op（图形界面能做的一切）
+│   ├── ops.py             能力表：36 个 op（图形界面能做的一切 + 给 v3 的适配面）
 │   ├── protocol.py        线协议：请求/响应的解析与组装（NDJSON）
 │   ├── server.py          常驻服务 `python -m api.server`（推荐给 Rust）
 │   └── cli.py             一次性调用 `python -m api.cli --op …`
@@ -524,7 +538,7 @@ Rhodes-MoodSOC/
 │   ├── __init__.py
 │   ├── test_api_blackbox.py        公开 API 黑盒：场景 JSON + 目标/时段 → 结果 JSON
 │   ├── test_cli_blackbox.py        命令行黑盒：subprocess 调 main.py → stdout JSON / 退出码 / 结果文件
-│   ├── test_api_ops.py             ★程序接口黑盒：握手 / 全流程 / **与引擎逐位同源** / 协议形状 / 时刻写法
+│   ├── test_api_ops.py             ★程序接口黑盒：握手 / 全流程 / **与引擎逐位同源** / 协议形状 / 时刻写法 / **求解器适配**
 │   ├── test_layers.py              ★分层回归：依赖方向 / 兼容转发壳不漏名字 / 数据路径只有一处
 │   ├── test_ui_schedule_blackbox.py 图形界面的计算核心黑盒（含"不拉起 tkinter"的结构断言）
 │   ├── test_ui_app_smoke.py        界面端到端冒烟（真建窗口；无图形环境自动跳过）
@@ -548,7 +562,7 @@ Rhodes-MoodSOC/
 │   └── skill_verify_report.md                   技能核对报告（生成物，勿手改）
 ├── documents/             ★ **文档**（按门类分文件，索引见 documents/README.md）
 │   ├── README.md            文档索引 + §编号约定 + 维护约定
-│   └── 01-架构.md … 11-程序接口.md
+│   └── 01-架构.md … 12-v3接入.md
 ├── results/               运行生成的结果 JSON（已被 gitignore）
 ├── README.md              面向人类的完整说明（人类入口）
 ├── AGENTS.md              给 AI 的精简入口（DSH 只从项目根自动加载它）
@@ -761,20 +775,28 @@ python main.py --mode base --demo --period 12                           # 先推
 ```jsonc
 // 常驻模式下：一行一个请求，一行一个响应（NDJSON over stdio）
 {"id":1,"op":"capabilities"}
-{"id":2,"op":"load_file","args":{"path":"resources/arknights-infra-schedule-maa.json"}}
-{"id":3,"op":"set_timeline","args":{"cycles":2}}
-{"id":4,"op":"moods","args":{"at":["12:00"],"include_red_face":true}}   // → 全员心情 + 红脸 + 瓶颈
-{"id":5,"op":"quit"}
+{"id":2,"op":"load_json","args":{"data": /* v3 求解结果，原样塞进来（不落临时文件） */ }}
+{"id":3,"op":"set_entry_events","args":{"enabled":false}}          // 换干员默认就是关
+{"id":4,"op":"layout_at","args":{"at":8}}                          // 整座基地的布局 + 全员心情
+{"id":5,"op":"operator_detail","args":{"name":"但书","at":8}}       // 某人此刻的心情
+{"id":6,"op":"closure","args":{"cycles":3}}                        // 这套布局能不能长期跑
+{"id":7,"op":"quit"}
 ```
 
-共 **33 个 op**：载入（`load_schedule` / `load_file` / `load_files`）、改设置（时间轴 / 槽位 /
+共 **36 个 op**：载入（`load_schedule` / **`load_json`** / `load_file` / `load_files`）、改设置（时间轴 / 槽位 /
 房间等级 / 心情 / 锚点 / 练度 / 干员池 / 换心情 / 闲置入宿 / **不在基建名单**）、出结果（`moods` / `trajectory` /
-`mood_ledger` / `time_to_mood` / `bottleneck` / `export_schedule`）、只读（`describe` /
-`list_shifts` / `validate` / `get_settings` / `operator_detail` …）。
-**先调一次 `capabilities` 握手**（拿协议版本与 op 表），版本不一致就报错、别继续。
+**`layout_at`** / **`closure`** / `mood_ledger` / `time_to_mood` / `bottleneck` / `export_schedule`）、
+只读（`describe` / `list_shifts` / `validate` / `get_settings` / `operator_detail` …）。
+**先调一次 `capabilities` 握手**（拿协议版本与 op 表，当前 `protocol = 2`），版本不一致就报错、别继续。
+
+**给 v3（Rust 求解器）的适配面**：`load_json` 把求解结果**内联**喂进来（自动识别格式，
+含 v3 的 `{"result": …}` 信封），`layout_at` 回答"某时刻整座基地的布局 + 心情"，
+`closure` 回答"这套高效布局能不能长期跑"。默认口径：**换干员关**（不继承文件里的 `Fiammetta.enable`）、
+**闲置入宿开**（本项目默认四级优先级）、**周期取文件里的各班时长**。
 
 时刻支持两种写法：`8.5`（**绝对**小时，跨周期递增）或 `"08:30"`（**周期内**时刻，`"24:00"` = 周期末）。
-完整字段表、错误形状、Rust 接入样例、加 op 的步骤见 **`documents/11-程序接口.md`**。
+完整字段表、错误形状、Rust 接入样例、加 op 的步骤见 **`documents/11-程序接口.md`**；
+v3 侧照抄即可的一页纸见 **`documents/12-v3接入.md`**。
 
 ## 五、Python API
 
@@ -873,8 +895,8 @@ python main.py --mode base --demo --period 12                           # 先推
 
 | 入口 | 说明 |
 |---|---|
-| `store.session.Session` | ★**会话状态**：界面与程序接口共用的一份"当前在算的东西"。`load_paths([...])` / `load_layout({...})` / `recompute()` / `moods_at(t)` / `mood_at(name,t)` / `rate_at(name,t)` / `red_face_spans(name)` / `set_initial_mood` / `set_mood_at` / `set_training` / `set_timeline` / `set_slots` / `entry_candidates()` / `idle_groups()` / `validate()` / `describe()` / `settings_dict()` |
-| `store.schedule` | 多班排班与整周期轨迹：`Schedule` / `Shift` / `Trajectory` / `simulate_schedule` / `load_schedule(_ex)` / `MoodSetEvent` / `default_initial_moods` / `all_operator_names` |
+| `store.session.Session` | ★**会话状态**：界面与程序接口共用的一份"当前在算的东西"。`load_paths([...])` / `load_layout({...})` / **`load_data({...})`** / `recompute()` / `moods_at(t)` / `mood_at(name,t)` / `rate_at(name,t)` / **`layout_at(t)`** / **`closure(cycles)`** / `red_face_spans(name)` / `set_initial_mood` / `set_mood_at` / `set_training` / `set_timeline` / `set_slots` / `entry_candidates()` / `idle_groups()` / `validate()` / `describe()` / `settings_dict()` |
+| `store.schedule` | 多班排班与整周期轨迹：`Schedule` / `Shift` / `Trajectory` / `simulate_schedule` / `load_schedule(_ex)` / **`load_schedule_from_imports`** / `MoodSetEvent` / `default_initial_moods` / `all_operator_names` |
 | `store.sources` | 排班/蓝图 JSON 的格式自动识别与转换：`detect_format` / `import_data` / `import_file` / `resolve_name` |
 | `store.layout` | `dict/JSON → BaseLayout`：`build_base_layout` / `build_operator` |
 | `store.maa` | MAA 排班解析：`read_maa` / `plans_from_data`（**唯一的房间映射表** `ROOM_MAP`） |
@@ -949,7 +971,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 ## 六、测试（黑盒）
 
 测试为**黑盒测试**：只通过「命令行」「公开 API」与「图形界面的计算核心」断言
-**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **333 个用例全绿**。
+**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **434 个用例全绿**。
 
 ```bash
 # 运行全部测试
@@ -968,7 +990,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 .venv/Scripts/python.exe -m unittest tests.test_ui_settings_blackbox -v  # 「设置」中心（同上）
 ```
 
-当前 **409 个测试全绿**（其中 `test_layers.py` 是**结构回归网**：依赖方向、
+当前 **434 个测试全绿**（其中 `test_layers.py` 是**结构回归网**：依赖方向、
 兼容转发壳不漏名字、源码里不许手拼资源路径）。
 
 技能侧另有一道"体检"（与测试同源，可独立跑、可出报告）：
