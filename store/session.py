@@ -114,8 +114,8 @@ class Session:
     #: 按班次的覆盖（`EntryShiftOverride` 列表）
     entry_per_shift: List[object] = field(default_factory=list)
 
-    #: 闲置入宿总开关
-    idle_to_dorm: bool = False
+    #: 闲置入宿总开关（**默认开**：用户口径"闲置入宿默认是开启的"；文件里显式写 false 才关）
+    idle_to_dorm: bool = True
     #: 不限班次/周期的逐人设置 `{干员: (参与, 目标标签)}`
     idle_globals: Dict[str, Tuple[bool, Optional[str]]] = field(default_factory=dict)
     #: 逐次设置 `{(周期, 班次, 干员): (参与, 目标标签)}`（序号均为 1 基）
@@ -155,12 +155,12 @@ class Session:
         装配走 `load_schedule_from_imports`（与按文件载入**同一条路**），
         所以「同一份 JSON 走文件 vs 走内存」的数值必须逐位相同。
 
-        ⚠️ **本入口的默认口径与界面 / `load_file` 不同**（按"外部求解器调用"的需求收窄）：
+        ⚠️ **本入口与界面 / `load_file` 的差别只剩"文件里的开关"那一行**：
 
         | 项 | 本入口默认 | 理由 |
         |---|---|---|
         | 文件里的开关（如 v3 的 `Fiammetta.enable`） | **不继承**（`apply_file_settings=False`） | 换干员必须手动配置，默认关 |
-        | 闲置入宿 | **开**（本项目默认四级优先级） | v3 没给就按本项目默认逻辑 |
+        | 闲置入宿 | **开**（本项目默认四级优先级） | v3 没给就按本项目默认逻辑；**这也是全项目默认**（用户裁决"闲置入宿默认是开启的"），界面 / `load_file` / `simulate_schedule` 同样默认开 |
         | 周期 | 取文件里的班次时长（如 12/6/6 → 24h），`cycles=1` | 正好一个完整周期 |
 
         要按文件里的设置走（老口径）就传 `apply_file_settings=True`。
@@ -234,7 +234,9 @@ class Session:
         self.entry_when = normalize_entry_when(getattr(cfg, "when", None)) or "full"
         self.entry_per_shift = list(getattr(cfg, "per_shift", []) or [])
         idle = getattr(self.schedule.shifts[0].world, "idle_to_dorm", None) if self.schedule.shifts else None
-        self.idle_to_dorm = bool(getattr(idle, "enabled", False))
+        # ⚠️ 默认**开**（用户口径"闲置入宿默认是开启的"）：文件里没写这个键 → 开；
+        #    显式写 `"idle_to_dorm": false` / `{"enabled": false}` → 关。
+        self.idle_to_dorm = bool(getattr(idle, "enabled", True))
         self.idle_globals = {}
         self.idle_entries = {}
         for e in (getattr(idle, "per_operator", None) or []):

@@ -191,11 +191,18 @@ class Test全流程(unittest.TestCase):
 
         语义：轨迹里**一条平线**（心情恒定）、**不占进驻位**、不参与任何技能计数；
         `moods` / `trajectory` 里照样能看到他们。
+        ⚠️ 闲置入宿现在**默认开**，而"不在基建"的人**正是它的候选**（会现造 `Operator`
+        放进宿舍）——所以这里先**显式关掉**，才能看到"不在基建"本身的语义。
         """
         d = call(self.s, "set_detached", names=["板凳甲"], moods={"板凳甲": 11})
         self.assertEqual(d["detached"], ["板凳甲"])
         self.assertEqual(d["detached_explicit"], ["板凳甲"])
         self.assertEqual(call(self.s, "bench_names")["detached"], ["板凳甲"])
+        # ⚠️ 闲置入宿现在**默认开**，而"不在基建"的人**正是它的候选**（会现造 `Operator`
+        #    放进宿舍）——所以这里显式关掉再重算，才能看到"不在基建"本身的语义。
+        #    （`set_detached` 会顺手 `_sync_from_schedule`，所以关的动作要放在它之后。）
+        self.s.idle_to_dorm = False
+        self.s.recompute()
         # 平线：三个时刻都是 11
         moods = call(self.s, "moods", at=[0, 12, 24])["moods"]
         for key in ("0", "12", "24"):

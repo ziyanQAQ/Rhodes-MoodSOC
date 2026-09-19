@@ -811,7 +811,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       entry_force: Optional[bool] = None,
                       entry_when: Optional[str] = None,
                       entry_per_shift: Optional[List[EntryShiftOverride]] = None,
-                      idle_to_dorm: bool = False,
+                      idle_to_dorm: bool = True,
                       idle_entries: Optional[Sequence["IdleToDormEntry"]] = None,
                       mood_events: Optional[Sequence[MoodSetEvent]] = None,
                       max_segment: Decimal = MAX_SEGMENT_HOURS) -> Trajectory:
@@ -833,7 +833,9 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                        3 班排班就可以"第 1 班换给巫恋、第 2 班自动挑最累的、第 3 班不用"；
                        `None` = 用场景 JSON 里的 `per_shift`
         idle_to_dorm  **闲置入宿**：每班开始时把"没在上班、也不在宿舍、心情还没满"的干员
-                       安排进宿舍（有空位就放进去，没空位就与宿舍里心情已满的那位互换）
+                       安排进宿舍（有空位就放进去，没空位就与宿舍里心情已满的那位互换）。
+                       ⚠️ **默认 `True`（开）**（用户口径"闲置入宿默认是开启的"）——
+                       要"完全不动布局"的旧口径就显式传 `False`。
         idle_entries  界面的逐人设置（`[IdleToDormEntry, ...]`，**只列改过默认的**：
                        不参与的人、或指定了交换对象的人）。给了它就**盖过** JSON 里的
                        `idle_to_dorm.per_operator`（界面口径优先）；`None` = 用 JSON。

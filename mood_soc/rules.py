@@ -1230,8 +1230,8 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
       那间满了 / 不存在 → 跳过这一位（不退回自动）。
 
     参数：
-        enabled  三态；`None` = 用 `world.idle_to_dorm.enabled`，都没有则**默认不结算**
-                 （它会动布局，不做成默认行为）
+        enabled  三态；**默认开**（用户口径"闲置入宿默认是开启的"）：`None` = 用
+                 `world.idle_to_dorm.enabled`（没配置也按**开**），显式 `False` 才不结算
         idle     本班未排班的干员 → 心情：`{名字: 心情}`；给了才把他们当候选
         only     只处理这些干员（界面勾了"参与"的人；`None` = 全部候选）
         swap_with  指定交换对象：`{候选名: 目标名}`（`None`/`""` = 自动）
@@ -1244,7 +1244,9 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
     cfg = getattr(world, "idle_to_dorm", None)
     if enabled is None:
         configured = getattr(cfg, "enabled", None)
-        enabled = bool(configured) if configured is not None else False
+        # 默认**开**（用户口径"闲置入宿默认是开启的"）：没配置 / `None` 都按开；
+        # 显式 `false`（JSON 或调用方）才关。
+        enabled = True if configured is None else bool(configured)
     if not enabled:
         return []
 

@@ -287,13 +287,14 @@ class IdleToDormConfig:
     把"不在工作、也不在宿舍、心情还没满"的干员安排进宿舍恢复心情——
     先看宿舍有没有**空位**，没有空位才**与宿舍里心情已满的那位互换**。
 
-    - `enabled`：三态。`None` = 没配置（`apply_idle_to_dorm` 直接调用时**默认不结算**，
-      因为它会动布局）；`True` = 默认结算；`False` = 这个布局不做这件事。
-      调用方显式开关（CLI `--idle-to-dorm` / 界面勾选）优先于它。
+    - `enabled`：**默认 `True`＝默认就结算**（用户口径："闲置入宿默认是开启的"）。
+      没写这个键 ⇒ 开；**显式写 `false` ⇒ 关**（显式配置永远优先）。
+      调用方显式开关（CLI / 界面勾选 / `apply_idle_to_dorm(enabled=...)`）同样优先于它。
+      三态里**不再有"没配置＝不结算"**：`None` 现在也按默认（开）处理，见 `apply_idle_to_dorm`。
     - `per_operator`：逐个干员的参与与交换对象（见 `IdleToDormEntry`）。
     """
 
-    enabled: Optional[bool] = None
+    enabled: bool = True
     per_operator: List["IdleToDormEntry"] = field(default_factory=list)
 
     def entry_for(self, name: str, cycle: Optional[int] = None,

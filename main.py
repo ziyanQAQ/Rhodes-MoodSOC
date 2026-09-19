@@ -88,10 +88,13 @@ def main() -> int:
                              "场景 JSON 顶层也可写 \"entry_events\": {\"enabled\": true, "
                              "\"swap_with\": \"某人\"} 来开启并指定与谁互换")
     parser.add_argument("--idle-to-dorm", action="store_true", default=False,
-                        help="结算闲置入宿：把「没在上班、也不在宿舍、心情还没满」的干员"
-                             "安排进宿舍（有空位就放进去，没空位就与宿舍里心情已满的那位"
-                             "互换）；场景 JSON 顶层也可写 \"idle_to_dorm\": {\"enabled\": true, "
-                             "\"per_operator\": {\"某人\": \"换谁\"}}")
+                        help="强制结算闲置入宿（**默认本来就结算**，见 --no-idle-to-dorm）；"
+                             "本开关只用于**压过场景 JSON 里显式写的 false**。"
+                             "结算内容：把「没在上班、也不在宿舍、心情还没满」的干员"
+                             "安排进宿舍（有空位就放进去，没空位就与宿舍里那位互换）；"
+                             "逐人设置写 \"idle_to_dorm\": {\"per_operator\": {\"某人\": \"换谁\"}}")
+    parser.add_argument("--no-idle-to-dorm", action="store_true", default=False,
+                        help="关掉闲置入宿（即使场景 JSON 里没写 false、或写了 true）")
     args = parser.parse_args()
 
     # 1) 场景来源
@@ -113,11 +116,15 @@ def main() -> int:
         for ev in apply_entry_events(world, enabled=True):
             print(f"[进驻事件] {ev.source()}　{ev.detail}", file=sys.stderr)
 
-    # 1.6) 闲置入宿（可选）：把"没在上班、也不在宿舍、心情还没满"的干员安排进宿舍——
-    #      宿舍有空位就直接放进去，没空位就与宿舍里心情已满的那位互换（那位换出来闲置）。
-    #      开关来源：命令行 `--idle-to-dorm` 或 JSON 顶层的 "idle_to_dorm": {"enabled": true}。
+    # 1.6) 闲置入宿（**默认开**，用户口径"闲置入宿默认是开启的"）：把"没在上班、也不在宿舍、
+    #      心情还没满"的干员安排进宿舍——宿舍有空位就直接放进去，没空位就与宿舍里那位互换。
+    #      开关来源：`--no-idle-to-dorm`（强制关）> `--idle-to-dorm`（强制开）> JSON 顶层
+    #      `"idle_to_dorm": {"enabled": ...}`（没写 = 开）。
     #      ⚠️ 这里只在"当前这一份布局"上结算一次（多班轮换要逐班结算，见 ui.schedule）。
-    if args.idle_to_dorm or getattr(world.idle_to_dorm, "enabled", False):
+    idle_on = (False if args.no_idle_to_dorm
+               else True if args.idle_to_dorm
+               else bool(getattr(world.idle_to_dorm, "enabled", True)))
+    if idle_on:
         for ev in apply_idle_to_dorm(world, enabled=True):
             print(f"[闲置入宿] {ev.source()}　{ev.detail}", file=sys.stderr)
 

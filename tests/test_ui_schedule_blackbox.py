@@ -642,7 +642,11 @@ class Test副本状态时效性(MoodAssertMixin, unittest.TestCase):
 
 
 class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
-    """`simulate_schedule(..., idle_to_dorm=True)`：每班开始时把未满的闲置干员安排进宿舍。"""
+    """`simulate_schedule(..., idle_to_dorm=...)`：每班开始时把未满的闲置干员安排进宿舍。
+
+    ⚠️ **默认开**（用户口径"闲置入宿默认是开启的"）：不传参数就结算；要"完全不动布局"
+    的旧口径必须显式 `idle_to_dorm=False`。
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -693,7 +697,7 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         代价与边界：菲亚梅塔被换出来闲置（她已是满心情，曲线平线不掉）；
         **另一个"自回型"（缪尔赛思）与所有有阵营的人仍然不动** —— ③ 只额外放行她一个。
         """
-        off = simulate_schedule(self.sch, cycles=1)
+        off = simulate_schedule(self.sch, cycles=1, idle_to_dorm=False)
         on = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True)
         idle = [m for m in on.marks if m.kind == "idle"]
         self.assertTrue(idle, "应当有入宿结算")
@@ -706,13 +710,18 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         moved = [n for n in on.names if on.mood_at(n, 24) > off.mood_at(n, 24) + TOL]
         self.assertTrue(moved, f"应当有人因为这次入宿而回得更多：{moved}")
 
-    def test_默认关闭时一切照旧(self):
-        """不传 idle_to_dorm（默认 False）→ 轨迹与"没有这个功能"时逐位相同。"""
-        a = simulate_schedule(self.sch, cycles=1)
-        b = simulate_schedule(self.sch, cycles=1, idle_to_dorm=False)
-        for name in a.names:
-            self.assertEqual(a.mood_at(name, 24), b.mood_at(name, 24), name)
-        self.assertFalse([m for m in b.marks if m.kind == "idle"])
+    def test_默认开启_显式关掉才一切照旧(self):
+        """**闲置入宿默认开**（用户口径"闲置入宿默认是开启的"）：不传 `idle_to_dorm`
+        ⇒ 与显式传 `True` 逐位相同；要"没有这个功能"的旧口径必须**显式 `False`**。"""
+        default = simulate_schedule(self.sch, cycles=1)
+        on = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True)
+        for name in default.names:
+            self.assertEqual(default.mood_at(name, 24), on.mood_at(name, 24), name)
+        self.assertTrue([m for m in default.marks if m.kind == "idle"],
+                        "默认就该有入宿结算")
+        # 显式关 → 一条"闲置入宿"标记都没有
+        off = simulate_schedule(self.sch, cycles=1, idle_to_dorm=False)
+        self.assertFalse([m for m in off.marks if m.kind == "idle"])
 
     def test_逐人设置_不参与(self):
         """`idle_entries`：`enabled=False` 的人不参与（她的心情不会被这次入宿改变）。"""

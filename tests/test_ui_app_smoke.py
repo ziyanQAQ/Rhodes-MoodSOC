@@ -914,6 +914,10 @@ class Test新增交互(unittest.TestCase):
         from ui.dialogs import IdleToDormPanel
 
         app = self.app
+        # ⚠️ 闲置入宿现在**默认开**（用户口径），所以这里先**显式关掉**再走"打开"这条链路，
+        #    才能看出"改动 → 重算 → 出标记"的因果（否则一进来就已经有结算标记了）。
+        app.idle_to_dorm.set(False)
+        app.recompute()
         groups = app._idle_groups()
         self.assertTrue(groups)
         title, scope, rows = groups[0]

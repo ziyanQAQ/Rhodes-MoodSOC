@@ -638,7 +638,10 @@ class Test不在基建(unittest.TestCase):
         ]}, hours=24)
         s.set_initial_moods({"板凳甲": 10})
         s.set_detached(["板凳甲"], recompute=True)     # 摘位置 + 进名单
-        # ① 没开闲置入宿：平线（心情 10 不动）
+        # ① **显式关掉**闲置入宿：平线（心情 10 不动）
+        #    ⚠️ 闲置入宿现在**默认开**，所以"不动"必须显式 `False`。
+        s.idle_to_dorm = False
+        s.recompute()
         self.assertEqual(q(s.mood_at("板凳甲", D("6"))), D("10"))
         self.assertEqual(s.rate_at("板凳甲", D("0")), D("0"))
         # ② 开了闲置入宿：她进宿舍恢复

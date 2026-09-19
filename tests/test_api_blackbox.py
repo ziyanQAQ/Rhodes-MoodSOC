@@ -1435,11 +1435,23 @@ class Test闲置入宿(unittest.TestCase):
         fac = world.facility_of(name)
         return fac.display_name if fac else "未排班"
 
-    def test_开关默认关(self):
-        """JSON 里没配、也不显式开 → 一动不动（默认不改布局）。"""
+    def test_开关默认开_显式关才不动(self):
+        """**默认就结算**（用户口径"闲置入宿默认是开启的"）：不传 `enabled`、JSON 里也没写
+        → 照常把闲置者安排进宿舍；要"一动不动"必须**显式关**（`enabled=False` 或
+        JSON 里写 `false`）。"""
+        # 默认：丙（心情 6）会被放进宿舍的空位
         world = self._layout(dorm=[("甲", "24")], others=[("加工站", [("丙", "6")])])
-        self.assertEqual(apply_idle_to_dorm(world), [])
-        self.assertEqual(self._where(world, "丙"), "加工站")
+        self.assertEqual([e.group for e in apply_idle_to_dorm(world)], ["idle_to_dorm"])
+        self.assertEqual(self._where(world, "丙"), "宿舍")
+        # 显式关：一动不动
+        world2 = self._layout(dorm=[("甲", "24")], others=[("加工站", [("丙", "6")])])
+        self.assertEqual(apply_idle_to_dorm(world2, enabled=False), [])
+        self.assertEqual(self._where(world2, "丙"), "加工站")
+        # JSON 里显式写 false：同样不动（`world.idle_to_dorm.enabled` 是唯一来源）
+        world3 = self._layout(dorm=[("甲", "24")], others=[("加工站", [("丙", "6")])])
+        world3.idle_to_dorm = build_idle_to_dorm_config(False)
+        self.assertEqual(apply_idle_to_dorm(world3), [])
+        self.assertEqual(self._where(world3, "丙"), "加工站")
 
     def test_空位优先(self):
         """宿舍有空位：直接放进去（不动宿舍里的人）。"""
