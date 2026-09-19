@@ -271,19 +271,53 @@ class Test闲置入宿优先级(unittest.TestCase):
 
     def test_第4级默认兜底_换宿舍里心情最高的白板(self):
         """**优先级④的默认兜底**（用户口径）：②③ 都挑不到**满 24** 的人时**不再直接不动**，
-        而是与宿舍里**心情最高**的白板互换 —— **不限 24**（这里最高只有 8，就跟 8 那位换）。
+        而是与宿舍里**心情最高**的白板互换 —— **不限 24**（这里最高是 15，就跟 15 那位换）。
 
         "心情从高到低"＝换出损失最小的先换（同心情按名字）；宿舍顺序只用于同分。
+        ⚠️ 仍要过"心情闸"：目标必须**比你（10）更满**（见下一个用例）。
         """
         s, detail = self._跑([("宿舍#1", ["A1", "A2", "A3", "A4", "A5"]),
                               ("宿舍#2", ["B1", "B2", "B3", "B4", "B5"])],
                              moods={**{f"A{i}": 5 for i in range(1, 6)},
                                     **{f"B{i}": 5 for i in range(1, 6)},
-                                    "B4": 8})
+                                    "B4": 15})
         self.assertIn("优先级④的默认兜底", detail)
         self.assertIn("B4", detail)                                # 全宿舍心情最高的白板
         self.assertEqual(q(s.mood_at("板凳甲", D(1))), D("14"))      # 进宿舍 → 4/h 恢复
-        self.assertEqual(q(s.mood_at("B4", D(1))), D("8"))           # 换出来 → 平线
+        self.assertEqual(q(s.mood_at("B4", D(1))), D("15"))          # 换出来 → 平线
+
+    def test_目标心情不比候选更满就不换(self):
+        """**心情闸**（用户口径）：任何互换都要求**目标的实时心情严格大于候选** ——
+        换人是"拿一个人的宿舍位子换给另一个人"，目标不比候选更满时等于把**更需要恢复的那位挤出去**。
+
+        实测过的场景：示例排班里 `梅 19.5`（闲置）想换 `温蒂 12.3`（在宿舍）——
+        换进去的是没那么需要的、换出来的是更需要的，净亏 ⇒ 现在改成"这一班不动"。
+        """
+        from mood_soc.rules import apply_idle_to_dorm
+        from store.layout import build_base_layout
+
+        def world(甲心情):
+            facs = [{"type": "宿舍", "level": 5, "slots": 1,
+                     "operators": [{"name": "甲", "mood": str(甲心情)}]},
+                    {"type": "加工站", "level": 1, "operators": [{"name": "丙", "mood": "10"}]}]
+            return build_base_layout({"facilities": facs})
+
+        # 目标更满（12 > 10）→ 照换
+        w = world(12)
+        events = apply_idle_to_dorm(w, enabled=True)
+        self.assertEqual([e.group for e in events], ["idle_to_dorm"])
+        self.assertEqual(events[0].target, "甲")
+        # 目标更不满（8 < 10）→ 不换
+        w2 = world(8)
+        ev2 = apply_idle_to_dorm(w2, enabled=True)
+        self.assertEqual([e.group for e in ev2], ["idle_to_dorm_skipped"])
+        self.assertIn("目标并不比你更满", ev2[0].detail)
+        self.assertEqual(w2.facility_of("丙").display_name, "加工站")
+        self.assertEqual(w2.facility_of("甲").display_name, "宿舍")
+        # **严格大于**：两边一样（10 == 10）也不换
+        w3 = world(10)
+        self.assertEqual([e.group for e in apply_idle_to_dorm(w3, enabled=True)],
+                         ["idle_to_dorm_skipped"])
 
     def test_都不满足就这一班不动(self):
         """**优先级④的最后一道**：宿舍全满、②③ 挑不到满心情的白板、
@@ -318,7 +352,7 @@ class Test闲置入宿优先级(unittest.TestCase):
                               ("宿舍#2", ["缪尔赛思", "普2a", "普2b", "普2c", "普2d"]),
                               ("宿舍#3", ["塞雷娅", "普3a", "普3b", "普3c", "普3d"]),
                               ("宿舍#4", ["赫默", "普4a", "普4b", "普4c", "普4d"])],
-                             moods={n: 5 for n in
+                             moods={n: 12 for n in
                                     ["菲亚梅塔", "缪尔赛思", "塞雷娅", "赫默"]
                                     + [f"普{i}{c}" for i in (1, 2, 3, 4) for c in "abcd"]})
         self.assertIn("优先级④", detail)
@@ -456,7 +490,7 @@ class Test闲置入宿优先级(unittest.TestCase):
         s.load_layout({"facilities": facs}, hours=24)
         # 除她之外宿舍里全是没满的人；她是唯一的"满心情"
         s.set_initial_moods({"缪尔赛思": 24, "路人乙": 5, "路人丙": 6,
-                             "路人丁": 7, "路人戊": 8, "板凳甲": 10})
+                             "路人丁": 7, "路人戊": 12, "板凳甲": 10})
         s.set_detached(["板凳甲"], recompute=False)
         s.idle_to_dorm = True
         s.recompute()
