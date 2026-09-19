@@ -1,13 +1,14 @@
-"""tests/test_skill_coverage.py —— 技能**全量覆盖**黑盒测试（三层）。
+"""tests/test_skill_coverage.py —— 技能**全量覆盖**黑盒测试（四层）。
 
 它回答的问题不是"某几条技能算得对不对"，而是**"整套心情模型把上游技能覆盖全了没有、
-每条都对不对"**。三层：
+每条都对不对、每位干员是不是真的生效"**。四层：
 
 | 层 | 对象 | 断言 |
 |---|---|---|
 | **L1 模板级** | 32 个模板（M01~M17 / X01~X11） | 模板 ↔ 数据自洽；每个**已建模**模板都有覆盖路径；机制本身（含自身 / 取最高 / 归零 / 独占 / 池 / 扩散 / 元修正 / 事件）用真干员验证 |
 | **L2 clause 级** | `skills.SKILLS` 的 **250** 条 clause | 逐条自动造"满足它条件"的场景，断言它出现在流水账里、落在正确的桶、**数值 == 模板口径**、**作用范围正确**（该落在谁账上就落在谁账上） |
 | **L3 描述对照** | 上游 `building_data.json` 描述原文 | 描述里的数字与方向词 ↔ 数据表 `value` 逐条对照（0 处不符；1 处已登记差异见报告） |
+| **L4 干员级与组合技能** | **178** 名干员 + **48** 条组合型 clause | ① 真名 → 技能槽逐条一致（名称解析 / 精英化门槛没把技能挡掉）；② 真名场景里她**真的按自己的技能结算**（L2 用的是合成干员 + 手工注入，绕过了这条路）；③ **组合技能双向对照**：搭档 / 阵营成员 / 变量产出者撤掉或变成不匹配后，数值必须真的变回去 |
 
 另有一条"台账双向核对"：上游 **755** 条 buff 必须**全部有归宿**
 （`modeled=yes` ⇒ 有 clause；`modeled=no` ⇒ 一条 clause 也没有）。
@@ -61,6 +62,8 @@ CLAUSE_TOTAL = 250
 BUFF_TOTAL = 755
 MODELED_BUFFS = 210
 TEMPLATE_TOTAL = 32
+OPERATOR_TOTAL = 178          # 有心情技能的干员（L4-a / L4-b 逐个过）
+COMBO_TOTAL = 48              # 组合型 clause（L4-c 双向对照）
 
 
 # ============================================================================
@@ -398,6 +401,88 @@ class Test全量核对(unittest.TestCase):
 
 
 # ============================================================================
+# L4 干员级生效性 + 组合技能双向对照
+# ============================================================================
+class Test干员级与组合技能(unittest.TestCase):
+    """L4：**每位干员真的生效** + **组合条件的反向对照**。
+
+    这一层补的是 L2 的两个盲区：
+      - L2 用合成干员 + 手工注入 `skill_id`，**没走**"真名 → 技能槽 → 进流水账"这条路；
+      - L2 只核"条件满足时数值对不对"，**没核**"条件不满足时不该生效"——而组合技能
+        （共事 / 定向 / 阵营 / 变量 / 元修正）最容易错的就是后一半。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.status = {k: V.check_clause(k, s).status for k, s in SKILLS.items()}
+        cls.attach = V.check_operator_attachment()
+        cls.settle = V.check_operator_settlement(cls.status)
+        cls.combos = V.check_combos(cls.status)
+
+    def test_真名挂载逐人一致(self):
+        """178 名干员：真名建出来的技能槽必须与技能库**逐条一致**（多一条少一条都算错）。"""
+        from data.skills_data import DEFAULT_OPERATORS
+        self.assertEqual(len(self.attach), OPERATOR_TOTAL)
+        self.assertEqual(len(self.attach), len(DEFAULT_OPERATORS))
+        bad = [(c.name, c.detail) for c in self.attach if not c.ok]
+        self.assertEqual(bad, [], f"有 {len(bad)} 名干员的技能槽与技能库不一致")
+
+    def test_真名结算逐人生效(self):
+        """178 名干员：用**真名 + 她真实的技能槽**造场景，她的技能必须真的进流水账。"""
+        bad = [(c.name, c.detail) for c in self.settle if not c.ok]
+        self.assertEqual(bad, [], f"有 {len(bad)} 名干员在自己的场景里一条技能都没生效")
+        self.assertEqual(len(self.settle), OPERATOR_TOTAL)
+
+    def test_组合技能双向对照全过(self):
+        """48 条组合型 clause：撤掉搭档 / 摘掉阵营 / 断掉变量后，数值必须真的变回去。"""
+        bad = [(c.key, c.detail) for c in self.combos if not c.ok]
+        self.assertEqual(bad, [], f"有 {len(bad)} 条组合技能的「反向」行为不对")
+        self.assertEqual(len(self.combos), COMBO_TOTAL)
+        # 覆盖类型必须齐全（少了哪一类说明筛选口径退了）
+        kinds = {c.combo for c in self.combos}
+        self.assertEqual(kinds, {"共事", "定向", "阵营计数", "自身阵营", "变量",
+                                 "元修正", "独自一人", "宿舍未满计数", "宿舍他人在场"})
+
+    def test_对照差值等于该条技能的值(self):
+        """双向对照不是"变了就算"：A−B 的差值必须**正好等于**账本上这条技能的数值。"""
+        checked = [c for c in self.combos if c.status == "ok" and c.delta is not None
+                   and c.combo not in ("宿舍他人在场",)]
+        self.assertGreaterEqual(len(checked), COMBO_TOTAL - 3)
+        # 逐条重算：把 A 场景里那条 clause 的账本值取出来比对
+        wrong = []
+        for c in checked:
+            skill = SKILLS[c.key]
+            scenes = V._combo_scenes(c.key, skill, V.HINTS.get(c.key, {}))
+            if scenes is None:
+                continue
+            world_a = build_base_layout({"facilities": scenes[0]})
+            hits = [x for x in V._hits_of(world_a, c.key)
+                    if getattr(x[1], "bucket", None) != Bucket.EVENT]
+            if not hits:
+                continue
+            entry = hits[0][1]
+            effect = entry.value if entry.bucket == Bucket.CONSUME else -entry.value
+            if effect != c.delta:
+                wrong.append((c.key, effect, c.delta))
+        self.assertEqual(wrong, [], f"差值与该条技能的值不符：{wrong}")
+
+    def test_核对器能发现组合条件漏判(self):
+        """注入式：把「该宿舍内心情 18 以下」这个条件**摘掉**（等价于漏判）→
+        反向对照必须报错（证明 L4-c 不是空转：条件恒真的话，撤掉搭档数值就不该变）。"""
+        import dataclasses
+        key = "dorm_rec_all&tired_000#2"          # 芬芳疗养·β：只对心情 18 以下的室友加成
+        self.assertIsNotNone(SKILLS[key].condition)
+        orig = SKILLS[key]
+        SKILLS[key] = dataclasses.replace(orig, condition=None)   # 条件恒真 = 漏判
+        try:
+            bad = [c for c in V.check_combos(self.status) if not c.ok]
+        finally:
+            SKILLS[key] = orig
+        self.assertTrue(bad, "条件被摘掉之后反向对照竟然没报错 —— L4-c 没起作用")
+        self.assertTrue(any(c.key == key for c in bad), [c.key for c in bad])
+
+
+# ============================================================================
 # L3 上游描述对照
 # ============================================================================
 class Test描述对照(unittest.TestCase):
@@ -458,19 +543,29 @@ class Test报告(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.results = V.check_clauses()
+        cls.attach = V.check_operator_attachment()
+        cls.settle = V.check_operator_settlement({c.key: c.status for c in cls.results})
+        cls.combos = V.check_combos({c.key: c.status for c in cls.results})
         cls.upstream = V.find_upstream()
         cls.descs = V.check_descriptions(V.load_upstream(cls.upstream)) \
             if cls.upstream else None
-        cls.text = V.build_report(cls.results, cls.descs, V.check_templates(), cls.upstream)
+        cls.text = V.build_report(cls.results, cls.descs, V.check_templates(), cls.upstream,
+                                  cls.attach, cls.settle, cls.combos)
 
-    def test_报告含六个章节(self):
+    def test_报告含七个章节(self):
         for want in ("# 技能核对报告（全量）", "## 一、总览", "## 二、模板使用",
-                     "## 三、逐条 clause", "## 四、逐条 buff", "## 六、怎么复现"):
+                     "## 三、逐条 clause", "## 四、逐条 buff",
+                     "## 五、干员级生效性与组合技能", "## 六、已知差异",
+                     "## 七、怎么复现"):
             self.assertIn(want, self.text)
 
     def test_报告逐条列出所有clause(self):
         for key in SKILLS:
             self.assertIn(f"| `{key}` |", self.text)
+
+    def test_报告逐条列出组合技能(self):
+        for c in self.combos:
+            self.assertIn(f"| `{c.key}` |", self.text)
 
     def test_仓库里的报告没有过期(self):
         """`resources/skill_verify_report.md` 的规模数字必须与当前数据一致。"""

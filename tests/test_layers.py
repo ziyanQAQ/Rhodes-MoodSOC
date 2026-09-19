@@ -78,6 +78,27 @@ class Test分层方向(unittest.TestCase):
             self.assertNotRegex(src, r"(?m)^\s*(?:from|import)\s+tkinter\b",
                                 f"{pkg}/ 里不许 import tkinter")
 
+    def test_引擎与脚本也不拉tkinter(self):
+        """`mood_soc/`（纯计算）与 `scripts/`（工具）同样不许依赖图形界面。
+
+        `ui/` 是唯一允许碰 tkinter 的地方——引擎与脚本要能在无显示器环境（CI / 服务器）跑。
+        """
+        for pkg in ("mood_soc", "scripts"):
+            src = module_source(pkg)
+            self.assertNotRegex(src, r"(?m)^\s*(?:from|import)\s+tkinter\b",
+                                f"{pkg}/ 里不许 import tkinter")
+
+    def test_ui_只依赖下层(self):
+        """`ui/` 只许 import `store` / `mood_soc` / `data` 与同类 `ui`。
+
+        不许反向依赖 `scripts`（工具脚本）/ `tests`（测试）/ `main`（CLI 入口）——
+        "解耦"的量化口径就是这几条正则。
+        """
+        src = module_source("ui")
+        for forbidden in ("scripts", "tests", "main"):
+            self.assertNotRegex(src, rf"(?m)^\s*(?:from|import)\s+{forbidden}\b",
+                                f"ui/ 不许 import {forbidden}")
+
 
 class Test兼容转发壳(unittest.TestCase):
     """老 import 路径必须**一个名字都不少**，而且指向同一个对象。"""

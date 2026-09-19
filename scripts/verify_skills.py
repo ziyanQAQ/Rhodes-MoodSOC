@@ -33,6 +33,7 @@ import json
 import re
 import sys
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -45,7 +46,7 @@ from mood_soc import build_base_layout                                  # noqa: 
 from mood_soc.battery import to_decimal                                 # noqa: E402
 from mood_soc.config import FACILITY_LABELS, FacilityType                # noqa: E402
 from mood_soc.ledger import Bucket                                       # noqa: E402
-from mood_soc.rules import mood_ledger                                   # noqa: E402
+from mood_soc.rules import compute_net_rate, mood_ledger                # noqa: E402
 from mood_soc.skills import SKILLS, SkillKind, base_skill_id, SPREAD_SKILL_IDS  # noqa: E402
 from mood_soc.skill_templates import ModelTier, TEMPLATES                # noqa: E402
 from mood_soc.variables import basis_count, collect_variables            # noqa: E402
@@ -252,7 +253,9 @@ class ClauseCheck:
         return self.status in ("ok", "unreachable", "event", "boost", "eliminate", "pool")
 
 
-def _facility_specs(skill, hint: dict, producers: List[dict]) -> Tuple[list, str, str]:
+def _facility_specs(skill, hint: dict, producers: List[dict],
+                    owner_name: str = SYNTH,
+                    owner_skills: Optional[List[str]] = None) -> Tuple[list, str, str]:
     """按技能类型拼出场景的设施列表。
 
     规则（自动兜底）：
@@ -262,11 +265,15 @@ def _facility_specs(skill, hint: dict, producers: List[dict]) -> Tuple[list, str
     每间房间都放一名占位干员——M02a/b/c 这类"中枢 → 其他设施"的贡献要落在
     **目标设施里那位**的流水账上，房间空了就永远核对不到。
 
+    `owner_name` / `owner_skills`：默认用合成干员 + 单条技能（L2 口径，只核技能本身）；
+    L4 传**真名 + 她真实的技能槽**，用来核"这个干员在基建里真的按她的技能结算"。
+
     返回 `(facilities, 持有者房间名, 目标干员名)`。
     """
     kind = skill.kind
-    owner = {"name": SYNTH, "skill_ids": [skill.id], "elite": 2, "level": 30,
-             "mood": hint.get("owner_mood", 24)}
+    owner = {"name": owner_name,
+             "skill_ids": list(owner_skills) if owner_skills is not None else [skill.id],
+             "elite": 2, "level": 30, "mood": hint.get("owner_mood", 24)}
     if hint.get("owner_factions"):
         owner["factions"] = list(hint["owner_factions"])
 
@@ -326,11 +333,16 @@ def _facility_specs(skill, hint: dict, producers: List[dict]) -> Tuple[list, str
                       else SKELETON_LEVEL.get(name, lv), "operators": ops})
 
     # 条件要"中枢里有某人" / "同设施里有某人"
+    # ⚠️ 搭档**只提供"在场"这一件事**：给他 `skill_ids=["__none__"]` 把他的真技能摘掉，
+    #    否则"撤掉搭档"会连他的技能一起撤掉，A/B 之差就不再只反映**这条组合条件**了
+    #    （实测：浮生得闲的场景里带上「阿」自己的技能，差值从 0.25 变成 1.2）。
     for f in scene:
         if hint.get("cc_mate") and f["type"] == "控制中枢":
-            f["operators"].append({"name": hint["cc_mate"], "elite": 2, "level": 30})
+            f["operators"].append({"name": hint["cc_mate"], "elite": 2, "level": 30,
+                                   "skill_ids": ["__none__"]})
         if hint.get("mate") and f["type"] == home:
-            f["operators"].append({"name": hint["mate"], "elite": 2, "level": 30})
+            f["operators"].append({"name": hint["mate"], "elite": 2, "level": 30,
+                                   "skill_ids": ["__none__"]})
 
     if producers:                              # 变量产出者单独一间房，避免挤掉目标
         scene.append({"type": "宿舍", "level": 5, "operators": producers})
@@ -356,8 +368,12 @@ def _facility_specs(skill, hint: dict, producers: List[dict]) -> Tuple[list, str
     return scene, home, target_name
 
 
-def _producers_for(skill) -> List[dict]:
-    """给变量门控的 clause 自动补"变量产出者"（真名，按上游产出规则）。"""
+def _producers_for(skill, exclude: str = SYNTH) -> List[dict]:
+    """给变量门控的 clause 自动补"变量产出者"（真名，按上游产出规则）。
+
+    `exclude`：不要把这些人当产出者（默认排除合成干员；L4 传真名，避免"自己给自己产出"
+    把同一人塞进两个房间）。
+    """
     if not skill.var_name:
         return []
     from data.skills_data import VARIABLE_PRODUCERS
@@ -367,7 +383,7 @@ def _producers_for(skill) -> List[dict]:
         if var != skill.var_name:
             continue
         for name, _el, _lv in holders:
-            if name in seen or name == SYNTH:
+            if name in seen or name == exclude:
                 continue
             seen.add(name)
             # 心情：产出条件读的是**持有者自己的心情**（mood_below_12 / mood_above_12）
@@ -421,30 +437,32 @@ WORK_TYPES = (FacilityType.POWER, FacilityType.MANUFACTURING, FacilityType.TRADI
               FacilityType.OFFICE, FacilityType.RECEPTION)
 
 
-def expected_scopes(skill, world) -> Tuple[Optional[int], str]:
+def expected_scopes(skill, world, owner: str = SYNTH) -> Tuple[Optional[int], str]:
     """期望"这条 clause 会落在**几个**干员的流水账上"（核对"作用范围"，不只是数值）。
 
     返回 `(期望条数, 说明)`；`None` = 范围由条件筛选，不做硬性条数核对。
 
     为什么值得核对：作用范围错了（比如"同设施全体"退化成"只作用自己"、中枢→宿舍漏了
     某间宿舍、扩散白名单没生效）**数值仍然是"对的"**，只核对某一条实例的数值发现不了。
+
+    `owner`：这条 clause 的持有者名（默认合成干员；L4 传真名）。
     """
     kind = skill.kind
     if kind == SkillKind.SELF_CONSUME:
         return 1, "只作用自身"
     if kind == SkillKind.FACILITY_CONSUME:
-        fac = world.facility_of(SYNTH)
+        fac = world.facility_of(owner)
         return (len(fac.operators) if fac else 0), "同设施全体（含自身）"
     if kind == SkillKind.ROOM_OTHERS_CONSUME:
-        fac = world.facility_of(SYNTH)
+        fac = world.facility_of(owner)
         return (max(0, len(fac.operators) - 1) if fac else 0), "同设施其他（不含自身）"
     if kind == SkillKind.ELIMINATE_SELF:
-        fac = world.facility_of(SYNTH)
+        fac = world.facility_of(owner)
         if fac is None:
             return 0, ""
         n = 0
         for o in fac.operators:
-            if skill.self_only and o.name != SYNTH:
+            if skill.self_only and o.name != owner:
                 continue
             if skill.target_faction and skill.target_faction not in _factions_of(o):
                 continue
@@ -470,7 +488,7 @@ def expected_scopes(skill, world) -> Tuple[Optional[int], str]:
     if kind == SkillKind.DORM_GROUP:
         if skill.condition is not None:
             return None, ""                    # 按目标筛选（如「如果目标是莱欧斯小队」），不硬核条数
-        dorm = world.facility_of(SYNTH)
+        dorm = world.facility_of(owner)
         return (len(dorm.operators) if dorm else 0), "同宿舍每个成员各一条"
     if kind in (SkillKind.DORM_SELF, SkillKind.DORM_SINGLE):
         return 1, "只落在 1 名干员账上（自身 / 锁定的那名受益人）"
@@ -488,9 +506,16 @@ def _contribution_of(world, key: str) -> List[Tuple[str, object]]:
     return out
 
 
-def check_clause(key: str, skill) -> ClauseCheck:
-    """造场景 → 核对一条 clause。"""
+def check_clause(key: str, skill, owner_name: Optional[str] = None,
+                 owner_skills: Optional[List[str]] = None) -> ClauseCheck:
+    """造场景 → 核对一条 clause。
+
+    `owner_name` 给了就是 **L4 口径**（真名路径）：把"合成干员 + 单条技能"换成
+    **真名 + 她真实的技能槽**，场景其余部分完全一样——核的不再是"这条技能定义对不对"，
+    而是"**这位干员在基建里真的按这条技能结算**"（名称解析 → 技能挂载 → 进流水账）。
+    """
     hint = HINTS.get(key, {})
+    owner = owner_name or SYNTH
     if hint.get("unreachable"):
         # 期望"**不**产生非零速率贡献"：构造一个本该触发它的场景，看它是否真的不出现
         facilities, _home, _t = _facility_specs(skill, hint, [])
@@ -502,14 +527,16 @@ def check_clause(key: str, skill) -> ClauseCheck:
                                f"文档说不可达，却出现了 {found[0].value} 的速率贡献")
         return ClauseCheck(key, skill, "unreachable", hint["unreachable"])
 
-    producers = _producers_for(skill)
+    producers = _producers_for(skill, exclude=owner)
     if key == "dorm_rec_toone_000#1":            # M17 元修正：要靠"被强化者"在场
         producers = []
-    facilities, home, target_name = _facility_specs(skill, hint, producers)
+    facilities, home, target_name = _facility_specs(skill, hint, producers,
+                                                   owner_name=owner,
+                                                   owner_skills=owner_skills)
     if key == "dorm_rec_toone_000#1":
         # 被点名提供者（推进之王）必须在同一间宿舍里，且他要真有宿舍群体回复技能
         for f in facilities:
-            if f["type"] == "宿舍" and any(o.get("name") == SYNTH for o in f["operators"]):
+            if f["type"] == "宿舍" and any(o.get("name") == owner for o in f["operators"]):
                 f["operators"].append({"name": "推进之王", "elite": 2, "level": 30, "mood": 12})
                 break
     world = build_base_layout({"facilities": facilities})
@@ -554,7 +581,7 @@ def check_clause(key: str, skill) -> ClauseCheck:
     # —— 值 / 桶核对 ——
     bucket_want = Bucket.RECOVER if skill.kind in (
         SkillKind.CC_RECOVER, *DORM_KINDS) else Bucket.CONSUME
-    owner_ones = [(n, c) for n, c in found if c.owner == SYNTH]
+    owner_ones = [(n, c) for n, c in found if c.owner == owner]
     pick = owner_ones[0][1] if owner_ones else found[0][1]
 
     if skill.kind == SkillKind.ELIMINATE_SELF:
@@ -598,7 +625,7 @@ def check_clause(key: str, skill) -> ClauseCheck:
             return ClauseCheck(key, skill, "bad",
                                f"{holder} 身上数值不符：流水账 {c.value}，按模板口径应为 {want}",
                                expected=want, got=c.value)
-    want_n, why = expected_scopes(skill, world)
+    want_n, why = expected_scopes(skill, world, owner)
     if want_n is not None and len(found) != want_n:
         return ClauseCheck(key, skill, "bad",
                            f"作用范围不符：按「{why}」应落在 {want_n} 名干员账上，实际 {len(found)} 条")
@@ -611,6 +638,424 @@ def check_clause(key: str, skill) -> ClauseCheck:
 def check_clauses() -> List[ClauseCheck]:
     """L2：把全部 clause 过一遍。"""
     return [check_clause(k, s) for k, s in SKILLS.items()]
+
+
+# ============================================================================
+# L4：干员级生效性（真名路径）＋ 组合型技能双向对照
+# ============================================================================
+# 为什么还要 L4：L2 用的是**合成干员**（`SYNTH`）**手工注入单条 skill_id**——
+# 它证明了"这条技能定义对不对"，但没走「真名 → `DEFAULT_OPERATORS` → 技能槽 → 进流水账」
+# 这条路；而且 L2 只核了"条件满足时数值对不对"，没核"**条件不满足时不该生效**"。
+# 组合型技能（要第二名干员 / 阵营成员 / 变量产出者才成立）最容易错的就是后一半。
+@dataclass
+class OperatorCheck:
+    """一名干员的 L4 结论（L4-a 真名挂载 / L4-b 真名结算 各一条）。"""
+    name: str
+    status: str          # ok / bad
+    detail: str = ""
+    clauses: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "ok"
+
+
+@dataclass
+class ComboCheck:
+    """一条**组合型** clause 的「有搭档 / 没搭档」双向对照结论。"""
+    key: str
+    name: str
+    combo: str           # 搭档类型
+    status: str          # ok / bad / var
+    detail: str = ""
+    rate_with: Optional[Decimal] = None      # A 场景（搭档在场）里那个人的净速率
+    rate_without: Optional[Decimal] = None   # B 场景（搭档不在/不匹配）里同一个人的净速率
+
+    @property
+    def delta(self) -> Optional[Decimal]:
+        if self.rate_with is None or self.rate_without is None:
+            return None
+        return self.rate_with - self.rate_without
+
+    @property
+    def ok(self) -> bool:
+        return self.status in ("ok", "var")
+
+
+_CLAUSE_HOLDERS: Optional[Dict[str, List[str]]] = None
+
+
+def clause_holders() -> Dict[str, List[str]]:
+    """`clause key → [持有者, ...]`（来自 `DEFAULT_OPERATORS` 的干员↔技能映射，算一次）。"""
+    global _CLAUSE_HOLDERS
+    if _CLAUSE_HOLDERS is None:
+        from data.skills_data import DEFAULT_OPERATORS
+        acc: Dict[str, List[str]] = defaultdict(list)
+        for name, keys in DEFAULT_OPERATORS.items():
+            for k in keys:
+                acc[k].append(name)
+        _CLAUSE_HOLDERS = dict(acc)
+    return _CLAUSE_HOLDERS
+
+
+def _hits_of(world, key: str) -> List[Tuple[str, object]]:
+    """`key` 在世界里的贡献实例 `[(账主, Contribution), ...]`。
+
+    ⚠️ **元修正（M17「头号陪练」）是特例**：它自己不产生一条独立贡献，而是把 +0.3
+    并入**被强化者**（推进之王）那条宿舍群体回复里（同 group 同 skill_id），
+    所以只能按 `detail` 里的技能名找——L2 的 M17 分支也是这么找的。
+    """
+    if HINTS.get(key, {}).get("boost"):
+        return [(o.name, c) for o in world.all_operators()
+                for c in mood_ledger(world, o.name).items
+                if (SKILLS[key].name or "") in (c.detail or "")]
+    return [(n, c) for n, c in _contribution_of(world, key)]
+
+
+def check_operator_attachment() -> List[OperatorCheck]:
+    """**L4-a 真名挂载**：178 名干员逐个用真名建一遍，技能槽必须与技能库逐条一致。
+
+    盯的是"名称解析 → 技能挂载"这条路：名字认不出（英文名/id 没收录）、
+    `DEFAULT_OPERATORS` 与 `operators.txt` 脱节、精英化门槛把技能全挡掉——
+    这些都能让一位干员在基建里**一条技能都不生效**，而 L2 用合成干员时看不出来。
+    """
+    from data.skills_data import DEFAULT_OPERATORS
+    from store.layout import build_operator
+
+    out: List[OperatorCheck] = []
+    for name in sorted(DEFAULT_OPERATORS):
+        want = set(DEFAULT_OPERATORS[name])
+        op = build_operator({"name": name})
+        got = set(op.skill_ids or ())
+        if not got:
+            out.append(OperatorCheck(name, "bad", "真名建出来一条技能都没有（名称解析断了）",
+                                     len(want)))
+        elif got != want:
+            out.append(OperatorCheck(
+                name, "bad",
+                f"技能槽与技能库不一致：少 {sorted(want - got)[:3]}，多 {sorted(got - want)[:3]}",
+                len(want)))
+        else:
+            out.append(OperatorCheck(name, "ok", f"{len(want)} 条 clause 全部挂上", len(want)))
+    return out
+
+
+def _real_name_world(key: str, skill, name: str):
+    """按 L2 的场景口径，用**真名 + 她真实的技能槽**造一个世界（L4-b 用）。"""
+    from data.skills_data import DEFAULT_OPERATORS
+
+    hint = HINTS.get(key, {})
+    producers = _producers_for(skill, exclude=name)
+    facilities, _home, _target = _facility_specs(
+        skill, hint, producers, owner_name=name,
+        owner_skills=list(DEFAULT_OPERATORS[name]))
+    if key == "dorm_rec_toone_000#1":
+        for f in facilities:
+            if f["type"] == "宿舍" and any(o.get("name") == name for o in f["operators"]):
+                f["operators"].append({"name": "推进之王", "elite": 2, "level": 30, "mood": 12})
+                break
+    return build_base_layout({"facilities": facilities})
+
+
+def check_operator_settlement(status_by_key: Dict[str, str]) -> List[OperatorCheck]:
+    """**L4-b 真名结算**：真名 + 她真实技能槽造场景，断言她自己的技能**真的进了流水账**。
+
+    L2 把 `skill_ids` 手工塞给合成干员，绕过了"这个人身上到底挂了什么"；
+    L4-b 走完整条路，并把命中的那条 clause 的**数值**按模板口径再核一遍。
+    """
+    from data.skills_data import DEFAULT_OPERATORS
+
+    out: List[OperatorCheck] = []
+    for name in sorted(DEFAULT_OPERATORS):
+        keys = [k for k in DEFAULT_OPERATORS[name] if k in SKILLS]
+        pick = next((k for k in keys
+                     if not HINTS.get(k, {}).get("unreachable")
+                     and not HINTS.get(k, {}).get("event")), None)
+        if pick is None:
+            out.append(OperatorCheck(name, "ok",
+                                     "只有事件 / 不可达类 clause（不产生速率），L2 已覆盖",
+                                     len(keys)))
+            continue
+        world = _real_name_world(pick, SKILLS[pick], name)
+        hit = [k for k in keys if k in SKILLS and _hits_of(world, k)]
+        if not hit:
+            out.append(OperatorCheck(
+                name, "bad",
+                f"真名场景（{pick}）里她的 {len(keys)} 条技能一条都没进流水账", len(keys)))
+            continue
+        # 数值核对：挑一条 L2 判为 ok 的命中 clause，逐条实例按模板口径独立折算
+        plain = next((k for k in hit if status_by_key.get(k) == "ok"), None)
+        wrong = ""
+        if plain is not None:
+            variables = collect_variables(world)
+            for holder, c in _contribution_of(world, plain):
+                if c.bucket == Bucket.EVENT:
+                    continue
+                op = world.get_operator(c.target) or world.get_operator(holder)
+                fac = world.facility_of(c.target) or world.facility_of(holder)
+                ok, want = _independent_expected(SKILLS[plain], variables, world, fac, op)
+                if ok and c.value != want:
+                    wrong = f"{plain}：{holder} 身上 {c.value} ≠ 模板口径 {want}"
+                    break
+        if wrong:
+            out.append(OperatorCheck(name, "bad", wrong, len(keys)))
+        else:
+            out.append(OperatorCheck(
+                name, "ok",
+                f"{len(hit)}/{len(keys)} 条进了流水账（{plain or pick} 的值已核）", len(keys)))
+    return out
+
+
+#: 可以双向对照的组合类型（"撤掉搭档后必须不再生效"）。
+COMBO_KINDS = ("共事", "定向", "阵营计数", "自身阵营", "变量", "元修正", "独自一人",
+               "宿舍未满计数", "宿舍他人在场")
+
+
+def _combo_kind(skill, hint: dict) -> Optional[str]:
+    """这条 clause 属于哪一类"组合型"（要第二名干员 / 阵营 / 变量才成立）；不适用返回 None。"""
+    if hint.get("unreachable") or hint.get("event"):
+        return None
+    if hint.get("boost"):
+        return "元修正"
+    if hint.get("alone"):
+        return "独自一人"
+    if hint.get("cc_mate") or hint.get("mate"):
+        return "共事"
+    if hint.get("target_name") or hint.get("target_factions") \
+            or hint.get("target_mood") is not None:
+        return "定向"
+    if hint.get("owner_factions"):
+        return "自身阵营"
+    if skill.count_faction:
+        return "阵营计数"
+    if skill.var_name:
+        return "变量"
+    if skill.basis == "dorm_others":
+        return "宿舍他人在场"
+    if skill.basis in ("dorm_unfull", "dorm_operator"):
+        return "宿舍未满计数"
+    return None
+
+
+def _drop(scene: List[dict], name: str) -> None:
+    for f in scene:
+        f["operators"] = [o for o in f["operators"] if o.get("name") != name]
+
+
+def _misname(scene: List[dict], old: str, new: str = "路人丙") -> str:
+    """把某人的**名字与阵营都换掉**（定向加成要"目标不匹配"）；返回改后的名字。"""
+    for f in scene:
+        for o in f["operators"]:
+            if o.get("name") == old:
+                o["name"] = new
+                o.pop("factions", None)
+                o.pop("trait", None)
+    return new
+
+
+def _strip_faction(scene: List[dict], name: str) -> None:
+    """只摘掉某人的阵营/标签，**人仍留在原房间**（保持在场人数不变）。"""
+    for f in scene:
+        for o in f["operators"]:
+            if o.get("name") == name:
+                o.pop("factions", None)
+                o.pop("trait", None)
+
+
+#: 元修正（M17）的核对落点：宿舍里必须真有"格拉斯哥帮"成员，"头号陪练"的 +0.3 才有去处。
+M17_TARGET = "格拉斯哥帮甲"
+#: 把搭档"变成路人"时用的名字（认不出 → 一条技能都不带）。
+NOBODY = "路人丁"
+
+
+def _combo_scenes(key: str, skill, hint: dict
+                  ) -> Optional[Tuple[List[dict], List[dict], Dict[str, str]]]:
+    """造一对场景：**A = 搭档在场**，**B = 搭档不在 / 不匹配**（B 由 A 变形而来）。
+
+    B 一定从 A 复制后只改"搭档那一件事"，这样净速率之差就**只反映这条组合条件**。
+
+    ⚠️ **"撤掉搭档"一律改成"改名 / 摘阵营，人留在原房间"**：控制中枢有一条
+    「中枢 N 人，每人 −0.05」的全局减免——把搭档**搬走**会连这份减免一起改掉，
+    差值就不再只反映这条组合条件了（实测：德才兼备的差值从 −0.10 变成 −0.20，
+    看起来像"引擎多算了一倍"，其实是中枢人数少了一个）。
+    只有「独自一人」「宿舍他人在场」这两类**条件本身就是在场人数**，才真去增删人。
+
+    返回 `(A, B, 改名表)`：改名表 = `{A 里的名字: B 里的名字}`——"定向"要换掉目标的名字，
+    不带上它，后面拿 A 里的名字去 B 里查人就会 `KeyError`。
+    `None` = 这一类没有可靠的"撤掉"手法（不硬凑）。
+    """
+    kind = _combo_kind(skill, hint)
+    if kind is None:
+        return None
+    producers = [] if key == "dorm_rec_toone_000#1" else _producers_for(skill)
+    a_scene, _home, target = _facility_specs(skill, hint, producers)
+    if key == "dorm_rec_toone_000#1":
+        for f in a_scene:
+            if f["type"] == "宿舍" and any(o.get("name") == SYNTH for o in f["operators"]):
+                f["operators"].append({"name": "推进之王", "elite": 2, "level": 30, "mood": 12})
+                f["operators"].append({"name": M17_TARGET, "factions": ["格拉斯哥帮"],
+                                       "elite": 2, "level": 30, "mood": 12})
+                break
+    b_scene = [dict(f, operators=[dict(o) for o in f["operators"]]) for f in a_scene]
+    rename: Dict[str, str] = {}
+
+    if kind == "共事":
+        # 搭档**改名留在原地**（认不出的名字 ⇒ 条件不成立），在场人数不变
+        mate = hint.get("cc_mate") or hint.get("mate")
+        rename[mate] = _misname(b_scene, mate, NOBODY)
+    elif kind == "定向":
+        if hint.get("target_name"):
+            rename[target] = _misname(b_scene, target)
+        elif hint.get("target_factions"):
+            for f in b_scene:
+                for o in f["operators"]:
+                    if o.get("name") == target:
+                        o.pop("factions", None)
+                        o.pop("trait", None)
+        elif hint.get("target_mood") is not None:
+            for f in b_scene:
+                for o in f["operators"]:
+                    if o.get("name") == target:
+                        o["mood"] = 24          # 心情门槛不满足
+        else:
+            return None
+    elif kind == "自身阵营":
+        for f in b_scene:                        # 撤掉持有者自己的阵营 → 计数归 0
+            for o in f["operators"]:
+                if o.get("name") == SYNTH:
+                    o.pop("factions", None)
+                    o.pop("trait", None)
+    elif kind == "阵营计数":
+        _strip_faction(b_scene, "阵营甲")         # 只摘阵营，人留在中枢（人数不变）
+        _strip_faction(b_scene, "阵营乙")
+    elif kind == "变量":
+        if not producers:
+            return None
+        names = {p["name"] for p in producers}
+        b_scene = [f for f in b_scene            # 产出者那间房整间去掉 → 变量归 0
+                   if not (f["type"] == "宿舍"
+                           and {o.get("name") for o in f["operators"]} == names)]
+    elif kind == "元修正":
+        # 把"强化者"变成没有技能的人（**仍留在宿舍里**，人数不变）：合成干员的技能是
+        # 显式注入的，改名字摘不掉，必须直接清空 `skill_ids`。
+        for f in b_scene:
+            for o in f["operators"]:
+                if o.get("name") == SYNTH:
+                    o["skill_ids"] = ["__none__"]
+    elif kind == "独自一人":
+        for f in b_scene:                        # 反过来：给她加一名同事 → 不再是"独自"
+            if any(o.get("name") == SYNTH for o in f["operators"]):
+                f["operators"].append({"name": MATE, "elite": 2, "level": 30, "mood": 24})
+                break
+    elif kind == "宿舍他人在场":
+        for f in b_scene:                        # 撤掉同宿舍的其他人
+            if any(o.get("name") == SYNTH for o in f["operators"]):
+                f["operators"] = [o for o in f["operators"] if o.get("name") == SYNTH]
+                break
+    elif kind == "宿舍未满计数":
+        for f in b_scene:                        # 其他人心情全设满 → "未满人数"归 0
+            for o in f["operators"]:
+                if o.get("name") != SYNTH:
+                    o["mood"] = 24
+    else:
+        return None
+    return a_scene, b_scene, rename
+
+
+def check_combos(status_by_key: Dict[str, str]) -> List[ComboCheck]:
+    """**L4-c 组合技能双向对照**：搭档在场 vs 不在（或不匹配），净速率必须真的变。
+
+    只核"条件满足时数值对不对"是不够的——条件漏判（比如"同宿舍有 X 才加成"写成无条件）
+    在满足条件的场景里**数值完全正确**，只有把搭档撤掉才会暴露。
+
+    `status`：`ok` 双向都对 / `var` A 场景就凑不出变量（L2 同样没覆盖那一半）/
+    `bad` 不符。
+    """
+    out: List[ComboCheck] = []
+    for key, skill in sorted(SKILLS.items()):
+        hint = HINTS.get(key, {})
+        combo = _combo_kind(skill, hint)
+        if combo is None:
+            continue
+        if status_by_key.get(key) == "var":
+            out.append(ComboCheck(key, skill.name, combo, "var",
+                                  "A 场景凑不出变量门槛（L2 同样只覆盖了「不生效」那一半）"))
+            continue
+        scenes = _combo_scenes(key, skill, hint)
+        if scenes is None:
+            out.append(ComboCheck(key, skill.name, combo, "bad", "没有可靠的撤掉搭档手法"))
+            continue
+        world_a = build_base_layout({"facilities": scenes[0]})
+        world_b = build_base_layout({"facilities": scenes[1]})
+        rename = scenes[2]
+
+        if combo == "元修正":
+            person = M17_TARGET
+            hit = [(o.name, c) for o in world_a.all_operators()
+                   for c in mood_ledger(world_a, o.name).items
+                   if (skill.name or "") in (c.detail or "")]
+        else:
+            hit = [(n, c) for n, c in _contribution_of(world_a, key)
+                   if c.bucket != Bucket.EVENT]
+            person = (hit[0][1].target or hit[0][0]) if hit else ""
+        if not hit:
+            out.append(ComboCheck(key, skill.name, combo, "bad",
+                                  "A 场景（搭档在场）里这条 clause 没有出现"))
+            continue
+
+        person_b = rename.get(person, person)     # "定向"把目标改名了 → B 里查新名字
+        rate_a = compute_net_rate(world_a, person)
+        rate_b = compute_net_rate(world_b, person_b)
+        moved = rate_a - rate_b                   # 正 = A 的净消耗更大（消耗类）/ 更小（回复类）
+
+        if combo == "元修正":
+            # 「头号陪练」把 +0.3 并入**被强化者**的宿舍群体回复：撤掉强化者后该回复少 0.3
+            if moved != -skill.value:
+                out.append(ComboCheck(key, skill.name, combo, "bad",
+                                      f"撤掉强化者后 {person} 少恢复 {moved}，"
+                                      f"应少 {skill.value}", rate_a, rate_b))
+            else:
+                out.append(ComboCheck(key, skill.name, combo, "ok",
+                                      f"{person}：{rate_a} → {rate_b}（少恢复 {skill.value}）",
+                                      rate_a, rate_b))
+            continue
+
+        if skill.kind == SkillKind.ELIMINATE_SELF:
+            # 消除类**不产生速率**：它只把目标"自身技能"那一组归零。目标本身没有心情技能时，
+            # 净速率根本不会变——所以这里核**结构性**事实：A 有消除标记、B 没有。
+            if _contribution_of(world_b, key):
+                out.append(ComboCheck(key, skill.name, combo, "bad",
+                                      "搭档不匹配时消除标记仍然存在", rate_a, rate_b))
+            else:
+                out.append(ComboCheck(key, skill.name, combo, "ok",
+                                      "A 里有消除标记、不匹配时消失（消除类不改净速率）",
+                                      rate_a, rate_b))
+            continue
+
+        c0 = hit[0][1]
+        # 账本口径：`I = 消耗 − 回复` ⇒ 消耗条目 +value、回复条目 −value
+        effect = c0.value if c0.bucket == Bucket.CONSUME else -c0.value
+        if combo == "宿舍他人在场":
+            # 这一类的"组合条件"**就是同宿舍的人数**，改人数必然连**宿舍基础回复**
+            # （1.5 + 0.1×人数 + 氛围）一起改，差值不可能只剩这条技能 —— 所以只核
+            # 方向与"确实变了"，不硬求等于技能值。
+            if moved == 0 or (moved > 0) != (effect > 0):
+                out.append(ComboCheck(key, skill.name, combo, "bad",
+                                      f"少一个人之后 {person} 的净速率差 {moved}，"
+                                      f"方向应随 {effect}", rate_a, rate_b))
+            else:
+                out.append(ComboCheck(key, skill.name, combo, "ok",
+                                      f"{person}：{rate_a} → {rate_b}（差 {moved}，"
+                                      f"含宿舍基础回复变化）", rate_a, rate_b))
+            continue
+        if moved != effect:
+            out.append(ComboCheck(key, skill.name, combo, "bad",
+                                  f"撤掉搭档后 {person} 的净速率差 {moved}，"
+                                  f"账本上这条是 {effect}", rate_a, rate_b))
+            continue
+        out.append(ComboCheck(key, skill.name, combo, "ok",
+                              f"{person}：{rate_a} → {rate_b}（差 {moved}）", rate_a, rate_b))
+    return out
 
 
 # ============================================================================
@@ -720,7 +1165,10 @@ def check_registry() -> Tuple[List[str], dict]:
 # 报告
 # ============================================================================
 def build_report(clauses: List[ClauseCheck], descs: Optional[List[DescCheck]],
-                 tpl_issues: List[str], upstream_path: Optional[Path]) -> str:
+                 tpl_issues: List[str], upstream_path: Optional[Path],
+                 attach: Optional[List[OperatorCheck]] = None,
+                 settle: Optional[List[OperatorCheck]] = None,
+                 combos: Optional[List[ComboCheck]] = None) -> str:
     by_buff: Dict[str, List[ClauseCheck]] = defaultdict(list)
     for c in clauses:
         by_buff[buff_id_of(base_skill_id(c.key))].append(c)
@@ -732,7 +1180,8 @@ def build_report(clauses: List[ClauseCheck], descs: Optional[List[DescCheck]],
     lines.append("# 技能核对报告（全量）")
     lines.append("")
     lines.append("> **生成物**：由 `scripts/verify_skills.py --report` 自动生成，不要手改。")
-    lines.append("> 三层核对 = 模板级（L1）/ clause 级（L2）/ 上游描述对照（L3）；"
+    lines.append("> 四层核对 = 模板级（L1）/ clause 级（L2）/ 上游描述对照（L3）/ "
+                 "**干员级生效性与组合技能双向对照（L4）**；"
                  "口径与模板字典见 `documents/05-技能分类大纲.md`。")
     lines.append("")
     lines.append("## 一、总览")
@@ -763,6 +1212,19 @@ def build_report(clauses: List[ClauseCheck], descs: Optional[List[DescCheck]],
                      f"⚪ {ds.get('skip', 0)} 条无数字可对（消除/事件类）/ "
                      f"⚪ {ds.get('known', 0)} 条已登记差异 / "
                      f"❌ {ds.get('bad', 0)} 条不符")
+    if attach is not None and settle is not None:
+        lines.append(f"- L4 真名挂载：✅ {sum(1 for c in attach if c.ok)}/{len(attach)} 名干员的"
+                     f"技能槽与技能库逐条一致 / ❌ {sum(1 for c in attach if not c.ok)} 名不符")
+        lines.append(f"- L4 真名结算：✅ {sum(1 for c in settle if c.ok)}/{len(settle)} 名干员"
+                     f"在基建里真的按自己的技能结算 / ❌ {sum(1 for c in settle if not c.ok)} 名不符")
+    if combos is not None:
+        cstat = Counter(c.status for c in combos)
+        kinds = Counter(c.combo for c in combos)
+        lines.append(f"- L4 组合技能双向对照：✅ {cstat.get('ok', 0)} 条（撤掉搭档/阵营/变量后"
+                     f"确实不再生效）/ ⚪ {cstat.get('var', 0)} 条变量凑不出 / "
+                     f"❌ {cstat.get('bad', 0)} 条不符")
+        lines.append("  - 覆盖类型：" + "、".join(f"{k} {v} 条"
+                                                for k, v in sorted(kinds.items())))
     lines.append("")
 
     if tpl_issues:
@@ -833,7 +1295,50 @@ def build_report(clauses: List[ClauseCheck], descs: Optional[List[DescCheck]],
                      f"| {row['template_ids']} | {row['modeled']} | {len(cs)} | {cell} |")
     lines.append("")
 
-    lines.append("## 五、已知差异与「待拍板」清单")
+    lines.append("## 五、干员级生效性与组合技能（L4）")
+    lines.append("")
+    lines.append("L2 用的是**合成干员 + 手工注入单条 skill_id**（只证明「这条技能定义对不对」），"
+                 "L4 补的是另外两件事：")
+    lines.append("")
+    lines.append("1. **真名路径**：178 名干员逐个走「名字 → `DEFAULT_OPERATORS` → 技能槽 → 进流水账」，"
+                 "确认**这个人**在基建里真的按自己的技能结算（而不是名字没认出来 / 技能没挂上）；")
+    lines.append("2. **组合技能双向对照**：把搭档 / 阵营成员 / 变量产出者**撤掉或变成不匹配**，"
+                 "数值必须真的变回去——条件漏判（写成无条件）在「满足条件」的场景里数值完全正确，"
+                 "只有反向对照才抓得住。")
+    lines.append("")
+    if attach is not None:
+        bad_a = [c for c in attach if not c.ok]
+        lines.append(f"**L4-a 真名挂载**：{len(attach)} 名干员，"
+                     + ("✅ 全部与技能库逐条一致。" if not bad_a
+                        else f"❌ {len(bad_a)} 名不符："))
+        for c in bad_a:
+            lines.append(f"- ❌ **{c.name}**：{c.detail}")
+        lines.append("")
+    if settle is not None:
+        bad_s = [c for c in settle if not c.ok]
+        lines.append(f"**L4-b 真名结算**：{len(settle)} 名干员，"
+                     + ("✅ 全部在自己的场景里按技能结算。" if not bad_s
+                        else f"❌ {len(bad_s)} 名不符："))
+        for c in bad_s:
+            lines.append(f"- ❌ **{c.name}**：{c.detail}")
+        lines.append("")
+    if combos is not None:
+        cstat = Counter(c.status for c in combos)
+        lines.append(f"**L4-c 组合技能双向对照**：{len(combos)} 条"
+                     f"（✅ {cstat.get('ok', 0)} / ⚪ {cstat.get('var', 0)} / ❌ {cstat.get('bad', 0)}）。"
+                     f"对照手法：把搭档**改名或摘阵营但留在原房间**（保持在场人数不变——"
+                     f"控制中枢有「中枢 N 人，每人 −0.05」的全局减免，搬走人会污染差值）；"
+                     f"「独自一人」「宿舍他人在场」这两类条件本身就是人数，才真去增删人。")
+        lines.append("")
+        lines.append("| clause | 技能 | 组合类型 | A 净速率 | B 净速率 | 差 | 状态 | 说明 |")
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for c in sorted(combos, key=lambda x: (x.combo, x.key)):
+            mark = {"ok": "✅", "var": "⚪"}.get(c.status, "❌")
+            lines.append(f"| `{c.key}` | {c.name} | {c.combo} | {c.rate_with} | {c.rate_without} "
+                         f"| {c.delta if c.delta is not None else '—'} "
+                         f"| {mark} {c.status} | {c.detail} |")
+        lines.append("")
+    lines.append("## 六、已知差异与「待拍板」清单")
     lines.append("")
     if L3_KNOWN_DIFFS:
         for key, why in L3_KNOWN_DIFFS.items():
@@ -841,12 +1346,12 @@ def build_report(clauses: List[ClauseCheck], descs: Optional[List[DescCheck]],
     else:
         lines.append("（无）")
     lines.append("")
-    lines.append("## 六、怎么复现")
+    lines.append("## 七、怎么复现")
     lines.append("")
     lines.append("```bash")
     lines.append(".venv/Scripts/python.exe scripts/verify_skills.py --check    # 只看结论")
     lines.append(".venv/Scripts/python.exe scripts/verify_skills.py --report   # 重写本报告")
-    lines.append(".venv/Scripts/python.exe -m unittest tests.test_skill_coverage -v   # 三层断言")
+    lines.append(".venv/Scripts/python.exe -m unittest tests.test_skill_coverage -v   # 四层断言")
     lines.append("```")
     lines.append("")
     if upstream_path:
@@ -859,10 +1364,17 @@ def build_report(clauses: List[ClauseCheck], descs: Optional[List[DescCheck]],
 # 入口
 # ============================================================================
 def run_check(upstream_path: Optional[Path], verbose: bool = True) -> dict:
-    """跑三层核对，返回结构化结果。"""
+    """跑四层核对，返回结构化结果。
+
+    L1 模板自洽 / L2 clause 级 / L3 上游描述对照 / **L4 干员级生效性与组合技能双向对照**。
+    """
     tpl_issues = check_templates()
     reg_issues, reg_stats = check_registry()
     clauses = check_clauses()
+    status_by_key = {c.key: c.status for c in clauses}
+    attach = check_operator_attachment()
+    settle = check_operator_settlement(status_by_key)
+    combos = check_combos(status_by_key)
     descs = None
     if upstream_path is not None:
         descs = check_descriptions(load_upstream(upstream_path))
@@ -881,6 +1393,22 @@ def run_check(upstream_path: Optional[Path], verbose: bool = True) -> dict:
         for c in clauses:
             if not c.ok:
                 print(f"     ❌ {c.key}（{c.skill.name}）：{c.detail}")
+        bad_attach = [c for c in attach if not c.ok]
+        bad_settle = [c for c in settle if not c.ok]
+        print(f"[L4] 真名挂载 {len(attach)} 名干员："
+              f"{'全部通过' if not bad_attach else str(len(bad_attach)) + ' 名不符'}")
+        for c in bad_attach:
+            print(f"     ❌ {c.name}：{c.detail}")
+        print(f"[L4] 真名结算 {len(settle)} 名干员："
+              f"{'全部通过' if not bad_settle else str(len(bad_settle)) + ' 名不符'}")
+        for c in bad_settle:
+            print(f"     ❌ {c.name}：{c.detail}")
+        cs = Counter(c.status for c in combos)
+        print(f"[L4] 组合技能双向对照 {len(combos)} 条："
+              + "，".join(f"{k}={v}" for k, v in sorted(cs.items())))
+        for c in combos:
+            if not c.ok:
+                print(f"     ❌ {c.key}（{c.name} / {c.combo}）：{c.detail}")
         if descs is None:
             print("[L3] 未运行（没找到上游仓库）")
         else:
@@ -890,11 +1418,13 @@ def run_check(upstream_path: Optional[Path], verbose: bool = True) -> dict:
                 if not d.ok:
                     print(f"     ❌ {d.key}（{d.skill.name}）：{d.detail}")
     return {"tpl_issues": tpl_issues, "reg_issues": reg_issues, "reg_stats": reg_stats,
-            "clauses": clauses, "descs": descs}
+            "clauses": clauses, "descs": descs,
+            "attach": attach, "settle": settle, "combos": combos}
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="技能全量核对（模板级 / clause 级 / 描述对照）")
+    ap = argparse.ArgumentParser(
+        description="技能全量核对（模板级 / clause 级 / 描述对照 / 干员级与组合技能）")
     ap.add_argument("--agd", help="上游仓库路径（含 zh_CN/gamedata/excel/building_data.json）")
     ap.add_argument("--report", action="store_true", help=f"写报告到 {REPORT_MD}")
     ap.add_argument("--check", action="store_true", help="只核对（有硬伤时退出码 1）")
@@ -904,11 +1434,15 @@ def main(argv=None) -> int:
     res = run_check(upstream)
     if args.report:
         REPORT_MD.write_text(
-            build_report(res["clauses"], res["descs"], res["tpl_issues"], upstream),
+            build_report(res["clauses"], res["descs"], res["tpl_issues"], upstream,
+                         res["attach"], res["settle"], res["combos"]),
             encoding="utf-8")
         print(f"\n报告已写入 {REPORT_MD}")
     bad = res["tpl_issues"] or res["reg_issues"] or \
         [c for c in res["clauses"] if not c.ok] or \
+        [c for c in res["attach"] if not c.ok] or \
+        [c for c in res["settle"] if not c.ok] or \
+        [c for c in res["combos"] if not c.ok] or \
         [d for d in (res["descs"] or []) if not d.ok]
     return 1 if bad else 0
 
