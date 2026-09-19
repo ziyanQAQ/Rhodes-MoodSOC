@@ -494,19 +494,34 @@ class Session:
             self.recompute()
 
     def _remove_from_slots(self, names: Sequence[str]) -> int:
-        """把这些人从**所有班次**的进驻位上摘掉（返回动过几个班次）。"""
+        """把这些人从**所有班次**的进驻位上摘掉（返回动过几个班次）。
+
+        ⚠️ 布局里的 `operators` 有两种写法：**名字字符串**（`["泡泡", "火神"]`）与
+        **带心情的对象**（`[{"name": "泡泡", "mood": 10}]`，场景 JSON 允许）——
+        两种都要认。曾经直接 `n not in wanted`，遇到对象写法会 `TypeError: unhashable type: 'dict'`
+        （2026-09 由"面板行序"用例暴露出来）。
+        """
         if self.schedule is None or not names:
             return 0
         wanted = set(names)
+
+        def _op_name(item) -> str:
+            if isinstance(item, str):
+                return item
+            if isinstance(item, dict):
+                return str(item.get("name") or "").strip()
+            return str(item)
+
         touched = 0
         for i in range(len(self.schedule.shifts)):
             facs = self.facilities_of(i)
             hit = False
             for f in facs:
-                ops = [n for n in f.get("operators", []) if n not in wanted]
-                if len(ops) != len(f.get("operators", [])):
+                ops = f.get("operators") or []
+                kept = [n for n in ops if _op_name(n) not in wanted]
+                if len(kept) != len(ops):
                     hit = True
-                    f["operators"] = ops
+                    f["operators"] = kept
             if hit:
                 self.schedule = self.schedule.replaced_shift(i, facs)
                 touched += 1
@@ -904,14 +919,18 @@ class Session:
                         where = "不在基建"
                     else:
                         where = "未排班"
-                    cands.append((mood, name, where))
+                    # 排序维 1：**不在任何设施里**（＝"不在工作也不在宿舍"）的排前面 ——
+                    # 与引擎的处理顺序同一口径（`mood_soc/rules._idle_candidates` 的排序键）。
+                    cands.append((0 if fac is None else 1, mood, name, where))
                 if not cands:
                     continue
                 person_targets.sort()                    # 心情高的排前面（最好换的先出现）
                 targets += [label for _k, label, _n in person_targets]
-                cands.sort(key=lambda row: (row[0], row[1]))
+                # 与引擎同一口径：① 先"不在工作也不在宿舍" ② 心情从低到高 ③ 名字。
+                # ⚠️ 候选是**依次**处理的，所以表里的行序＝引擎的安排顺序（用户口径，2026-09）。
+                cands.sort(key=lambda row: (row[0], row[1], row[2]))
                 rows = []
-                for mood, name, where in cands:
+                for _rank, mood, name, where in cands:
                     use, target = entries.get((k + 1, i + 1, name)) \
                         or self.idle_globals.get(name) or (True, None)
                     # 可选目标里**去掉候选人自己**（标签带心情，按解析出的名字比）

@@ -375,6 +375,28 @@ class Test闲置入宿优先级(unittest.TestCase):
         self.assertIn("优先级③", detail)
         self.assertIn("德克萨斯", detail)
 
+    def test_面板行序与引擎处理顺序一致(self):
+        """「闲置入宿」面板里每个 (周期, 班次) 分组内的**行序＝引擎的安排顺序**（用户口径）：
+
+        ① 先"不在工作也不在宿舍"的人（本班未排班 /「不在基建」名单），② 再挂件位（加工站/训练室）
+        入驻者；每组内部按**心情从低到高**。候选是**依次**处理的，所以行序不能只是"按心情排"——
+        否则表里排在前面的未必是引擎先安排的那位。
+        """
+        s = Session()
+        s.load_layout({"facilities": [
+            {"type": "宿舍", "level": 5, "slots": 1,
+             "operators": [{"name": "丙", "mood": "24"}]},
+            {"type": "加工站", "level": 1, "operators": [{"name": "甲", "mood": "5"}]},
+        ]}, hours=24)
+        s.set_initial_moods({"乙": 10, "丁": 3})
+        s.set_detached(["乙", "丁"], recompute=True)      # 名单里的人＝"不在工作也不在宿舍"
+        s.idle_to_dorm = True
+        s.recompute()
+        rows = [r for _t, _sc, rs in s.idle_groups() for r in rs]
+        self.assertEqual([r[0] for r in rows], ["丁", "乙", "甲"],
+                         "先未排班/不在基建（心情低→高），再挂件位入驻者")
+        self.assertEqual([r[2] for r in rows], ["不在基建", "不在基建", "加工站"])
+
     def test_挂件不被自动换出(self):
         """**挂件**（用户口径："有阵营效果，或者她在不在宿舍会影响其他干员的技能"）
         自动换人一律不碰 —— ②③④ 都是。

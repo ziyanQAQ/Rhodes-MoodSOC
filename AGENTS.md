@@ -109,7 +109,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 461 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 462 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
@@ -166,6 +166,10 @@ documents/
     **候选顺序（2026-09 用户口径）**：**先"不在工作也不在宿舍"的人**（本班未排班 /「不在基建」名单），
     **再**挂件位（加工站/训练室）入驻者，**每组内部按心情从低到高** —— 候选是**依次**处理的，
     这个顺序决定"谁先拿到空位 / 谁先挑换人对象"（回归 `test_候选顺序_不在工作也不在宿舍的排前面`）；
+    ⚠️ **面板里那张逐次表的行序必须与它一致**（`store/session.idle_groups` 用同一个排序键，
+    回归 `test_面板行序与引擎处理顺序一致`）——不一致会让"表里排前面的"≠"引擎先安排的"；
+    ⚠️ 顺带修掉 `Session._remove_from_slots` 的 `TypeError`：布局的 `operators` 既可能是名字字符串、
+    也可能是 `{"name": …}` 对象，「加进不在基建名单」两种都要认（对象写法以前直接崩）；
     界面上「换谁」列的是**宿舍里的所有人**（标签带心情如 `巫恋 23.4`，由 `store.session.idle_target_name` 剥标签）。顺序上**先换心情、再判闲置入宿**，
     判定用**实时**心情，候选还要过 `world.facility_of` 校验（跑过一轮的副本里会残留已离开宿舍的陈旧对象）。
     常量 `rules.DORM_PREFERRED_RANGE` / `DORM_PREFERRED_SLOTS` / `TIER3_EXTRA_NAMES`，门 `rules._factionless` /
