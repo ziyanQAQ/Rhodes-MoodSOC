@@ -428,6 +428,61 @@ class Test闲置入宿优先级(unittest.TestCase):
         self.assertGreater(q(s.mood_at("板凳甲", D(1))), D("10"))
         self.assertEqual(q(s.mood_at("阿米娅", D(1))), D("24"))  # 她留在宿舍（已是满心情）
 
+    def test_面板逐行候选按轮到她的那一刻算(self):
+        """「闲置入宿」逐次表里每一行的「换谁」＝**轮到她的那一刻**宿舍里的人（引擎那份世界）。
+
+        回归用户报的现象："面板里列着 清流、那一刻宿舍里并没有 清流"。根因：列表原先取的是
+        **排班快照**，而候选是**依次**处理的 —— 排前面的人会把宿舍里的人换出去，
+        轮到后面那位时，那人早就不在宿舍了（名单是"被换出"的对象，不是"当前住户"）。
+
+        本例：宿舍满员（塞雷娅 24 有阵营 ⇒ ③ 挑不到她；路人乙 12 是白板）；
+        候选按心情升序 丁(5) → 戊(8)。
+          ① 丁 走 ④ 兜底换走 心情最高的白板 **路人乙**；
+          ② 轮到 戊 时，路人乙 已不在宿舍 ⇒ 她的「换谁」里**不该再有路人乙**，
+             而该出现"刚被安排进去的 丁"。
+        """
+        from mood_soc.rules import _factionless
+        from store.session import idle_target_name
+
+        s = Session()
+        s.load_layout({"facilities": [
+            {"type": "宿舍", "level": 5, "slots": 2,
+             "operators": [{"name": "塞雷娅", "mood": "24"},
+                           {"name": "路人乙", "mood": "12"}]},
+        ]}, hours=24)
+        s.set_initial_moods({"丁": 5, "戊": 8})
+        s.set_detached(["丁", "戊"], recompute=True)
+        s.idle_to_dorm = True
+        s.recompute()
+        底本 = s.schedule.shifts[0].world                      # 前提：钉住这道闸的走向
+        self.assertFalse(_factionless(底本.get_operator("塞雷娅")),
+                         "前提：塞雷娅有阵营 ⇒ ③（只换白板）挑不到她")
+        self.assertTrue(_factionless(底本.get_operator("路人乙")),
+                        "前提：路人乙是白板 ⇒ ④ 兜底会换走她")
+
+        title, scope, rows = s.idle_groups()[0]
+        self.assertEqual(scope, (1, 1))
+        self.assertEqual([r[0] for r in rows], ["丁", "戊"], "行序＝引擎处理顺序（心情低→高）")
+        opts = {r[0]: [idle_target_name(o) for o in r[5] if not o.startswith("宿舍")]
+                for r in rows}
+        self.assertIn("路人乙", opts["丁"], "丁 那一刻路人乙还在宿舍（她正是被换出的那位）")
+        self.assertNotIn("路人乙", opts["戊"], "轮到戊时路人乙已被换出宿舍 ⇒ 不该再出现在候选里")
+        self.assertIn("丁", opts["戊"], "戊 那一刻看到的是「已经被安排进宿舍的丁」")
+        # 不变式：每一行的候选 == 引擎**轮到这一位**时那份宿舍态里的住户（去掉自己）
+        for name, mood, _where, _use, _target, row_opts in rows:
+            state = s.traj.idle_state_at(0, name)
+            self.assertIsNotNone(state, f"{name} 应当有引擎逐位快照")
+            want = {who for names in state["dorms"].values() for who in names if who != name}
+            got = {idle_target_name(o) for o in row_opts if not o.startswith("宿舍")}
+            self.assertEqual(got, want, f"{name} 的候选必须与那一刻的宿舍住户一致")
+            self.assertEqual([o for o in row_opts if o.startswith("宿舍")],
+                             [f"宿舍{no:02d}" for no in state["free"]])
+        # 引擎侧同一件事：丁 真的换走了路人乙（面板说的和引擎做的是一回事）
+        detail = " / ".join(m.label for m in s.traj.marks if m.kind == "idle")
+        self.assertIn("丁", detail)
+        self.assertIn("路人乙", detail)
+        self.assertIn("优先级④", detail)
+
     def test_轨迹带着每段实际用的布局(self):
         """`Trajectory.world_at(t)`：界面显示"她这一刻在哪"必须读它（引擎那份 = 模拟副本）。
 

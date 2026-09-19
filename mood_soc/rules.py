@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .battery import INF, ZERO, ampere_hour_integration, to_decimal
 from .config import (
@@ -965,6 +965,24 @@ def _dorm_numbered(world: BaseLayout) -> List[tuple]:
     return list(enumerate(dorms, start=1))
 
 
+def dorm_state(world: BaseLayout) -> dict:
+    """**这一刻的宿舍态**（只收名字）：`{"dorms": {宿舍序号: [名字…]}, "free": [还空着的序号…]}`。
+
+    谁在用：`apply_idle_to_dorm` 的 `trace`（**逐位候选**各留一份）与界面「闲置入宿」逐次表。
+    面板里每一行的「换谁 / 宿舍NN」必须按**轮到她的那一刻**算 —— 候选是**依次**处理的，
+    排前面的人会把宿舍里的人换出去：用户报过"面板里列着清流、那一刻宿舍里并没有清流"
+    （那是拿**排班快照**当引擎世界使的结果）。
+    序号口径与 `_dorm_numbered` 相同（可用宿舍在布局里的出现顺序，1 基）。
+    """
+    dorms: dict = {}
+    free: List[int] = []
+    for no, dorm in _dorm_numbered(world):
+        dorms[no] = [o.name for o in dorm.operators]
+        if len(dorm.operators) < dorm.capacity:
+            free.append(no)
+    return {"dorms": dorms, "free": free}
+
+
 def _dorm_with_free_slot(world: BaseLayout):
     """**第 ① 级**：还有未占满位次的宿舍（"优先 4 最后 1"）；都没有就返回 `None`。
 
@@ -1190,7 +1208,7 @@ def _named_mate(world: BaseLayout, name: str, exclude: Optional[set] = None):
 
 
 def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
-                       swap_with=None, scope=None) -> List[Contribution]:
+                       swap_with=None, scope=None, trace: Optional[dict] = None) -> List[Contribution]:
     """**把"未满心情的闲置干员"安排进宿舍**（班次开始时的布局事件；就地修改 `world`）。
 
     与 `apply_entry_events` 同一层：它改的是**布局**（谁在哪个房间），不是每小时速率，
@@ -1251,6 +1269,12 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
         scope    这一刻是"第几周期的第几班" → `(周期序号, 班次序号)`（1 基）。
                  逐人设置按它取**最具体**的那一条（周期×班次 > 周期/班次 > 全局）；
                  `None` = 不限定（只认没写作用域的设置）
+        trace    可选的**出参**：逐位候选记一份"**轮到她的那一刻**"的宿舍态
+                 （`dorm_state`，只收名字）→ `{候选名: {"dorms": …, "free": …}}`。
+                 界面「闲置入宿」逐次表按它出每行的「换谁 / 宿舍NN」—— 候选是**依次**处理的，
+                 前面的人会把宿舍里的人换出去，只有逐位那份才对得上引擎真正会接受谁。
+                 ⚠️ **先登记、再判"参与"**：勾掉参与（`enabled=False`）的那位也要有那一刻的世界，
+                 否则面板上她的那一行会退回"班末"那份世界。
 
     ⚠️ **会就地修改 `world`**（有人进宿舍、有人被换出）。返回事件流水账（`Bucket.EVENT`）。
     """
@@ -1272,6 +1296,10 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
     pendant_memo: dict = {}
     cycle_no, shift_no = (scope if scope else (None, None))
     for op, name, mood, where in _idle_candidates(world, idle=idle, only=only):
+        if trace is not None:
+            # 逐位候选各留一份"此刻的宿舍态"：界面每一行的「换谁 / 宿舍NN」按它算
+            # （**在判"参与"之前**登记，勾掉参与的人也要有那一刻的世界）。
+            trace[name] = dorm_state(world)
         # 界面"逐人/逐次设置"里的参与 / 指定对象（按 (周期, 班次) 取最具体的那一条）
         entry = cfg.entry_for(name, cycle_no, shift_no) if cfg is not None else None
         if entry is not None and not entry.enabled:

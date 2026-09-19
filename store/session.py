@@ -36,7 +36,7 @@ from data.skills_data import DEFAULT_OPERATORS
 from mood_soc.battery import to_decimal
 from mood_soc.config import MOOD_MAX, FacilityType
 from mood_soc.models import IdleToDormEntry, normalize_entry_when
-from mood_soc.rules import mood_skill_summary
+from mood_soc.rules import dorm_state, mood_skill_summary
 
 from .layout import build_base_layout
 from .schedule import (MoodSetEvent, LoadedSchedule, Schedule, Shift, Trajectory,
@@ -879,6 +879,15 @@ class Session:
         `行 = (干员, 心情显示值, 位置, 参与, 目标, [可选目标…])`。
         只列出**真的有候选**的那几次（心情跨班跨周期连续 ⇒ 每次谁没满都不一样）。
         `cycles` 同样夹到 `1 ~ MAX_CYCLES`（与 `set_cycles` 一个口径）。
+
+        ⚠️ **「谁在宿舍 / 哪间有空位」按引擎那一刻的那份世界算**（AGENTS 坑 20）：
+        每一行取 `traj.idle_state_at(t0, 干员)`（＝引擎**轮到这一位**时的宿舍态），
+        取不到（没开闲置入宿 / 她不是引擎候选）就退回整份段世界 `world_at(t0)`，
+        再退回排班快照。**不能**直接拿 `shift.world` 快照当"她那一刻的世界" ——
+        候选是依次处理的，排前面的人会把宿舍里的人换出去，而快照里那位看着还在宿舍
+        （用户报过"面板里列着清流、那一刻宿舍里并没有清流"）。
+        ⚠️ 候选**行**仍按"本班班初的位置"（＝排班快照的位置）判定，与引擎的候选来源同一口径：
+        引擎的候选来自班初"没在宿舍、也没在上班"的人；班中被换出宿舍的人不算候选。
         """
         cycles = min(MAX_CYCLES, max(1, int(cycles if cycles is not None else self.cycles)))
         entries = self.idle_entries if entries is None else entries
@@ -890,25 +899,18 @@ class Session:
         for k in range(max(1, cycles)):
             for i, shift in enumerate(self.schedule.shifts):
                 t0 = self.schedule.cycle_hours * k + self.schedule.starts[i]
-                cands, targets = [], []
-                person_targets: List[tuple] = []      # [(排序键, 标签, 名字)]：在宿舍的人
-                shift_dorms = [f for f in shift.world.facilities
-                               if f.ftype == FacilityType.DORMITORY]
-                for di, dorm in enumerate(shift_dorms, 1):
-                    if len(dorm.operators) < dorm.capacity:
-                        targets.append(f"宿舍{di:02d}")
+                mood_of = traj.moods_at(t0)
+                # 兜底那份宿舍态：整份段世界（引擎那份）→ 排班快照
+                base_state = dorm_state(traj.world_at(t0) or shift.world)
+                cands = []                       # [(排序维1, 心情, 名字, 位置)]
                 for name in traj.names:
-                    mood = traj.mood_at(name, t0)
+                    mood = mood_of[name]
                     fac = shift.world.facility_of(name)
                     if fac is not None and fac.ftype == FacilityType.DORMITORY:
-                        # 在宿舍 → 可作为"被换出"的对象。**心情没满的也列进来**：
-                        # 第④级的"点名换人"是**主动换**（用户口径），不要求对方满 24，
-                        # 所以选项里必须看得见他的心情（标签形如 `巫恋 23.4`）。
-                        person_targets.append((-mood, f"{name} {mood:.1f}", name))
-                        continue
+                        continue                 # 班初就在宿舍（引擎也留着她）
                     if fac is not None and fac.ftype not in (FacilityType.WORKSHOP,
                                                              FacilityType.TRAINING):
-                        continue
+                        continue                 # 正在上班，不动
                     if mood >= MOOD_MAX:
                         continue
                     # `where`：本班未排班的人分两种 —— 「不在基建」名单点名的、
@@ -924,17 +926,25 @@ class Session:
                     cands.append((0 if fac is None else 1, mood, name, where))
                 if not cands:
                     continue
-                person_targets.sort()                    # 心情高的排前面（最好换的先出现）
-                targets += [label for _k, label, _n in person_targets]
                 # 与引擎同一口径：① 先"不在工作也不在宿舍" ② 心情从低到高 ③ 名字。
                 # ⚠️ 候选是**依次**处理的，所以表里的行序＝引擎的安排顺序（用户口径，2026-09）。
                 cands.sort(key=lambda row: (row[0], row[1], row[2]))
                 rows = []
                 for _rank, mood, name, where in cands:
+                    # 这一行的可选目标＝**轮到她的那一刻**宿舍里的人和空位（引擎那份世界）
+                    state = traj.idle_state_at(t0, name) or base_state
+                    opts = [f"宿舍{no:02d}" for no in state["free"]]
+                    people = []
+                    for no in sorted(state["dorms"]):
+                        for who in state["dorms"][no]:
+                            if who == name:
+                                continue         # 候选人不列自己
+                            m = mood_of[who] if who in mood_of else traj.mood_at(who, t0)
+                            people.append((-m, f"{who} {m:.1f}", who))
+                    people.sort()                # 心情高的排前面（最好换的先出现）
+                    opts += [label for _k, label, _n in people]
                     use, target = entries.get((k + 1, i + 1, name)) \
                         or self.idle_globals.get(name) or (True, None)
-                    # 可选目标里**去掉候选人自己**（标签带心情，按解析出的名字比）
-                    opts = [t for t in targets if idle_target_name(t) != name]
                     rows.append((name, mood, where, use, target, opts))
                 groups.append((f"第 {k + 1} 周期 · 第 {i + 1} 班", (k + 1, i + 1), rows))
         return groups

@@ -547,6 +547,10 @@ class Trajectory:
     （入驻事件的位置互换、闲置入宿的换人都只改它，**不改排班快照**）。
     界面要显示"引擎这一刻怎么排的"就读它（`world_at`），别去读 `schedule.shifts[i].world`
     —— 那是"你导入的排班"，两者在换过人之后会不一样。
+
+    `idle_states`：**闲置入宿逐位候选**的那一份宿舍态（`{段起点: {候选名: dorm_state}}`），
+    供界面「闲置入宿」逐次表逐行取用（`idle_state_at`）—— 候选是依次处理的，排在后面的人
+    看到的宿舍已经不是班初那份了（前面的人会被换出去）。
     """
     names: List[str]
     times: List[Decimal]
@@ -555,11 +559,22 @@ class Trajectory:
     cycles: int = 1
     marks: List[Mark] = field(default_factory=list)
     segments: List[Tuple[Decimal, Decimal, "BaseLayout"]] = field(default_factory=list)
+    idle_states: Dict[Decimal, Dict[str, dict]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ 查询
     @property
     def total_hours(self) -> Decimal:
         return self.times[-1]
+
+    def _segment(self, t) -> Optional[Tuple[Decimal, Decimal, "BaseLayout"]]:
+        """`t` 落在哪一段（`None` = 这个轨迹没记段信息）；边界取**右侧**。"""
+        if not self.segments:
+            return None
+        t = to_decimal(t)
+        i = bisect.bisect_right([s[0] for s in self.segments], t) - 1
+        if i < 0:
+            i = 0
+        return self.segments[i]
 
     def world_at(self, t) -> Optional["BaseLayout"]:
         """时刻 `t` 生效的那份**模拟布局副本**（`None` = 这个轨迹没记段信息）。
@@ -567,13 +582,21 @@ class Trajectory:
         ⚠️ 落在班次边界上取**右侧**（那一刻开始生效的班次），与 `mood_at` / `rate_at`
         的"同刻取跳变后"一致：`t = 12` 给出"12:00 起上班的那一班"的布局。
         """
-        if not self.segments:
+        seg = self._segment(t)
+        return None if seg is None else seg[2]
+
+    def idle_state_at(self, t, name: str) -> Optional[dict]:
+        """**轮到 `name` 的那一刻**引擎的宿舍态（`None` = 没开闲置入宿 / 她不是候选）。
+
+        界面「闲置入宿」逐次表用它算每一行的「换谁」与「宿舍NN」：候选是**依次**处理的，
+        必须按**她自己那一刻**的世界出选项 —— 否则会列出"这一刻已经被前面的人换出宿舍"
+        的对象（用户报过"面板里列着清流、那一刻宿舍里并没有清流"）。
+        取不到时调用方退回 `world_at(t)`（整份段世界）那份。
+        """
+        seg = self._segment(t)
+        if seg is None:
             return None
-        t = to_decimal(t)
-        i = bisect.bisect_right([s[0] for s in self.segments], t) - 1
-        if i < 0:
-            i = 0
-        return self.segments[i][2]
+        return self.idle_states.get(seg[0], {}).get(name)
 
     def mood_at(self, name: str, t) -> Decimal:
         """时刻 t 的心情（节点之间线性插值；超界取端点值）。
@@ -996,6 +1019,8 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
 
     # 每段**实际用的那份布局副本**（界面要显示"引擎这一刻怎么排的"，见 `Trajectory.world_at`）
     seg_worlds: List[BaseLayout] = []
+    # 每段**逐位候选**的宿舍态（界面「闲置入宿」逐次表逐行取用，见 `Trajectory.idle_state_at`）
+    idle_states: Dict[Decimal, Dict[str, dict]] = {}
 
     for seg_i, (t0, seg_end, idx) in enumerate(segments):
         # ⚠️ **每段（含每个周期）都从"未动过的计划副本"重建**：布局改动只有两处 ——
@@ -1044,8 +1069,13 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             # 这一刻是"第几周期的第几班"：逐人设置按它取最具体的那一条
             # （心情跨班跨周期连续 ⇒ 每次的候选与可交换对象都不一样）
             scope = (seg_i // len(schedule.shifts) + 1, idx + 1)
-            for ev in apply_idle_to_dorm(world, enabled=True, idle=idle_moods, scope=scope):
+            # 逐位候选各留一份"轮到她的那一刻"的宿舍态 → 界面逐次表逐行取用
+            # （面板不能拿班末那份 `world_at` 或排班快照当"她那一刻的世界"）。
+            per_cand: Dict[str, dict] = {}
+            for ev in apply_idle_to_dorm(world, enabled=True, idle=idle_moods, scope=scope,
+                                         trace=per_cand):
                 marks.append(Mark(t0, "idle", ev.detail))
+            idle_states[t0] = per_cand
         # 本段**实际生效**的那份布局 → `Trajectory.world_at(t)`（界面看板 / API `layout_at` 都读它）。
         # ⚠️ 闲置入宿 / 位置互换会**就地改这份副本**（`world` 是"本段这份"，每段重建，不再跨周期复用），
         #    而**段内**还可能再改它（`restore_back=False` 的「等她回满再换」）：快照要留在**段首**，
@@ -1133,7 +1163,8 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     # 红脸区间记成标记（画图时画阴影）
     traj = Trajectory(names=names, times=times, moods=series, schedule=schedule,
                       cycles=cycles, marks=marks,
-                      segments=[(a, b, w) for (a, b, _i), w in zip(segments, seg_worlds)])
+                      segments=[(a, b, w) for (a, b, _i), w in zip(segments, seg_worlds)],
+                      idle_states=idle_states)
     for n in names:
         for a, b in traj.red_face_spans(n):
             marks.append(Mark(a, "redface", n))

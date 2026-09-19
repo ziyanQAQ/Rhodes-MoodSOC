@@ -109,7 +109,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 462 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 463 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
@@ -168,6 +168,11 @@ documents/
     这个顺序决定"谁先拿到空位 / 谁先挑换人对象"（回归 `test_候选顺序_不在工作也不在宿舍的排前面`）；
     ⚠️ **面板里那张逐次表的行序必须与它一致**（`store/session.idle_groups` 用同一个排序键，
     回归 `test_面板行序与引擎处理顺序一致`）——不一致会让"表里排前面的"≠"引擎先安排的"；
+    ⚠️ 面板每行的「换谁 / 宿舍NN」按 **`Trajectory.idle_state_at(t0, 她)`** 算——引擎
+    (`apply_idle_to_dorm(trace=…)` + `rules.dorm_state`) **逐位候选**各留一份"轮到她的那一刻"的
+    宿舍住户 + 空位；取不到才退回整份段世界 `world_at`、再退回排班快照。候选是依次处理的，
+    拿班末世界会把"宿舍NN 空位"整列打没、拿排班快照会列出**已被前面的人换出宿舍**的人
+    （用户报过"面板里列着 清流、宿舍内并没有 清流"，回归 `test_面板逐行候选按轮到她的那一刻算`）；
     ⚠️ 顺带修掉 `Session._remove_from_slots` 的 `TypeError`：布局的 `operators` 既可能是名字字符串、
     也可能是 `{"name": …}` 对象，「加进不在基建名单」两种都要认（对象写法以前直接崩）；
     界面上「换谁」列的是**宿舍里的所有人**（标签带心情如 `巫恋 23.4`，由 `store.session.idle_target_name` 剥标签）。顺序上**先换心情、再判闲置入宿**，
