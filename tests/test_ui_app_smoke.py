@@ -127,6 +127,56 @@ class Test界面冒烟(unittest.TestCase):
         """按干员名取当前看板上的位置控件（班次切换会重建控件，故不能缓存引用）。"""
         return next(s for s in self.app.board.slots if s.operator == name)
 
+    def test_反复重建班次条不残留(self):
+        """底部「班次」行反复重建**不能攒控件**（踩过：只销毁按钮、「班次」标签每建一次多一个，
+        底部显示成「班次 班次 班次 1. …」）。
+
+        同时钉住两条文案口径：
+          - 按钮时段里的**「（第N天）」只在起止不在同一天时标在结束那侧**；
+          - 曲线班次带标题**不重复时长**、且永远写**真实时长**（名字里那个可能是过期的）。
+        """
+        app = self.app
+
+        def bar():
+            return ([w.cget("text") for w in app.shift_bar.winfo_children()
+                     if w.winfo_class() == "Label"],
+                    [b.cget("text") for b in app.shift_buttons])
+
+        def bands():
+            app.chart.redraw()
+            app.update_idletasks()
+            return [app.chart.itemcget(i, "text") for i in app.chart.find_all()
+                    if app.chart.type(i) == "text"]
+
+        for _ in range(3):                       # 反复导入（每次都会重建班次条）
+            app.load_paths([SAMPLE])
+            app.update_idletasks()
+        labels, texts = bar()
+        self.assertEqual(labels, ["班次"], "「班次」标签只该有一个（重建不残留）")
+        self.assertEqual(len(texts), 3)
+        self.assertEqual(texts, ["1. 00:00 – 12:00", "2. 12:00 – 18:00",
+                                 "3. 18:00 – 00:00（第2天）"])
+        self.assertIn("Shift 1 · 12h", bands())              # 名字里已带时长 → 不追加
+        self.assertNotIn("Shift 1 · 12h  12h", bands(), "别把时长写两遍")
+
+        app.apply_start_clock(Decimal("21"))     # 换初始时间点 → 再重建
+        app.update_idletasks()
+        labels, texts = bar()
+        self.assertEqual(labels, ["班次"])
+        self.assertEqual(texts, ["1. 21:00 – 09:00（第2天）",   # 只有它真跨天
+                                 "2. 09:00 – 15:00",
+                                 "3. 15:00 – 21:00"])
+
+        app.apply_shift_hours([Decimal("8")] * 3)   # 改班次时长 → 再重建
+        app.update_idletasks()
+        labels, texts = bar()
+        self.assertEqual(labels, ["班次"])
+        self.assertEqual(texts, ["1. 21:00 – 05:00（第2天）", "2. 05:00 – 13:00", "3. 13:00 – 21:00"])
+        shown = bands()
+        self.assertIn("Shift 1  8h", shown)                  # 名字里的 12h 已过期 → 用真值
+        self.assertFalse([t for t in shown if "Shift" in t and "12h" in t],
+                         f"班次带还写着过期的 12h：{shown}")
+
     def test_时间滑动改变心情(self):
         """滑块/时间跳转 → 看板心情文字实时变化（这就是需求③）。"""
         app = self.app

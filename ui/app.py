@@ -744,10 +744,23 @@ class MoodSocApp(tk.Tk):
         return self.session.total_hours
 
     def _shift_span_text(self, idx: int) -> str:
+        """底部按钮上的一句话：`1. 00:00 – 12:00`。
+
+        ⚠️ 「（第N天）」**只在起止不在同一天时标在结束那侧**（用户口径）：
+        起点 21:00 时 `1. 21:00 – 09:00（第2天）` 是有用的（真跨天），
+        而原先 `2. 09:00（第2天） – 15:00（第2天）` 两头都标只是噪音、还把按钮撑宽
+        （实测宽度 486px → 798px）。跨天信息只出现一次，与图表横轴
+        `theme.fmt_clock_short` 的口径一致。
+        """
         s = self.schedule.shifts[idx]
         start = self.schedule.starts[idx]
-        return f"{self.clock_text(start)} – " \
-               f"{self.clock_text(start + s.hours)}"
+        end = start + s.hours
+        cycle, offset = self.schedule.cycle_hours, self.schedule.start_clock
+        same_day = int((start + offset) // cycle) == int((end + offset) // cycle)
+        left = theme.fmt_clock_short(start, cycle, offset)
+        right = (theme.fmt_clock_short(end, cycle, offset) if same_day
+                 else theme.fmt_clock(end, cycle, offset))
+        return f"{left} – {right}"
 
     # ================================================================== 时刻显示
     def clock_text(self, t) -> str:
@@ -1276,9 +1289,13 @@ class MoodSocApp(tk.Tk):
         上下各写一份就是"同一条班次显示两遍"；而且 MAA 的班次名里本来就带 `12h`，
         再补一个 `（12h）` 会变成 `Shift 1 · 12h（12h）`（曾经的重复显示 bug）。
         按钮上给时段更有用：一眼看出"这一班从几点到几点"。
+
+        ⚠️ **重建前把整行清空**（标签 + 按钮一起）：早先只销毁按钮、
+        「班次」标签每调一次新建一个 ⇒ 导入一次/改一次时间点就多攒一个，
+        底部显示成「班次 班次 班次 1. …」（实测复现，2026-09 修）。
         """
-        for b in self.shift_buttons:
-            b.destroy()
+        for w in self.shift_bar.winfo_children():
+            w.destroy()
         self.shift_buttons.clear()
         if self.schedule is None:
             return

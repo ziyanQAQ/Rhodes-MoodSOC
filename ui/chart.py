@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import re
 import tkinter as tk
 from decimal import Decimal
 from typing import Callable, Optional
@@ -19,6 +20,31 @@ from . import theme
 M_LEFT, M_RIGHT, M_TOP, M_BOTTOM = 48, 18, 28, 34
 DAY_ROW_H = 14            # 跨天时，刻度下面再留一行写「第N天」
 TICK_MIN_GAP = 46         # 相邻刻度至少这么多像素（`HH:MM` 约 34px + 间距），免得叠字
+
+#: 班次名尾巴上那种"内嵌时长"（`Shift 1 · 12h` 的 `· 12h`）——见 `_band_title`
+_DURATION_TAIL = re.compile(r"\s*[·・]?\s*\d+(?:\.\d+)?\s*h\s*$")
+
+
+def _band_title(label: str, hours) -> str:
+    """曲线班次带上的标题：**班次名 + 这一班的真实时长**，但不重复。
+
+    两种写法都不出错：
+
+    | 班次名 | 时长 | 标题 |
+    |---|---|---|
+    | `Shift 1 · 12h`（导入文件自带时长） | 12h | `Shift 1 · 12h`（不追加 `12h`） |
+    | `Shift 1 · 12h`（用户在界面里把时长改成 8h） | 8h | `Shift 1  8h`（名字里那个已过期，换成真值） |
+    | `A`（自定义名，不含时长） | 12h | `A  12h` |
+
+    为什么不在"名字里出现过时长"时一律不追加：班次名是**导入时**定下的
+    （`store/sources.py` 会拼 `· 12h`），而"班次时长"在界面上可以改；名字里的那个会过期，
+    照它显示就等于**报错误的时长**。所以这里以**真实 `hours`** 为准。
+    """
+    span = theme.fmt_hours(hours)
+    if span in label:
+        return label
+    base = _DURATION_TAIL.sub("", label).strip()
+    return f"{base}  {span}" if base else span
 
 
 class MoodChart(tk.Canvas):
@@ -109,7 +135,7 @@ class MoodChart(tk.Canvas):
             self.create_line(bx, y0 - 6, bx, y1, fill=theme.BORDER, dash=(3, 3))
             if bx - ax >= 60:            # 太窄就别写，免得和相邻班次的标题叠在一起
                 self.create_text((ax + bx) / 2, y0 - 14,
-                                 text=f"{shift.label}  {theme.fmt_hours(shift.hours)}",
+                                 text=_band_title(shift.label, shift.hours),
                                  fill=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL))
             t, idx = end, idx + 1
 
