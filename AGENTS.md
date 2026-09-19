@@ -54,7 +54,7 @@ documents/
 ├── 04-特殊机制.md          ★ 34 条特殊情况 + 12 条建模假设（改代码前必读）
 ├── 05-技能分类大纲.md       六轴 + 模板字典 M01~M17 / X01~X11 + 决策记录
 ├── 06-数据来源.md          ★ 数据查找策略（强制）+ 上游缺失清单
-├── 07-设计史.md            架构诊断 + P1~P6 重构决策记录
+├── 07-设计史.md            架构诊断 + P1~P7 重构决策记录
 ├── 08-上游数据源分析.md     上游仓库结构分析（首次摸底留档）
 ├── 09-开发指南.md          运行与测试 / 公共 API 速查 / 改完代码自查清单
 ├── 10-图形界面.md          图形界面 ui/：导入多班排班 / 时间滑动 / 对点曲线
@@ -109,11 +109,15 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 434 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 442 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
-12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（250 条 clause 逐条造场景
-    核对 + 上游 755 条台账双向核对 + 描述数字对照；`--report` 重写 `resources/skill_verify_report.md`。
-    详见 `documents/05-技能分类大纲.md` §5.11）。
+12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
+    L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
+    **L4 178 名干员真名生效 + 48 条组合技能双向对照**；`--report` 重写 `resources/skill_verify_report.md`）。
+    ⚠️ L2 用的是**合成干员 + 手工注入 `skill_id`**，L4 才走"真名 → 技能槽 → 进流水账"；
+    ⚠️ 验组合技能（共事/定向/阵营/变量/元修正）时，**"撤掉搭档"要改成"改名/摘阵营、人留在原房间"**
+    —— 控制中枢有「N 人每人 −0.05」的全局减免，搬走人会污染差值（曾误判成"引擎多算一倍"）。
+    详见 `documents/05-技能分类大纲.md` §5.11。
 13. **「导入排班」认 4 种 JSON**（本工具场景 / MAA / **v3 求解输出** / **v4 蓝图+干员池**），
     识别与转换只有一处：`store/sources.py`（别再在 `ui/` 里写第二份格式判断）。
     合同与字段对照见 `documents/10-图形界面.md` §2。
@@ -208,7 +212,7 @@ python scripts/classify_skills.py --agd <ArknightsGameData>   # 挂模板 + 生�
 python scripts/generate_skills_data.py                        # 生成 data/skills_data.py
 python scripts/classify_skills.py --check                     # 零遗漏校验（CI 用，不需要仓库）
 
-# 技能全量核对（模板级 / clause 级 / 上游描述对照；只读，不改数据）
+# 技能全量核对（四层：模板 / clause / 上游描述 / 干员与组合技能；只读，不改数据）
 python scripts/verify_skills.py --check                       # 有硬伤 → 退出码 1
 python scripts/verify_skills.py --report                      # 重写 resources/skill_verify_report.md
 
