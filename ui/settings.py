@@ -17,7 +17,7 @@
 
 | 分区 | 内容 | 由谁实现 |
 |---|---|---|
-| **时间轴** | 周期时长 / 各班次时长 / **周期数**（1~3） / **初始时间点**（周期从几点开始） | `dialogs.TimelinePanel` + 本文件 |
+| **时间轴** | 周期时长 / 各班次时长 / **周期数**（1~7，见 `store.session.MAX_CYCLES`） / **初始时间点**（周期从几点开始） | `dialogs.TimelinePanel` + 本文件 |
 | **干员与心情** | 房间等级 + 干员表 + 练度 + **按时刻指定心情**（周期 / 时刻 / 锚点） | `batch.BatchPanel` |
 | **换心情** | 进驻事件（M15a）：开关 + 每班一行表 | `dialogs.EntryEventPanel` |
 | **闲置入宿** | 未满的闲置干员进宿舍：开关 + 逐次表 | `dialogs.IdleToDormPanel` |
@@ -46,6 +46,7 @@ from typing import Dict, List, Optional
 from . import theme
 from .batch import BatchPanel
 from .dialogs import EntryEventPanel, IdleToDormPanel, TimelinePanel
+from store.session import MAX_CYCLES
 
 # (分区键, 标题, 一句话说明)
 PAGES = (
@@ -291,7 +292,7 @@ class SettingsDialog(tk.Toplevel):
         row, slot = setting_row(box, "周期数", "（连着跑几个周期，用来看这套排班能不能永动）")
         row.pack(fill="x", pady=(theme.GAP, 0))
         cb = ttk.Combobox(slot, textvariable=app.cycles_var, width=3, state="readonly",
-                          values=("1", "2", "3"))
+                          values=tuple(str(i) for i in range(1, MAX_CYCLES + 1)))
         cb.pack(side="left")
         cb.bind("<<ComboboxSelected>>", lambda _e: app.on_cycles_changed())
         # —— 初始时间点：周期从几点开始（如 01:00 ⇒ 1 点到第二天 1 点为一个周期）——

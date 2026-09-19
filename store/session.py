@@ -45,6 +45,12 @@ from .schedule import (MoodSetEvent, LoadedSchedule, Schedule, Shift, Trajectory
 
 ZERO = Decimal("0")
 
+#: **周期数上限**（唯一口径）：界面下拉、`Session.set_cycles`、`closure`、
+#: API `set_timeline` / `closure` 都按它夹取。超过就取上限（不报错）。
+#: 为什么是 7：成本≈线性（示例排班实测重算一次 1 周期 0.32s、3 周期 1.16s、**7 周期 2.84s**），
+#: 7 是"还能忍"的一档；再多就该去用 API 批量算、而不是让人盯着界面等。
+MAX_CYCLES = 7
+
 
 # ============================================================================
 # 校验结果
@@ -94,7 +100,7 @@ class Session:
     loaded: Optional[LoadedSchedule] = None
 
     # ---------------------------------------------------------------- 策略设置
-    #: 周期数（1~3）：把同一排班连跑几个周期
+    #: 周期数（1~`MAX_CYCLES`）：把同一排班连跑几个周期
     cycles: int = 1
     #: 周期起点心情（`{干员: 心情}`）；缺省＝第一班布局里写的值
     initial_moods: Dict[str, Decimal] = field(default_factory=dict)
@@ -364,6 +370,7 @@ class Session:
 
         ⚠️ **会改会话的 `cycles` 并重算**（与 `moods` 的 `cycles` 参数同一口径）——
         本方法是"改成多周期看收敛"，返回的 `cycles` 就是改完的值。
+        `cycles` 同样夹到 `1 ~ MAX_CYCLES`（见 `set_cycles`）。
 
         返回 `None` = 尚未载入排班。
         """
@@ -600,7 +607,8 @@ class Session:
 
     # ================================================================ 编辑（设置）
     def set_cycles(self, cycles: int) -> None:
-        self.cycles = max(1, int(cycles))
+        """设周期数：夹到 `1 ~ MAX_CYCLES`（越界不报错、直接取边界）。"""
+        self.cycles = min(MAX_CYCLES, max(1, int(cycles)))
 
     def set_timeline(self, hours: Optional[Sequence] = None,
                      cycle_hours=None, start_clock=None,
@@ -855,8 +863,9 @@ class Session:
 
         `行 = (干员, 心情显示值, 位置, 参与, 目标, [可选目标…])`。
         只列出**真的有候选**的那几次（心情跨班跨周期连续 ⇒ 每次谁没满都不一样）。
+        `cycles` 同样夹到 `1 ~ MAX_CYCLES`（与 `set_cycles` 一个口径）。
         """
-        cycles = int(cycles if cycles is not None else self.cycles)
+        cycles = min(MAX_CYCLES, max(1, int(cycles if cycles is not None else self.cycles)))
         entries = self.idle_entries if entries is None else entries
         traj = self.traj
         if self.schedule is None or traj is None:

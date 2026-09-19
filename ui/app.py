@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from store.session import Session  # noqa: E402
+from store.session import MAX_CYCLES  # noqa: E402
 from ui import theme  # noqa: E402
 from ui.board import BaseBoard, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
@@ -307,7 +308,8 @@ class MoodSocApp(tk.Tk):
         tk.Label(bar, text="周期数", bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(12, 4))
         self.cycles_box = ttk.Combobox(bar, textvariable=self.cycles_var, width=3,
-                                       state="readonly", values=("1", "2", "3"))
+                                       state="readonly",
+                                       values=tuple(str(i) for i in range(1, MAX_CYCLES + 1)))
         self.cycles_box.pack(side="left")
         self.cycles_box.bind("<<ComboboxSelected>>", lambda _e: self._on_cycles())
 
@@ -1211,7 +1213,10 @@ class MoodSocApp(tk.Tk):
             dlg.invalidate(*pages)
 
     def _on_cycles(self):
-        self.session.cycles = int(self.cycles_var.get())
+        # ⚠️ 走 `set_cycles`（夹到 1~`MAX_CYCLES`），夹过了就**回写下拉**——
+        #    别让"工具栏显示 9、会话里其实是 7"两处不一致。
+        self.session.set_cycles(self.cycles_var.get())
+        self.cycles_var.set(str(self.session.cycles))
         # 周期数变了 → 底部「周期」选择器要跟着出现/消失（`_build_shift_buttons` 按它决定）
         self._build_shift_buttons()
         self.recompute(fit_slider=True)

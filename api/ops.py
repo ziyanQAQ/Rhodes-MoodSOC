@@ -297,7 +297,7 @@ def op_set_timeline(session: Session, args: dict) -> dict:
 
     - `hours`：各班时长数组（长度 == 班次数），改完周期自动 = 各班长之和；
     - `cycle_hours`：只做一致性校验（不等就报错，不改任何东西）；
-    - `cycles`：连跑几个周期（1~3）；
+    - `cycles`：连跑几个周期（1~`store.session.MAX_CYCLES`＝7；越界夹到边界、不报错）；
     - `start_clock`：周期起点是几点（**纯显示口径**，引擎数值不变）。
     """
     _require_session(session)
@@ -655,7 +655,8 @@ def op_layout_at(session: Session, args: dict) -> dict:
 def op_closure(session: Session, args: dict) -> dict:
     """**闭环体检**：同一排班连跑 `cycles` 个周期，看心情是否收敛（＝能不能长期跑）。
 
-    - `cycles`：跑几个周期（默认 **3**；心情跨周期连续，所以第 k 个周期末＝下一轮开局）；
+    - `cycles`：跑几个周期（默认 **3**；上限 `store.session.MAX_CYCLES`＝7，越界夹到 7；
+      心情跨周期连续，所以第 k 个周期末＝下一轮开局）；
     - 判据：第 k 与 k−1 个周期末**逐人相同**（容差 1e-9）⇒ 第 k 轮起进入固定点；
     - 另附「周期末 vs 周期初」的逐人差值、最早红脸时刻与瓶颈。
 

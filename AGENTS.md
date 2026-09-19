@@ -109,7 +109,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 458 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 459 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
@@ -195,7 +195,11 @@ documents/
     ⚠️ 开着**闲置入宿**时，引擎**每段留一份深拷贝快照**（否则同一个副本跨周期复用，
     `world_at(t)` 会在第 1/2 周期给出第 N 周期的排布——修过的 bug）；API 的 `layout_at` 读同一份。
 
-21. **心情跨阈值的「吸附」必须`就地`做，不能留到积分之后**（`store/schedule.py: _next_event`）。
+21. **「周期数」上限是 `store.session.MAX_CYCLES = 7`（唯一口径）**：界面两处下拉、`set_cycles`、
+    `closure`、`idle_groups`、API `set_timeline`/`closure` 全部**夹到 1~7**（越界取边界、不报错；
+    界面还会把夹过的值**回写下拉**）。成本≈线性：示例排班实测一次重算 1 周期 0.32s → 3 周期 1.16s
+    → **7 周期 2.84s**。改这个上限时别只改下拉——写死 3 的地方当初散在两处，已经收成一个常量。
+22. **心情跨阈值的「吸附」必须`就地`做，不能留到积分之后**（`store/schedule.py: _next_event`）。
     事件驱动积分在跨过 0/12/18/20/24 时把值精确吸附到阈值（去掉除不尽的尾巴）。但吸附表是在
     **积分之后**应用的，而那一刻 `nxt` 可能已在 `MAX_SEGMENT_HOURS`（0.25h）之外——只差 1e-26
     就跨阈值的人**已经被积分推过去了**，再吸附回去等于**把它往回拽**，白扣 `|速率|×0.25h`。

@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 from data.paths import MAA_SAMPLE as SAMPLE  # noqa: E402
+from store.session import MAX_CYCLES  # noqa: E402
 
 
 def _tk_available() -> bool:
@@ -500,7 +501,8 @@ class Test新增交互(unittest.TestCase):
                          [str(app.cycles_var), str(app.speed_var)],
                          "左组是周期数（与设置中心共用 cycles_var），右组是播放速度")
         self.assertEqual(str(combos[0].cget("state")), "readonly")
-        self.assertEqual(tuple(combos[0].cget("values")), ("1", "2", "3"))
+        self.assertEqual(tuple(combos[0].cget("values")),
+                         tuple(str(i) for i in range(1, MAX_CYCLES + 1)))
         # 三组之间两条细分隔线：别让"设置类 / 状态 / 播放"挤成一片
         seps = [c for c in bar.winfo_children()
                 if isinstance(c, tk.Frame) and int(c.cget("width")) == 1]
@@ -538,6 +540,38 @@ class Test新增交互(unittest.TestCase):
         self.assertEqual(app.cycles, 3)
         self.assertEqual(app._total_hours(), cycle * 3)
         self.assertEqual(app.cycles_box.get(), "3", "工具栏下拉要跟着设置中心一起变")
+
+    def test_周期数上限是7且越界夹取(self):
+        """**周期数上限 = 7**（`store.session.MAX_CYCLES`，唯一口径）：两处下拉都列到 7；
+        越界（9 / 0）**夹到边界、不报错**，并把夹过的值回写下拉（别让两处显示不一致）；
+        引擎/接口同样夹取（`set_cycles` / `closure` / API `set_timeline`）。
+        """
+        from store.session import MAX_CYCLES, Session
+
+        self.assertEqual(MAX_CYCLES, 7)
+        app = self.app
+        want = tuple(str(i) for i in range(1, MAX_CYCLES + 1))
+        self.assertEqual(tuple(app.cycles_box.cget("values")), want)
+
+        app.cycles_var.set("9")                 # 越界 → 夹到 7
+        app.on_cycles_changed()
+        app.update_idletasks()
+        self.assertEqual(app.cycles, MAX_CYCLES)
+        self.assertEqual(app.cycles_var.get(), "7", "夹过的值要回写下拉")
+        self.assertEqual([b.cget("text") for b in app.cycle_buttons], list(want))
+        self.assertEqual(app._total_hours(), app.schedule.cycle_hours * MAX_CYCLES)
+
+        app.cycles_var.set("0")                 # 下界同样夹到 1
+        app.on_cycles_changed()
+        self.assertEqual(app.cycles, 1)
+
+        s = Session()
+        s.load_paths([SAMPLE])
+        s.set_cycles(99)
+        self.assertEqual(s.cycles, MAX_CYCLES, "引擎侧也要夹取")
+        s.set_cycles(0)
+        self.assertEqual(s.cycles, 1)
+        self.assertEqual(s.closure(99)["cycles"], MAX_CYCLES)   # closure 同一口径
 
     def test_班次按钮只写序号与时段(self):
         """底部班次条＝**纯切换器**：只写「序号 + 时段」，班次名只出现在看板头部。
