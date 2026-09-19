@@ -385,32 +385,56 @@ class Test闲置入宿优先级(unittest.TestCase):
         self.assertNotIn("菲亚梅塔", " / ".join(m.label for m in s.traj.marks if m.kind == "idle"))
 
     def test_自回型干员不被换出宿舍(self):
-        """**有宿舍自身回复技能的人（菲亚梅塔「自律」）不当"备用容量"被换出去。**
+        """**有宿舍自身回复技能的人不当"备用容量"被自动换出去**（②③ 的自动路径）。
 
         踩过的 bug：她在宿舍里自己就能 +2/h 回满，却因为"满心情 + 坐在宿舍"被闲置入宿
         当成可换出的容量 —— 换出去之后她变成闲置、心情一条平线（看起来像"心情卡住不动"），
         而且白白丢掉一份恢复能力。
 
-        本用例造的场景只差一个变量：宿舍里**除了她**没有别的满心情的人 ——
-        修之前她会（作为③兜底的最后一位）被换出，修之后这一班应当走优先级④"不动"。
+        ⚠️ **例外（2026-09 用户裁决）**：**满 24 的菲亚梅塔**在 ③ 会被放行（她的价值在
+        「患难之交」进驻那一刻，不靠待在宿舍）—— 见下一个用例。这里改用**另一个自回型**
+        （缪尔赛思）来钉这条保护。
+        """
+        facs = [{"type": "制造站", "level": 3, "operators": ["普通甲", "普通乙"]},
+                {"type": "宿舍", "name": "宿舍#1", "level": 5,
+                 "operators": ["缪尔赛思", "路人乙", "路人丙", "路人丁", "路人戊"]}]
+        s = Session()
+        s.load_layout({"facilities": facs}, hours=24)
+        # 除她之外宿舍里全是没满的人；她是唯一的"满心情"
+        s.set_initial_moods({"缪尔赛思": 24, "路人乙": 5, "路人丙": 6,
+                             "路人丁": 7, "路人戊": 8, "板凳甲": 10})
+        s.set_detached(["板凳甲"], recompute=False)
+        s.idle_to_dorm = True
+        s.recompute()
+        detail = " / ".join(m.label for m in s.traj.marks if m.kind == "idle")
+        self.assertNotIn("缪尔赛思", detail, "自回型干员不该被自动换出宿舍")
+        self.assertIn("优先级④", detail)
+        self.assertEqual(q(s.mood_at("板凳甲", D(1))), D("10"))     # 没入宿 → 平线
+        self.assertEqual(q(s.mood_at("缪尔赛思", D(1))), D("24"))    # 她留在宿舍（已是满心情）
+        self.assertEqual(q(s.rate_at("缪尔赛思", D("0.5"))), D("0"))  # 满心情 → 速率 0
+
+    def test_满24的菲亚梅塔在兜底层被放行(self):
+        """③ 兜底的**例外**：满 24 的菲亚梅塔可以被换出（用户裁决）。
+
+        她的价值全在「患难之交」（M15a）——**进驻宿舍那一刻**把心情换给上一位，满 24 就够、
+        不靠"待在宿舍里"；「自律」又会自己回满 ⇒ 把她当"备用容量"换出去不亏。
+        所以这一班**不再走④"不动"**：板凳甲进宿舍恢复，她换出来闲置（已是满心情 → 平线）。
         """
         facs = [{"type": "制造站", "level": 3, "operators": ["普通甲", "普通乙"]},
                 {"type": "宿舍", "name": "宿舍#1", "level": 5,
                  "operators": ["菲亚梅塔", "路人乙", "路人丙", "路人丁", "路人戊"]}]
         s = Session()
         s.load_layout({"facilities": facs}, hours=24)
-        # 除她之外宿舍里全是没满的人；她是唯一的"满心情"
         s.set_initial_moods({"菲亚梅塔": 24, "路人乙": 5, "路人丙": 6,
                              "路人丁": 7, "路人戊": 8, "板凳甲": 10})
         s.set_detached(["板凳甲"], recompute=False)
         s.idle_to_dorm = True
         s.recompute()
         detail = " / ".join(m.label for m in s.traj.marks if m.kind == "idle")
-        self.assertNotIn("菲亚梅塔", detail, "自回型干员不该被换出宿舍")
-        self.assertIn("优先级④", detail)
-        self.assertEqual(q(s.mood_at("板凳甲", D(1))), D("10"))     # 没入宿 → 平线
-        self.assertEqual(q(s.mood_at("菲亚梅塔", D(1))), D("24"))    # 她留在宿舍（已是满心情）
-        self.assertEqual(q(s.rate_at("菲亚梅塔", D("0.5"))), D("0"))  # 满心情 → 速率 0
+        self.assertIn("菲亚梅塔", detail, "满 24 的菲亚梅塔应当在 ③ 被放行")
+        self.assertIn("优先级③", detail)
+        self.assertGreater(q(s.mood_at("板凳甲", D(1))), D("10"))     # 进宿舍 → 开始恢复
+        self.assertEqual(q(s.mood_at("菲亚梅塔", D(1))), D("24"))      # 满心情换出来 → 平线不掉
 
     def test_自回型干员自己仍能入宿(self):
         """保护只作用于"**被选为被换出者**"：她自己是闲置候选时照旧能进宿舍恢复。"""

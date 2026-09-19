@@ -682,23 +682,25 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         self.assertTrue(any(("阿米娅" in m.label or "德克萨斯" in m.label) for m in idle),
                         "应当与白板互换")
 
-    def test_示例排班全满且无白板时不换人(self):
-        """示例排班：4 间宿舍全满 + 宿舍里没有白板 ⇒ **一次都不换**（优先级④）。
+    def test_示例排班全满时换出满24的菲亚梅塔(self):
+        """示例排班：4 间宿舍全满、白板一个都没有 —— 但 **满 24 的菲亚梅塔**在 ③ 被放行
+        （用户裁决）⇒ 闲置者能进宿舍恢复。
 
-        这是"不拿有阵营的人去填坑"的直接后果：宁可那几位闲置者不进宿舍，
-        也不把莱茵生命/龙门近卫局这类有阵营联动的人换出去。
+        代价与边界：菲亚梅塔被换出来闲置（她已是满心情，曲线平线不掉）；
+        **另一个"自回型"（缪尔赛思）与所有有阵营的人仍然不动** —— ③ 只额外放行她一个。
         """
         off = simulate_schedule(self.sch, cycles=1)
         on = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True)
-        for name in ("地灵", "梅", "虎狼丸", "跃跃", "承曦格雷伊", "幽灵鲨"):
-            self.assertEqual(on.mood_at(name, 24), off.mood_at(name, 24),
-                             f"{name} 这一班没进宿舍 → 与不开时应当逐位相同")
         idle = [m for m in on.marks if m.kind == "idle"]
-        self.assertTrue(idle, "应当记下「谁想入宿但没位置」")
-        self.assertTrue(all("优先级④" in m.label for m in idle))
-        # 宿舍里那两位"自己就能回"的人没被换出去（菲亚梅塔/缪尔赛思 整段满心情）
-        self.assertEqual(on.mood_at("菲亚梅塔", 24), D("24"))
-        self.assertEqual(on.mood_at("缪尔赛思", 24), D("24"))
+        self.assertTrue(idle, "应当有入宿结算")
+        entered = [m for m in idle if "优先级③" in m.label]
+        self.assertTrue(entered, "③（含满 24 的菲亚梅塔）应当命中")
+        self.assertTrue(all("菲亚梅塔" in m.label for m in entered),
+                        "③ 放行的只有她一个")
+        self.assertEqual(on.mood_at("菲亚梅塔", 24), D("24"))     # 满心情换出来 → 平线不掉
+        self.assertEqual(on.mood_at("缪尔赛思", 24), D("24"))     # 另一个自回型没被换出
+        moved = [n for n in on.names if on.mood_at(n, 24) > off.mood_at(n, 24) + TOL]
+        self.assertTrue(moved, f"应当有人因为这次入宿而回得更多：{moved}")
 
     def test_默认关闭时一切照旧(self):
         """不传 idle_to_dorm（默认 False）→ 轨迹与"没有这个功能"时逐位相同。"""
@@ -708,8 +710,8 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
             self.assertEqual(a.mood_at(name, 24), b.mood_at(name, 24), name)
         self.assertFalse([m for m in b.marks if m.kind == "idle"])
 
-    def test_逐人设置_不参与与指定(self):
-        """`idle_entries`：`enabled=False` 的人不动；`swap_with` 指定与谁互换。"""
+    def test_逐人设置_不参与(self):
+        """`idle_entries`：`enabled=False` 的人不参与（她的心情不会被这次入宿改变）。"""
         from mood_soc.models import IdleToDormEntry
 
         skip = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True,
@@ -717,13 +719,43 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         self.assertFalse([m for m in skip.marks
                           if m.kind == "idle" and "地灵" in m.label])
         self.assertLess(skip.mood_at("地灵", 24), D("24"))       # 没被安排 → 还是没满
-        # 指定与「塞雷娅」互换：严格按指定 → 那位不在宿舍 / 心情不满就跳过这一位
-        # （塞雷娅在宿舍里但不是白板，走③兜底时不会被自动挑中；这里靠显式指定）
+
+    def test_点名是第4级的替代动作_自动能挑到人时不生效(self):
+        """`swap_with`（点名）只在 ②③ 都挑不到人时才用（用户口径）——
+        自动能挑到时**不生效**，免得"我点名了"把自动规则整个顶掉。"""
+        from mood_soc.models import IdleToDormEntry
+
         pick = simulate_schedule(self.sch, cycles=1, idle_to_dorm=True,
-                                 idle_entries=[IdleToDormEntry(name="地灵", swap_with="塞雷娅")])
-        evs = [m for m in pick.marks if m.kind == "idle" and "地灵" in m.label]
+                                 idle_entries=[IdleToDormEntry(name="虎狼丸", swap_with="塞雷娅")])
+        evs = [m for m in pick.marks if m.kind == "idle" and "虎狼丸" in m.label]
         self.assertEqual(len(evs), 1)
-        self.assertIn("塞雷娅", evs[0].label)
+        self.assertIn("菲亚梅塔", evs[0].label)                  # ③ 自动命中
+        self.assertNotIn("塞雷娅", evs[0].label)                 # 点名被忽略
+
+    def test_点名在第4级生效且不限心情(self):
+        """自动 ②③ 都挑不到人时，才用**你点名**的那位互换；此时**不要求她满 24**
+        —— 这是**主动换**（用户口径）。"""
+        from mood_soc.models import IdleToDormEntry
+        from store.schedule import Shift
+
+        # 宿舍满员（容量恒为 5）、5 位都有阵营（③ 只换白板 ⇒ 挑不到）、也没有菲亚梅塔
+        dorm = [{"name": f"有阵营{j}", "mood": "24" if j != 5 else "10",
+                 "factions": ["测试阵营"]} for j in range(1, 6)]
+        sch = Schedule([
+            Shift("A", D("12"), [{"type": "制造站", "level": 3, "operators": ["普通甲"]},
+                                 {"type": "宿舍", "name": "宿舍#1", "level": 5,
+                                  "operators": list(dorm)}]),
+            Shift("B", D("12"), [{"type": "制造站", "level": 3, "operators": ["普通甲", "丙"]},
+                                 {"type": "宿舍", "name": "宿舍#1", "level": 5,
+                                  "operators": list(dorm)}]),
+        ], D("24"))
+        traj = simulate_schedule(sch, cycles=1, idle_to_dorm=True,
+                                 initial_moods={"丙": 6, "有阵营甲": 24},
+                                 idle_entries=[IdleToDormEntry(name="丙", swap_with="有阵营5")])
+        idle = [m for m in traj.marks if m.kind == "idle" and "丙" in m.label]
+        self.assertTrue(idle, "点名的那位应当在第④级被用上")
+        self.assertIn("有阵营5", idle[0].label)
+        self.assertIn("你主动换的", idle[0].label)               # 她当时并不满 24
 
     def test_跨周期每班都结算(self):
         """多周期：每个周期的每一班都要结算（复用同一套时效性机制）。"""

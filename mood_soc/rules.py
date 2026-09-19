@@ -895,6 +895,13 @@ def _idle_candidates(world: BaseLayout, idle=None, only=None):
 DORM_PREFERRED_RANGE = (2, 3, 4)
 #: ② 的点名**位次**（1 基；第 1 位不在其中，第 1 位只在 ③ 兜底时才轮到）
 DORM_PREFERRED_SLOTS = (2, 3, 4, 5)
+#: ③ 兜底层**除"白板"外**额外放行的人（用户裁决）：满 24 心情的**菲亚梅塔**。
+#: 为什么放她：她的价值全在「患难之交」（M15a）——**进驻宿舍那一刻**把心情换给上一位，
+#: **满 24 就够、不靠"待在宿舍里"**；她「自律」（M14）又能自己回满，
+#: 所以满心情时把她当"备用容量"换出去不亏（换出那一刻她已是满的）。
+#: ⚠️ 仍要求**满 24**（`_pickable` 那道闸照旧），只放开"白板"与"自回型"这两道；
+#: ⚠️ 名字写死是用户口径（当前 M15a 只有她一个持有者）。
+TIER3_EXTRA_NAMES: Tuple[str, ...] = ("菲亚梅塔",)
 
 
 def _factionless(op: Operator) -> bool:
@@ -975,7 +982,7 @@ def _swap_mate(world: BaseLayout, exclude: Optional[set] = None):
     skip = exclude or set()
     by_no = dict(_dorm_numbered(world))                      # 宿舍序号（1 基）→ 设施
 
-    def _pickable(dorm, op) -> bool:
+    def _pickable(dorm, op, allow_self_recovering: bool = False) -> bool:
         """这个人此刻**真的还在**这间宿舍里、没被换出去、实时满心情、**且不是"自回型"**？
 
         ⚠️ 必须查 `world.facility_of`：`dorm.operators` 是"跑了一整轮模拟"的那个副本，
@@ -984,10 +991,12 @@ def _swap_mate(world: BaseLayout, exclude: Optional[set] = None):
         一个早已不在世界里的槽位）。
         ⚠️ `_self_recovering_in_dorm`：有宿舍自身回复技能的人（菲亚梅塔「自律」）**不被换出**
         —— 她自己就能回满，换出去只会白丢一份恢复能力、还让她的曲线"平线卡住"。
+        `allow_self_recovering=True` 只给 **③ 的例外名单**（`TIER3_EXTRA_NAMES`）用：
+        那些人满 24 时"待在宿舍"本来就没价值（见常量处的说明）。
         """
         if op.name in skip or op.mood < MOOD_MAX:
             return False
-        if _self_recovering_in_dorm(op):
+        if not allow_self_recovering and _self_recovering_in_dorm(op):
             return False
         here = world.facility_of(op.name)
         return here is not None and here is dorm
@@ -1006,14 +1015,40 @@ def _swap_mate(world: BaseLayout, exclude: Optional[set] = None):
 
     # --- 第 ③ 级：兜底**只换白板**（不属于任何已记录阵营的人）；没有白板就不换 ---
     #     顺序同"优先 4 最后 1"；每间先第 2~5 位，再第 1 位。
+    #     例外：`TIER3_EXTRA_NAMES`（满 24 的菲亚梅塔）——她待在宿舍没价值，换出去不亏。
     for dorm in dorms:
         for slot in list(DORM_PREFERRED_SLOTS) + [1]:
             if slot - 1 >= len(dorm.operators):
                 continue
             op = dorm.operators[slot - 1]
-            if _factionless(op) and _pickable(dorm, op):
+            extra = op.name in TIER3_EXTRA_NAMES
+            if (extra or _factionless(op)) and _pickable(dorm, op, allow_self_recovering=extra):
                 return dorm, op, 3
     return None, None, None
+
+
+def _named_mate(world: BaseLayout, name: str, exclude: Optional[set] = None):
+    """**你点名**要互换的那位 → `(宿舍, 干员)`；不在宿舍里就返回 `(None, None)`。
+
+    ⚠️ 与自动路径（②③）**刻意不同**：这里**不要求她满 24**、也不受"只换白板 /
+    自回型不换出"限制 —— 这是**主动换**（用户显式指定，代价由用户承担，他的口径是
+    "因为是主动换，所以可以选心情没满的在宿舍的人"）。仍然要求：
+      - 她**此刻真的在某一间宿舍里**（`facility_of` 校验，防陈旧副本对象）；
+      - 本班次还没被换出去过（`exclude`）。
+    """
+    skip = exclude or set()
+    if not name or name in skip:
+        return None, None
+    for f in world.facilities:
+        if f.ftype != FacilityType.DORMITORY:
+            continue
+        if not any(o.name == name for o in f.operators):
+            continue
+        if world.facility_of(name) is f:          # 真的还在这间（不是陈旧对象）
+            for o in f.operators:
+                if o.name == name:
+                    return f, o
+    return None, None
 
 
 def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
@@ -1030,22 +1065,27 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
     |---|---|---|
     | ① | 任一间宿舍**还有未占满的位次** | **直接住进去**（有空位就不换人）；顺序"优先 4 最后 1" |
     | ② | 宿舍**全满** | 换「宿舍 **#4 → #3 → #2** 的**第 2~5 位**」里**实时心情已满**的那位 |
-    | ③ | ②找不到 | 只在**白板**（不属于任何已记录阵营的干员）里挑实时满心情的那位；**连白板都没有 → 这一班不换** |
-    | ④ | 都不满足 | 这一班不动，记一条说明（group=`idle_to_dorm_skipped`） |
+    | ③ | ②找不到 | 只在**白板**（不属于任何已记录阵营的干员）里挑实时满心情的那位；**满 24 的菲亚梅塔**也在此列（她待在宿舍没价值，见 `TIER3_EXTRA_NAMES`）；**连这些都没有 → 看 ④** |
+    | ④ | 都找不到 | 有**点名**（`swap_with`）→ 与**你点名**的那位互换（**主动换**）；没点名才"这一班不动"（记 `idle_to_dorm_skipped`） |
 
     - **同优先级内的顺序：优先 4、最后 1** —— 宿舍 `#4 → #3 → #2 → #1`；
       同一宿舍内 第 2 位 → 第 5 位 → 第 1 位（位次 1 只在③兜底时轮到）。
     - **"白板"**＝`_factionless(op)`：`OPERATOR_FACTIONS`（`data/factions.txt` + 人工补充表）
       里没有她。为什么兜底层只肯换白板：白板没有阵营联动技能，换出去不会连带打断别人的
       阵营类加成 —— **有阵营的人优先留在宿舍**（用户口径）。
-    - 交换的**首要前提**永远是"被换出者 = 实时满 24 心情"；白板只是③这一级的附加筛选。
-    - 被换出的那位（满心情）**离开宿舍 → 既不工作也不在宿舍**（心情不变，因为已经满了）。
+      例外：**满 24 的菲亚梅塔**（③ 也放行）—— 她的价值在「患难之交」（M15a）**进驻那一刻**，
+      满 24 就够，不靠"待在宿舍里"。
+    - **自动路径（①②③）的"被换出者"必须是实时满 24**；**"自回型"（有宿舍自身回复技能，
+      如菲亚梅塔「自律」）不被自动换出**（她自己就能回满，换出去白丢一份恢复能力）。
+    - **④ 的替代动作是"主动换"**（点名）：此时**不要求对方满 24**、也不受"只换白板 /
+      自回型不换出"限制 —— 代价由点名的人自己承担；仍要求对方**此刻真在某间宿舍里**。
+    - 被换出的那位**离开宿舍 → 既不工作也不在宿舍**（心情不再变化）。
       进来的人**接替他被换出的那个位次**（不是排到末尾）。
     - 候选按**心情从低到高**依次安排（最需要恢复的先来）；每处理一位都用**那一刻的实时心情**
       重判优先级与候选（前面几位换人后，"还有没有空位/还有谁满心情"都会变）。
     - 正在上班的人**不动**（换走会打乱排班）；挂件位（加工站/训练室）与本班未排班都算候选。
-    - 指定了"放进哪一间宿舍的空位"（`dorm`）或指定了交换对象（`swap_with[name]`）都**优先于**
-      上面这套自动规则，且**严格按指定**（不满足就跳过这一位，不退回自动）。
+    - 指定了"放进哪一间宿舍的空位"（`dorm`）**优先于上面全部**（⓪），且严格按指定：
+      那间满了 / 不存在 → 跳过这一位（不退回自动）。
 
     参数：
         enabled  三态；`None` = 用 `world.idle_to_dorm.enabled`，都没有则**默认不结算**
@@ -1133,33 +1173,22 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
                     f"的第 {pos} 个空位恢复；有空位就不换人 —— 优先级①）")))
             continue
 
-        # ②③ **宿舍全满**：按优先级挑一位"实时心情已满"的宿舍成员互换
-        if want:
-            target_dorm = None
-            target_op = None
-            for f in world.facilities:
-                if f.ftype != FacilityType.DORMITORY:
-                    continue
-                for o in f.operators:
-                    if o.name == want:
-                        target_dorm, target_op = f, o
-            if target_op is None or target_op.mood < MOOD_MAX \
-                    or target_dorm is None or target_op.name in swapped_out:
-                # 严格按指定：不满足就跳过这一位（不退回自动）
-                events.append(Contribution(
-                    Bucket.EVENT, "闲置入宿未执行", ZERO, group="idle_to_dorm_skipped",
-                    owner=name, target=want, detail=(
-                        f"（指定的「{want}」这一班不在宿舍 / 心情不是满的 → 跳过这一位）")))
-                continue
-            dorm, mate, tier = target_dorm, target_op, 0     # 点名：用户显式指定，走指定口径
-        else:
-            dorm, mate, tier = _swap_mate(world, exclude=swapped_out)
+        # ②③ **宿舍全满**：先走**自动**四级规则（点名范围 → 白板兜底 + 满 24 的菲亚梅塔）
+        dorm, mate, tier = _swap_mate(world, exclude=swapped_out)
+        if mate is None and want:
+            # ④ 的**替代动作**：自动彻底挑不到人时，才用**你点名**的那位。
+            #    ⚠️ 这是"主动换"：不要求她满 24，也不受"只换白板 / 自回型不换出"限制
+            #    （用户的代价他自己承担）；但仍要求她此刻真在某间宿舍里。
+            dorm, mate = _named_mate(world, want, exclude=swapped_out)
+            if mate is not None:
+                tier = 0                     # 0 = 用户点名（走指定口径）
         if mate is None:
+            why = (f"（{name} 心情 {mood} 想入宿，但宿舍全满、自动也挑不到可换的人"
+                   + (f"，且你点名的「{want}」这一刻不在宿舍里" if want else "")
+                   + " → 这一班不动 —— 优先级④）")
             events.append(Contribution(
                 Bucket.EVENT, "闲置入宿未执行", ZERO, group="idle_to_dorm_skipped",
-                owner=name, target="", detail=(
-                    f"（{name} 心情 {mood} 想入宿，但宿舍全满、也没有心情已满的人可换 "
-                    f"→ 这一班不动 —— 优先级④）")))
+                owner=name, target=want or "", detail=why))
             continue
 
         if op is None:
@@ -1171,14 +1200,15 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
         #    才名副其实；末尾追加会让位次随人数漂移、P2 的点名范围就说不清了。
         dorm.operators[mate_idx] = op                        # 她进宿舍
         swapped_out.add(mate.name)                           # 满心情那位**换出来 → 闲置**（不占位）
-        how = ("由你指定的" if tier == 0 else
+        how = ("你点名的（优先级④的替代动作）" if tier == 0 else
                ("宿舍#2~#4 的第 2~5 位（优先级②）" if tier == 2 else
                 "宿舍其余位置（优先级③）"))
+        full = "满心情" if mate.mood >= MOOD_MAX else f"心情 {mate.mood}（你主动换的）"
         events.append(Contribution(
             Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
             owner=name, target=mate.name, detail=(
                 f"（{name} 心情 {mood} 没满且在闲置（{where}）→ 与 {dorm.display_name} 第 "
-                f"{mate_slot} 位、心情已满的 {mate.name} 互换：{name} 进宿舍恢复，"
+                f"{mate_slot} 位、{full}的 {mate.name} 互换：{name} 进宿舍恢复，"
                 f"{mate.name} 换出来闲置（既不工作也不在宿舍）—— {how}）")))
     return events
 

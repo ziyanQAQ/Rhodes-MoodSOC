@@ -944,9 +944,13 @@ class Test新增交互(unittest.TestCase):
             self.assertTrue([m for m in app.traj.marks if m.kind == "idle"],
                             "开启后应当出现「闲置入宿」的结算标记（入宿成功或「排不上」的说明）")
             self.assertEqual(before_marks, 0, "开启之前不该有闲置入宿标记")
-            # ⚠️ 不再断言"她一定回满"：口径收过（兜底层只换白板 + 自回型不被换出），
-            #    示例排班在宿位全满、无白板时**一个人都不会被换出去**（走优先级④）。
-            self.assertEqual(app.traj.mood_at(name, 24), before)
+            # ⚠️ 口径收过两次：先是"兜底层只换白板 + 自回型不被换出"，再是
+            #    **满 24 的菲亚梅塔在 ③ 被放行**（用户裁决）—— 示例排班宿位全满、没有白板，
+            #    但宿舍里有满 24 的她 ⇒ ③ 能命中，**有人真的进了宿舍**。
+            labels = " / ".join(m.label for m in app.traj.marks if m.kind == "idle")
+            self.assertIn("优先级③", labels)
+            self.assertGreater(app.traj.mood_at(name, 24), before,
+                               "进了宿舍的人应当比「不开」时回得更多")
             enabled, entries = panel.value()
         finally:
             top.destroy()

@@ -838,13 +838,13 @@ class Session:
                 continue
             dorm = _dorm_index_of(target)
             out.append(IdleToDormEntry(name=name, enabled=use, dorm=dorm,
-                                       swap_with=(None if dorm else target) or None))
+                                       swap_with=(None if dorm else idle_target_name(target))))
         for (cyc, shf, n), (use, target) in self.idle_entries.items():
             if use and not target:
                 continue
             dorm = _dorm_index_of(target)
             out.append(IdleToDormEntry(name=n, enabled=use, cycle=cyc, shift=shf,
-                                       dorm=dorm, swap_with=(None if dorm else target) or None))
+                                       dorm=dorm, swap_with=(None if dorm else idle_target_name(target))))
         return out or None
 
     def idle_groups(self, cycles: Optional[int] = None,
@@ -865,6 +865,7 @@ class Session:
             for i, shift in enumerate(self.schedule.shifts):
                 t0 = self.schedule.cycle_hours * k + self.schedule.starts[i]
                 cands, targets = [], []
+                person_targets: List[tuple] = []      # [(排序键, 标签, 名字)]：在宿舍的人
                 shift_dorms = [f for f in shift.world.facilities
                                if f.ftype == FacilityType.DORMITORY]
                 for di, dorm in enumerate(shift_dorms, 1):
@@ -874,8 +875,10 @@ class Session:
                     mood = traj.mood_at(name, t0)
                     fac = shift.world.facility_of(name)
                     if fac is not None and fac.ftype == FacilityType.DORMITORY:
-                        if mood >= MOOD_MAX:
-                            targets.append(name)     # 可以作为"被换出"的对象
+                        # 在宿舍 → 可作为"被换出"的对象。**心情没满的也列进来**：
+                        # 第④级的"点名换人"是**主动换**（用户口径），不要求对方满 24，
+                        # 所以选项里必须看得见他的心情（标签形如 `巫恋 23.4`）。
+                        person_targets.append((-mood, f"{name} {mood:.1f}", name))
                         continue
                     if fac is not None and fac.ftype not in (FacilityType.WORKSHOP,
                                                              FacilityType.TRAINING):
@@ -893,13 +896,16 @@ class Session:
                     cands.append((mood, name, where))
                 if not cands:
                     continue
+                person_targets.sort()                    # 心情高的排前面（最好换的先出现）
+                targets += [label for _k, label, _n in person_targets]
                 cands.sort(key=lambda row: (row[0], row[1]))
                 rows = []
                 for mood, name, where in cands:
                     use, target = entries.get((k + 1, i + 1, name)) \
                         or self.idle_globals.get(name) or (True, None)
-                    rows.append((name, mood, where, use, target,
-                                 [t for t in targets if t != name]))
+                    # 可选目标里**去掉候选人自己**（标签带心情，按解析出的名字比）
+                    opts = [t for t in targets if idle_target_name(t) != name]
+                    rows.append((name, mood, where, use, target, opts))
                 groups.append((f"第 {k + 1} 周期 · 第 {i + 1} 班", (k + 1, i + 1), rows))
         return groups
 
@@ -969,6 +975,27 @@ def _idle_label_of(entry) -> Optional[str]:
     if getattr(entry, "dorm", None) is not None:
         return f"宿舍{entry.dorm:02d}"
     return (getattr(entry, "swap_with", None) or None)
+
+
+def idle_target_name(label) -> Optional[str]:
+    """下拉标签 → **干员名**（`"巫恋 23.4"` → `"巫恋"`）；`宿舍NN` / 「自动…」/ 空 → `None`。
+
+    ⚠️ 为什么标签里带心情：第④级的「点名换人」是**主动换**（不要求对方满 24），
+    所以选项必须让人看得见他当时的心情（`store/session.idle_groups` 里生成）。
+    剥法：只剩最后一段"能解析成数字"的尾巴才当心情剥掉 —— 干员名里没有空格
+    （`data/operators.txt`），所以这条规则不会误伤。
+    """
+    text = (label or "").strip()
+    if not text or text.startswith("自动") or _dorm_index_of(text) is not None:
+        return None
+    head, _sp, tail = text.rpartition(" ")
+    if head and tail:
+        try:
+            float(tail)
+        except ValueError:
+            return text
+        return head
+    return text
 
 
 __all__ = [
