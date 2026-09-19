@@ -46,7 +46,7 @@ import json
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from mood_soc import (apply_entry_events, apply_idle_to_dorm, compute_net_rate,
                       entry_event_holders, reset_entry_events)
@@ -408,27 +408,24 @@ class LoadedSchedule:
         return "；".join(r.summary() for r in self.reports)
 
 
-def load_schedule_ex(paths: Sequence[Union[str, Path]],
-                     cycle_hours: Optional[Decimal] = None,
-                     hours: Optional[Sequence] = None) -> LoadedSchedule:
-    """从若干排班文件装配 `Schedule`，并把池/变量初始值/导入报告一起返回。
+def load_schedule_from_imports(imports: Sequence[Any],
+                               cycle_hours: Optional[Decimal] = None,
+                               hours: Optional[Sequence] = None) -> LoadedSchedule:
+    """把若干个**已解析**的导入结果（`store.sources.ImportResult`）装配成 `Schedule`。
 
-    - 每个文件**自动识别格式**（`store/sources.py`）：本工具场景 / MAA 排班 /
-      v3 求解输出 / v4 蓝图+干员池；
-    - 一个文件可能含多个班次（MAA 的多个 plan、v3 输出的多班 `shifts`）；
-      **一个班次一个文件**（12h/6h/6h 三个文件）同样支持；
+    `load_schedule_ex`（按文件）只是"先 `import_file` 再把结果交进来"，两条入口**共用这里**——
+    所以 API 的 `load_file` 与内联 `load_json` 的数值必然同源，不会各算一套。
+
+    - 每个导入结果可能含多个班次（MAA 的多个 plan、v3 输出的多班 `shifts`）；
     - 每班时长：**显式 `hours`（按班次顺序，可少于班次数）> 文件里的时长 > 班次名提示 > 均分**；
     - 周期：默认 = 各班时长之和（自洽）；显式给 `cycle_hours` 时必须与之和相等。
     """
-    from .sources import import_file
-
     shifts: List[Shift] = []
     pool: List[dict] = []
     initial: Dict[str, Decimal] = {}
     reports: List[object] = []
     given = [to_decimal(h) for h in hours] if hours else []
-    for p in paths:
-        imp = import_file(p)
+    for imp in imports:
         reports.append(imp.report)
         for entry in imp.pool:                      # 多文件的池取并集（先到先得）
             if entry["name"] not in [x["name"] for x in pool]:
@@ -449,6 +446,17 @@ def load_schedule_ex(paths: Sequence[Union[str, Path]],
             s.initial_global = dict(initial)
     return LoadedSchedule(schedule=Schedule(shifts, total), pool=pool,
                           initial_global=initial, reports=reports)
+
+
+def load_schedule_ex(paths: Sequence[Union[str, Path]],
+                     cycle_hours: Optional[Decimal] = None,
+                     hours: Optional[Sequence] = None) -> LoadedSchedule:
+    """从若干排班文件装配 `Schedule`（每份文件**自动识别格式**，见 `store/sources.py`）。
+
+    装配规则（时长 / 周期 / 池 / 变量初始值）见 `load_schedule_from_imports`。
+    """
+    return load_schedule_from_imports([import_file(p) for p in paths],
+                                      cycle_hours=cycle_hours, hours=hours)
 
 
 def load_schedule(paths: Sequence[Union[str, Path]],
@@ -905,7 +913,6 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
 
     for seg_i, (t0, seg_end, idx) in enumerate(segments):
         world = worlds[idx]                 # 本班次的**可变副本**（位置互换只发生在副本里）
-        seg_worlds.append(world)            # 界面读"这一刻实际的排布"就用它（见 `Trajectory.world_at`）
         eff = effs[idx]                     # 本班次的**有效**进驻事件配置（含按班次覆盖）
         # ⚠️ 位置也可能被改过（`restore_back=False` 的「位置也一起互换」）：那就**从计划重建**
         #    这一班的副本。副本是跨班次 / 跨周期复用的，不重建就会带着上一轮换过的位置——
@@ -951,6 +958,12 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             scope = (seg_i // len(schedule.shifts) + 1, idx + 1)
             for ev in apply_idle_to_dorm(world, enabled=True, idle=idle_moods, scope=scope):
                 marks.append(Mark(t0, "idle", ev.detail))
+        # 本段**实际生效**的那份布局 → `Trajectory.world_at(t)`（界面看板 / API `layout_at` 都读它）。
+        # ⚠️ 闲置入宿**就地改这份副本**，而同一个副本会被**跨周期复用**（`worlds[idx]` 只建一次）：
+        #    整轮跑完后它只剩"最后一次跑这一班"的样子，直接记引用会让 `world_at(t)` 在第 1/2 周期
+        #    给出第 N 周期的排布。所以开着闲置入宿时**每段留一份快照**；
+        #    没开时位置不会被改（换心情只改心情值，位置互换那支自己会重建副本），照旧记引用。
+        seg_worlds.append(copy.deepcopy(world) if idle_to_dorm else world)
         groups = [[o.name for o in f.operators] for f in world.facilities]
 
         t = t0
@@ -1063,6 +1076,7 @@ __all__ = [
     "Shift", "Schedule", "Trajectory", "Mark", "LoadedSchedule", "MoodSetEvent",
     "shift_from_facilities", "shifts_from_maa_file", "shifts_from_scenario_file",
     "shifts_from_import", "shift_file_kind", "load_schedule", "load_schedule_ex",
+    "load_schedule_from_imports",
     "simulate_schedule", "compute_rates",
     "rates_in_world", "default_initial_moods", "all_operator_names",
 ]

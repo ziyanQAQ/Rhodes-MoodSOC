@@ -30,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from data.skills_data import DEFAULT_OPERATORS
 from mood_soc.battery import to_decimal
@@ -40,7 +40,8 @@ from mood_soc.rules import mood_skill_summary
 
 from .layout import build_base_layout
 from .schedule import (MoodSetEvent, LoadedSchedule, Schedule, Shift, Trajectory,
-                       default_initial_moods, load_schedule_ex, simulate_schedule)
+                       default_initial_moods, load_schedule_ex,
+                       load_schedule_from_imports, simulate_schedule)
 
 ZERO = Decimal("0")
 
@@ -139,6 +140,56 @@ class Session:
         self.initial_moods.clear()
         self.mood_events.clear()
         self._sync_from_schedule()
+        self.recompute()
+        return ld
+
+    def load_data(self, data: Any, hours: Optional[Sequence] = None,
+                  cycle_hours=None, cycles: Optional[int] = None,
+                  apply_file_settings: bool = False,
+                  entry_events: Optional[bool] = None,
+                  idle_to_dorm: Optional[bool] = None) -> "LoadedSchedule":
+        """直接给一份**已经解析好的 JSON**（dict）建排班 —— 不落临时文件（给 Rust 侧调用用）。
+
+        `data` 与 `load_paths` 认得的东西完全一样，**格式自动识别**：
+        本工具场景 / MAA 排班 / **v3 求解输出**（`{"result": {...}}` 信封）/ v4 蓝图+干员池。
+        装配走 `load_schedule_from_imports`（与按文件载入**同一条路**），
+        所以「同一份 JSON 走文件 vs 走内存」的数值必须逐位相同。
+
+        ⚠️ **本入口的默认口径与界面 / `load_file` 不同**（按"外部求解器调用"的需求收窄）：
+
+        | 项 | 本入口默认 | 理由 |
+        |---|---|---|
+        | 文件里的开关（如 v3 的 `Fiammetta.enable`） | **不继承**（`apply_file_settings=False`） | 换干员必须手动配置，默认关 |
+        | 闲置入宿 | **开**（本项目默认四级优先级） | v3 没给就按本项目默认逻辑 |
+        | 周期 | 取文件里的班次时长（如 12/6/6 → 24h），`cycles=1` | 正好一个完整周期 |
+
+        要按文件里的设置走（老口径）就传 `apply_file_settings=True`。
+        """
+        from .sources import import_data as _import_data
+
+        ld = load_schedule_from_imports([_import_data(data, source="api:inline")],
+                                        cycle_hours=cycle_hours, hours=hours)
+        self.loaded = ld
+        self.schedule = ld.schedule
+        self.initial_moods.clear()
+        self.mood_events.clear()
+        self._sync_from_schedule()
+        if not apply_file_settings:
+            # 换心情（进驻事件）：本入口默认**关**，且不继承文件里的逐班覆盖。
+            self.entry_events = False
+            self.entry_swap_with = None
+            self.entry_scope = "dorm"
+            self.entry_restore_back = True
+            self.entry_when = "full"
+            self.entry_per_shift = []
+            self.idle_globals = {}
+            self.idle_entries = {}
+        if entry_events is not None:
+            self.entry_events = bool(entry_events)
+        # 闲置入宿：本入口默认**开**（未显式指定时）；显式 `False` 才关。
+        self.idle_to_dorm = True if idle_to_dorm is None else bool(idle_to_dorm)
+        if cycles is not None:
+            self.set_cycles(int(cycles))
         self.recompute()
         return ld
 
@@ -248,6 +299,123 @@ class Session:
     def red_face_spans(self, name: str) -> List[Tuple[Decimal, Decimal]]:
         """某人的红脸区间 `[(起, 止), ...]`（单位小时，绝对时刻）。"""
         return self.traj.red_face_spans(name) if self.traj is not None else []
+
+    def layout_at(self, t) -> Optional[dict]:
+        """**（绝对）时刻 t 的基地布局快照**：每间房 + 在位干员 + 该刻心情与速率。
+
+        读的是**引擎那份布局副本**（`Trajectory.world_at(t)`）—— 换心情 / 闲置入宿换过人之
+        后的**真实**排布，**不是**导入的那份快照（`schedule.shifts[i].world`）；两者在换过人
+        之后会不一样。落在班次边界取**右侧**（与 `mood_at` / `rate_at` 同口径）。
+
+        返回 `None` = 还没有轨迹（尚未载入排班）。数值是 `Decimal`，出参由 `api` 侧收敛。
+        """
+        if self.traj is None or self.schedule is None:
+            return None
+        t = to_decimal(t)
+        world = self.traj.world_at(t)
+        if world is None:
+            return None
+        cycle_no, in_cycle = self.cycle_of(t)
+        idx = self.shift_index_at(t)
+
+        def _person(o, slot=None) -> dict:
+            row = {"name": o.name, "mood": self.mood_at(o.name, t),
+                   "rate": self.rate_at(o.name, t),
+                   "elite": o.elite, "level": o.level}
+            if slot is not None:
+                row["slot"] = slot
+            return row
+
+        rooms: List[dict] = []
+        placed = set()
+        for i, f in enumerate(world.facilities):
+            rooms.append({
+                "index": i + 1,
+                "type": f.label,
+                "name": f.display_name,
+                "level": f.level,
+                "capacity": f.capacity,
+                "enabled": bool(f.enabled),
+                "operators": [_person(o, slot) for slot, o in enumerate(f.operators, start=1)],
+                "deputies": [_person(o) for o in f.deputies],
+            })
+            placed.update(o.name for o in f.operators)
+            placed.update(o.name for o in f.deputies)
+        return {
+            "at": t,
+            "cycle": cycle_no,
+            "in_cycle": in_cycle,
+            "shift_index": idx + 1,
+            "shift_label": self.schedule.shifts[idx].label,
+            "rooms": rooms,
+            # 「不在基建」= 既不在工作设施、也不在宿舍（心情一条平线，见 `bench_names`）
+            "detached": [_person_light(self, n, t) for n in self.traj.names if n not in placed],
+            "moods": self.moods_at(t),
+        }
+
+    def closure(self, cycles: int = 3) -> Optional[dict]:
+        """**闭环体检**：把同一排班连跑 `cycles` 个周期，看心情是否收敛（＝布局能不能长期跑）。
+
+        口径：`cycles` 是"心情跨周期连续"（见 `simulate_schedule`），所以第 k 个周期末的心情
+        就是"下一轮开局的心情"。若第 k 与 k−1 个周期末**逐人相同**，说明第 k 轮起进入固定点
+        ——这套布局可以一直跑下去（是否有人红脸另算，见 `layout_sustain_hours`）。
+
+        ⚠️ **会改会话的 `cycles` 并重算**（与 `moods` 的 `cycles` 参数同一口径）——
+        本方法是"改成多周期看收敛"，返回的 `cycles` 就是改完的值。
+
+        返回 `None` = 尚未载入排班。
+        """
+        if self.schedule is None:
+            return None
+        self.set_cycles(cycles)
+        self.recompute()
+        cycle_hours = self.schedule.cycle_hours
+        starts: Dict[int, Dict[str, Decimal]] = {}
+        ends: Dict[int, Dict[str, Decimal]] = {}
+        for k in range(1, self.cycles + 1):
+            starts[k] = self.moods_at(cycle_hours * (k - 1))
+            ends[k] = self.moods_at(cycle_hours * k)
+
+        converged_from: Optional[int] = None
+        for k in range(2, self.cycles + 1):
+            if _same_moods(ends[k], ends[k - 1]):
+                converged_from = k
+                break
+
+        worst_t: Optional[Decimal] = None
+        bottleneck: Optional[str] = None
+        red: Dict[str, list] = {}
+        for n in self.traj.names:
+            spans = self.red_face_spans(n)
+            if spans:
+                red[n] = [[a, b] for a, b in spans]
+                if worst_t is None or spans[0][0] < worst_t:
+                    worst_t, bottleneck = spans[0][0], n
+
+        delta = {n: ends[self.cycles][n] - starts[1][n] for n in self.traj.names}
+        if converged_from is None:
+            verdict = (f"未收敛：{self.cycles} 个周期后周期末心情仍在变化"
+                       f"（把 cycles 调大再看）")
+        elif worst_t is None:
+            verdict = (f"稳定：第 {converged_from} 周期起周期末心情逐人不再变化，"
+                       f"且整段无人红脸")
+        else:
+            verdict = (f"稳定但有人红脸：第 {converged_from} 周期起周期末不再变化，"
+                       f"但 {bottleneck} 在 {worst_t}h 就红了脸")
+        return {
+            "cycles": self.cycles,
+            "cycle_hours": cycle_hours,
+            "cycle_start_moods": {str(k): v for k, v in starts.items()},
+            "cycle_end_moods": {str(k): v for k, v in ends.items()},
+            "converged": converged_from is not None,
+            "converged_from_cycle": converged_from,
+            # 周期末 vs 周期初（>0 = 越跑越多、<0 = 越跑越少）
+            "delta_last_vs_first": delta,
+            "layout_sustain_hours": worst_t,
+            "bottleneck": bottleneck,
+            "red_face": red,
+            "verdict": verdict,
+        }
 
     def operator_names(self) -> List[str]:
         return self.schedule.operator_names() if self.schedule else []
@@ -775,6 +943,19 @@ class Session:
 # ============================================================================
 # 小工具（界面与 API 共用，避免两处各写一份）
 # ============================================================================
+def _person_light(session: "Session", name: str, t) -> dict:
+    """「不在基建」的人在 `layout_at` 里的那一行：心情一条平线，速率恒为 0。"""
+    return {"name": name, "mood": session.mood_at(name, t), "rate": ZERO}
+
+
+def _same_moods(a: Dict[str, Decimal], b: Dict[str, Decimal],
+                eps: Decimal = Decimal("1e-9")) -> bool:
+    """两组"全员心情"是否逐人相同（闭环判据；`eps` 吸收 Decimal 除法的末位舍入）。"""
+    if set(a) != set(b):
+        return False
+    return all(abs(a[n] - b[n]) <= eps for n in a)
+
+
 def _dorm_index_of(label) -> Optional[int]:
     """「宿舍01」→ `1`；不是这种标签（人名 / 空）就返回 `None`。"""
     text = (label or "").strip()
