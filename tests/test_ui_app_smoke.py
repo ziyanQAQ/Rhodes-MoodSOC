@@ -123,6 +123,43 @@ class Test界面冒烟(unittest.TestCase):
         self.assertTrue(app.stats.cget("text"))               # 关键数值已填
         self.assertEqual(len(app.shift_buttons), 3)
 
+    def test_周期数大于1时班次条能选到各周期(self):
+        """底部班次条随**周期数**加一段「周期」选择器（用户口径：周期数不同时，
+        要能选到**不同周期里的时段**）：
+
+        - 周期数 = 1 → 没有选择器（没有"哪一周期"这个问题）；
+        - 周期数 = 3 → `周期 [1][2][3] 班次 [1.…][2.…][3.…]`，当前周期/当前班次高亮；
+        - 点班次 `i` → 跳「**当前所在周期**的第 `i` 班」；点周期 `c` → 跳「第 `c` 周期的**同一班**」。
+        周期不另存状态（唯一真源＝`current_t` 落在哪个周期），所以拖滑块时选择器会自然跟随。
+        """
+        app = self.app
+        self.assertEqual(app.cycle_buttons, [])                 # 周期数 1：没有选择器
+        app.cycles_var.set("3")
+        app._on_cycles()
+        app.update_idletasks()
+        self.assertEqual([b.cget("text") for b in app.cycle_buttons], ["1", "2", "3"])
+        self.assertEqual(len(app.shift_buttons), 3)
+
+        app._goto_shift(2)                                      # 第 1 周期第 3 班（18h）
+        self.assertEqual(app.current_t, Decimal("18"))
+        self.assertEqual(app.shift_buttons[2].cget("style"), "Accent.TButton")
+
+        app._goto_cycle(2)                                      # 第 2 周期的**同一班**（18+24）
+        self.assertEqual(app.current_t, Decimal("42"))
+        self.assertEqual(app.cycle_buttons[1].cget("style"), "Accent.TButton")
+
+        app._goto_shift(0)                                      # 第 2 周期第 1 班（24h）
+        self.assertEqual(app.current_t, Decimal("24"))
+        self.assertEqual(app.shift_buttons[0].cget("style"), "Accent.TButton")
+        self.assertEqual(app.cycle_buttons[1].cget("style"), "Accent.TButton")
+        self.assertIn("第2天", app.time_label.cget("text"))      # 时刻读数是绝对钟点
+
+        app.cycles_var.set("1")                                 # 收尾：回到 1 周期
+        app._on_cycles()
+        app.update_idletasks()
+        self.assertEqual(app.cycle_buttons, [])
+        self.assertEqual(app.current_t, Decimal("0"))            # 超出新跨度 → 夹回起点
+
     def _slot_for(self, name: str):
         """按干员名取当前看板上的位置控件（班次切换会重建控件，故不能缓存引用）。"""
         return next(s for s in self.app.board.slots if s.operator == name)
@@ -167,13 +204,13 @@ class Test界面冒烟(unittest.TestCase):
                                  "2. 09:00 – 15:00",
                                  "3. 15:00 – 21:00"])
 
-        app.apply_shift_hours([Decimal("8")] * 3)   # 改班次时长 → 再重建
+        app.apply_shift_hours([Decimal("8")] * 3)   # 改班次时长 → 再重建（班次名会同步改名）
         app.update_idletasks()
         labels, texts = bar()
         self.assertEqual(labels, ["班次"])
         self.assertEqual(texts, ["1. 21:00 – 05:00（第2天）", "2. 05:00 – 13:00", "3. 13:00 – 21:00"])
         shown = bands()
-        self.assertIn("Shift 1  8h", shown)                  # 名字里的 12h 已过期 → 用真值
+        self.assertIn("Shift 1 · 8h", shown)                 # 名字里的时长已跟着改
         self.assertFalse([t for t in shown if "Shift" in t and "12h" in t],
                          f"班次带还写着过期的 12h：{shown}")
 

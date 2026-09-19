@@ -43,6 +43,7 @@ from __future__ import annotations
 import bisect
 import copy
 import json
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -147,6 +148,44 @@ def shifts_from_import(imp, source: str = "") -> List[Shift]:
                   entry_events=cfg, initial_global=dict(imp.initial_global or {}),
                   detached=list(s.detached or []))
             for s in imp.shifts]
+
+
+#: 班次名**结尾**那个内嵌时长（`Shift 1 · 12h` / `12小时` / `6 h`）——与 `store/maa.py`
+#: 解析时长提示用的是同一套写法；只在"改时长"时用来改名，见 `relabel_hours`。
+_DURATION_AT_END = re.compile(r"(?P<num>\d+(?:\.\d+)?)\s*(?P<unit>h|H|小时|時)(?=\s*$)")
+
+
+def _plain_hours(value) -> str:
+    """小时数的纯文本写法（`8` / `7.5` / `0.25`）—— `ui.theme.fmt_hours` 去掉 `h` 后缀同义。"""
+    d = to_decimal(value).normalize()
+    text = format(d, "f")
+    return text if text else "0"
+
+
+def relabel_hours(label: str, old_hours, new_hours) -> str:
+    """班次名里的**内嵌时长**跟着"改时长"一起改（用户口径）。
+
+    | 名字 | 旧 → 新 | 结果 |
+    |---|---|---|
+    | `Shift 1 · 12h` | 12h → 8h | `Shift 1 · 8h` |
+    | `Shift 2 · 6h` | 12h → 8h | `Shift 2 · 6h`（写的不是旧时长 → **不动**） |
+    | `第一个班` / `A` | 任意 | 原样（不含时长 → **不动**） |
+
+    ⚠️ 只认**结尾**那个时长，且必须**等于旧时长**才替换：名字是导入时按当时的时长拼的
+    （`store/sources.py` 会拼 `· 12h`），改了时长不改名，看板头部 / 导出 / 设置里会一直
+    写着旧时长；但"用户自己起的名字"里的数字不能乱动。
+    ⚠️ 单位与空格原样保留（`· 12h` → `· 8h`、`12小时` → `8小时`、`6 h` → `8 h` 的写法各自保持）。
+    """
+    m = _DURATION_AT_END.search(label or "")
+    if m is None:
+        return label
+    try:
+        written = to_decimal(m.group("num"))
+    except (ArithmeticError, ValueError):
+        return label
+    if written != to_decimal(old_hours):
+        return label
+    return f"{label[:m.start('num')]}{_plain_hours(new_hours)}{label[m.end('num'):]}"
 
 
 def _hours_from_hints(shifts: List[Shift], cycle_hours: Optional[Decimal]) -> Decimal:
@@ -327,15 +366,38 @@ class Schedule:
 
     # ------------------------------------------------------------------ 编辑
     def with_hours(self, hours: Sequence) -> "Schedule":
-        """改班次时长（返回新的 Schedule；周期同步为新旧之和，故必然自洽）。"""
+        """改班次时长（返回新的 Schedule；周期同步为新旧之和，故必然自洽）。
+
+        ⚠️ **班次名里内嵌的旧时长会一起改**（用户口径）：`Shift 1 · 12h` 改成 8h 后
+        名字变 `Shift 1 · 8h`（`relabel_hours`；不含时长或写的不是旧时长的名字一字不动）。
+        同时把 `entry_events.per_shift` 里**按班次名写的键**重映射成新名 ——
+        否则"按班次覆盖"会**静默失效**（`EntryShiftOverride.matches` 是拿键跟新班次名比的）。
+        """
         if len(hours) != len(self.shifts):
             raise ValueError(f"需要 {len(self.shifts)} 个时长，收到 {len(hours)} 个")
-        new = [Shift(label=s.label, hours=to_decimal(h),
+        new_hours = [to_decimal(h) for h in hours]
+        names = [relabel_hours(s.label, s.hours, h)
+                 for s, h in zip(self.shifts, new_hours)]
+        # 按班次名写的覆盖键要跟着改名（按序号写的键不受影响）
+        has_cfg = any(s.entry_events is not None for s in self.shifts)
+        cfg = None
+        if has_cfg:
+            cfg = copy.deepcopy(self.entry_config())
+            old_names = [s.label for s in self.shifts]
+            for ov in getattr(cfg, "per_shift", None) or ():
+                key = getattr(ov, "key", None)
+                if isinstance(key, str):
+                    text = key.strip()
+                    for old, new in zip(old_names, names):
+                        if text == old and old != new:
+                            ov.key = new
+                            break
+        new = [Shift(label=name, hours=h,
                      facilities=copy.deepcopy(s.facilities), source=s.source,
-                     entry_events=s.entry_events,
+                     entry_events=cfg if has_cfg else None,
                      initial_global=dict(getattr(s, "initial_global", {}) or {}),
                      detached=list(getattr(s, "detached", []) or []))
-               for s, h in zip(self.shifts, hours)]
+               for s, h, name in zip(self.shifts, new_hours, names)]
         return Schedule(new, sum((s.hours for s in new), ZERO), self.start_clock,
                         list(self.detached))
 

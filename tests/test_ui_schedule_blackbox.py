@@ -16,6 +16,7 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
+from mood_soc.models import build_entry_event_config  # noqa: E402
 from ui.schedule import (EVENT_THRESHOLDS, MoodSetEvent, Schedule, all_operator_names,
                          default_initial_moods, load_schedule, shift_from_facilities,
                          simulate_schedule)
@@ -308,6 +309,59 @@ class Test编辑接口(MoodAssertMixin, unittest.TestCase):
         self.assertEqual([s.hours for s in new.shifts], [D("8")] * 3)
         self.assertEqual(new.cycle_hours, D("24"))
         self.assertEqual([s.hours for s in self.sch.shifts], [D("12"), D("6"), D("6")])   # 原对象不变
+
+    def test_改时长会同步改班次名里的时长(self):
+        """**班次名里内嵌的旧时长跟着改**（用户口径）：名字是导入时按当时的时长拼的，
+        不改的话看板头部 / 导出 / 设置里会一直写着旧时长。
+
+        规则（`store.schedule.relabel_hours`）：只认**结尾**那个时长、且必须**等于旧时长**；
+        不含时长（`第一个班`）或写的不是旧时长（`Shift 2 · 6h` 在 12h→8h 时）就**一字不动**。
+        """
+        from store.schedule import Schedule, Shift, relabel_hours
+
+        self.assertEqual(relabel_hours("Shift 1 · 12h", D("12"), D("8")), "Shift 1 · 8h")
+        self.assertEqual(relabel_hours("Shift 2 · 6h", D("12"), D("8")), "Shift 2 · 6h")
+        self.assertEqual(relabel_hours("第一个班", D("12"), D("8")), "第一个班")
+        self.assertEqual(relabel_hours("12小时", D("12"), D("7.5")), "7.5小时")
+        self.assertEqual(relabel_hours("6 h", D("6"), D("8")), "8 h")
+
+        new = self.sch.with_hours([D("8"), D("8"), D("8")])
+        self.assertEqual([s.label for s in new.shifts],
+                         ["Shift 1 · 8h", "Shift 2 · 8h", "Shift 3 · 8h"])
+        self.assertEqual([s.label for s in self.sch.shifts],       # 原对象不变
+                         ["Shift 1 · 12h", "Shift 2 · 6h", "Shift 3 · 6h"])
+
+        # 自定义名字（不含时长）不动
+        plain = Schedule([Shift(label="第一个班", hours=D("12"), facilities=[]),
+                          Shift(label="第二个班", hours=D("12"), facilities=[])], D("24"))
+        self.assertEqual([s.label for s in plain.with_hours([D("8"), D("16")]).shifts],
+                         ["第一个班", "第二个班"])
+
+    def test_改时长会把按班次名写的覆盖键一起改(self):
+        """`entry_events.per_shift` 允许**按班次名**定位班次（`{"Shift 1 · 12h": {...}}`）——
+        改名时必须把键重映射，否则那条"按班次覆盖"会**静默失效**。
+        """
+        from store.schedule import Schedule, Shift, shift_from_facilities
+
+        cfg = build_entry_event_config({"enabled": True, "per_shift": {
+            "Shift 1 · 12h": {"enabled": False},          # 按名字：改成 8h 后仍该命中第 1 班
+            "2": {"swap_with": "巫恋"},                    # 按序号：不受改名影响
+        }})
+        facs = [{"type": "制造站", "level": 3, "operators": ["泡泡"]}]
+        sch = Schedule([shift_from_facilities("Shift 1 · 12h", D("12"), facs, entry_events=cfg),
+                        shift_from_facilities("Shift 2 · 6h", D("6"), facs, entry_events=cfg),
+                        shift_from_facilities("Shift 3 · 6h", D("6"), facs, entry_events=cfg)],
+                       D("24"))
+        new = sch.with_hours([D("8"), D("8"), D("8")])
+        self.assertEqual([s.label for s in new.shifts],
+                         ["Shift 1 · 8h", "Shift 2 · 8h", "Shift 3 · 8h"])
+        cfg_new = new.entry_config()
+        self.assertEqual([ov.key for ov in cfg_new.per_shift], ["Shift 1 · 8h", "2"])
+        self.assertFalse(new.entry_config_for_shift(0).enabled)        # 那条覆盖**仍然命中**
+        self.assertEqual(new.entry_config_for_shift(1).swap_with, "巫恋")
+        # 原对象（键指向旧名）不受影响
+        self.assertEqual([ov.key for ov in sch.entry_config().per_shift],
+                         ["Shift 1 · 12h", "2"])
 
     def test_替换某个班次的布局(self):
         facs = [{"type": "制造站", "level": 3, "name": "制造站#1", "operators": ["泡泡", "火神"]}]

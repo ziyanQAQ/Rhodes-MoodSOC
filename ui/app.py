@@ -452,6 +452,8 @@ class MoodSocApp(tk.Tk):
         self.shift_bar = tk.Frame(bottom, bg=theme.BG)
         self.shift_bar.pack(fill="x")
         self.shift_buttons: list = []
+        # 「周期」选择器（只在周期数 > 1 时出现）：见 `_build_shift_buttons`
+        self.cycle_buttons: list = []
 
         slide = tk.Frame(bottom, bg=theme.BG)
         slide.pack(fill="x", pady=(4, 0))
@@ -1210,6 +1212,8 @@ class MoodSocApp(tk.Tk):
 
     def _on_cycles(self):
         self.session.cycles = int(self.cycles_var.get())
+        # 周期数变了 → 底部「周期」选择器要跟着出现/消失（`_build_shift_buttons` 按它决定）
+        self._build_shift_buttons()
         self.recompute(fit_slider=True)
         # 逐次表按周期展开、干员与心情的「周期」下拉也有 1~周期数 项 → 两个分区都得重建
         self._invalidate_settings("idle", "batch")
@@ -1283,36 +1287,68 @@ class MoodSocApp(tk.Tk):
 
     # ================================================================== 班次条
     def _build_shift_buttons(self):
-        """底部班次按钮＝**切换用**，只写「序号 + 时段」（`1. 00:00 – 12:00`）。
+        """底部班次条＝**纯切换器**，只写「序号 + 时段」（`1. 00:00 – 12:00`）。
 
         ⚠️ 这里**不再写班次名**：班次名（`Shift 1 · 12h`）已经在**看板头部**写着，
         上下各写一份就是"同一条班次显示两遍"；而且 MAA 的班次名里本来就带 `12h`，
         再补一个 `（12h）` 会变成 `Shift 1 · 12h（12h）`（曾经的重复显示 bug）。
         按钮上给时段更有用：一眼看出"这一班从几点到几点"。
 
-        ⚠️ **重建前把整行清空**（标签 + 按钮一起）：早先只销毁按钮、
+        **周期选择器**（用户口径：`周期数 > 1` 时要能选到**不同周期里的时段**）：
+        前面多一段 `周期 [1][2][3]`，班次按钮跳的是"**你当前所在周期**的那一班"，
+        点周期 `c` 则跳到"第 `c` 周期的**同一班**"。周期数 = 1 时这一段自动不出现
+        （没有"哪一周期"这个问题）。
+
+        ⚠️ **重建前把整行清空**（周期段 + 标签 + 按钮一起）：早先只销毁按钮、
         「班次」标签每调一次新建一个 ⇒ 导入一次/改一次时间点就多攒一个，
         底部显示成「班次 班次 班次 1. …」（实测复现，2026-09 修）。
         """
         for w in self.shift_bar.winfo_children():
             w.destroy()
         self.shift_buttons.clear()
+        self.cycle_buttons.clear()
         if self.schedule is None:
             return
+        cycles = max(1, int(self.session.cycles))
+        if cycles > 1:
+            tk.Label(self.shift_bar, text="周期", bg=theme.BG, fg=theme.MUTED,
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(0, 4))
+            for c in range(1, cycles + 1):
+                b = ttk.Button(self.shift_bar, text=str(c), width=3,
+                               command=lambda k=c: self._goto_cycle(k))
+                b.pack(side="left", padx=(0, 4))
+                self.cycle_buttons.append(b)
         tk.Label(self.shift_bar, text="班次", bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(0, 6))
         for i, _s in enumerate(self.schedule.shifts):
             b = ttk.Button(self.shift_bar,
                            text=f"{i + 1}. {self._shift_span_text(i)}",
-                           command=lambda k=i: self.set_time(self.schedule.starts[k]))
+                           command=lambda k=i: self._goto_shift(k))
             b.pack(side="left", padx=(0, 4))
             self.shift_buttons.append(b)
         self._space_only_plays(self.shift_bar)     # 新建的班次按钮也要"空格＝播放/暂停"
 
+    def _goto_cycle(self, cycle: int) -> None:
+        """跳到**第 `cycle` 周期的同一班**（"周期数 > 1 时要能选到各周期里的时段"）。"""
+        if self.schedule is None:
+            return
+        idx = self.schedule.index_at(self.current_t)
+        self.set_time(self.schedule.cycle_hours * (int(cycle) - 1) + self.schedule.starts[idx])
+
+    def _goto_shift(self, index: int) -> None:
+        """跳到**当前所在周期**里的第 `index` 班（周期由这一刻的滑块位置决定，不另存状态）。"""
+        if self.schedule is None:
+            return
+        cycle, _within = self.session.cycle_of(self.current_t)
+        self.set_time(self.schedule.cycle_hours * (cycle - 1) + self.schedule.starts[index])
+
     def _highlight_shift_button(self):
         idx = self.schedule.index_at(self.current_t) if self.schedule else -1
+        cycle = self.session.cycle_of(self.current_t)[0] if self.schedule else -1
         for i, b in enumerate(self.shift_buttons):
             b.configure(style="Accent.TButton" if i == idx else "TButton")
+        for i, b in enumerate(self.cycle_buttons):
+            b.configure(style="Accent.TButton" if i + 1 == cycle else "TButton")
 
     # ================================================================== 播放
     def toggle_play(self):
