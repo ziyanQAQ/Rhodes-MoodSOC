@@ -199,7 +199,8 @@ python main.py --mode base --demo --period 12          # 先推进 12h 再评估
 .venv/Scripts/python.exe -m api.server                   # 常驻 NDJSON（推荐）
 .venv/Scripts/python.exe -m api.cli --op capabilities    # 一次性调用
 # v3 求解结果内联喂进来 → 查某时刻整座基地的布局 + 心情 → 闭环体检
-.venv/Scripts/python.exe -m api.cli --op load_json --args @result.json \
+# （load_json 的 data 是整份结果，用 `python -c` 包一层 {"data": …} 成 req.json）
+.venv/Scripts/python.exe -m api.cli --op load_json --args @req.json \
   --then '{"op":"layout_at","args":{"at":8}}' --then '{"op":"closure","args":{"cycles":3}}'
 
 # 数据管道（改完 data/*.txt 必须按顺序跑）
