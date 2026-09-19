@@ -832,6 +832,43 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         n2 = len([m for m in two.marks if m.kind == "idle"])
         self.assertGreater(n2, n1, "第 2 个周期也应当有闲置入宿事件")
 
+    def test_跨周期位置复位_每周期都重新判定(self):
+        """⚠️ **布局副本跨周期复用**（曾经）会让"第 1 周期把她换出去"继承到后面所有周期：
+        那一班开局就没有她、**既不重判心情、也没有任何事件** —— 用户报过"菲亚梅塔 20.4 却显示
+        被闲置入宿换出"（那次换出其实是第 1 周期用 24 判的旧决定；后面几个周期压根没再判）。
+
+        现在**每段（含每个周期）都从"未动过的计划副本"重建** ⇒ 位置回排班原样、当班重新判。
+        钉两件事：
+
+        ① 每个周期的"班次 2 / 班次 3 开局"都**各有自己的一次**"她与虎狼丸 / 地灵互换"的判定
+           （不是把第 1 周期那次继承下来）；
+        ② **凡是"排班快照里有、引擎那份没有"的人，当班必须有换人事件解释**（不许凭空消失）——
+           这正是那个 bug 的现场：第 2/3 周期她"不在宿舍"却一条事件都没有。
+           ⚠️ 反过来不成立：候选集合本来就会随心情变（第 1 周期 0:00 大家都 24 ⇒ 没有候选）。
+        """
+        two = simulate_schedule(self.sch, cycles=2, idle_to_dorm=True)
+        idle = [m for m in two.marks if m.kind == "idle"]
+        for c, base in enumerate((D("0"), D("24"))):
+            for offset, mate in ((D("12"), "虎狼丸"), (D("18"), "地灵")):
+                t = base + offset
+                self.assertTrue(
+                    [m for m in idle
+                     if m.t == t and f"（{mate} 心情" in m.label
+                     and "的 菲亚梅塔 互换" in m.label],
+                    f"t={t}（第 {c + 1} 周期）应当有「{mate} ↔ 菲亚梅塔」的换人事件，"
+                    f"每周期都要重新判定、不是继承")
+        for base in (D("0"), D("24")):
+            for shift in (1, 2, 3):
+                t = base + self.sch.starts[shift - 1]
+                world = two.world_at(t)
+                snap = self.sch.shifts[shift - 1].world
+                gone = ({o.name for o in snap.all_operators()}
+                        - {o.name for o in world.all_operators()})
+                said = " / ".join(m.label for m in two.marks if D(m.t) == t)
+                for name in sorted(gone):
+                    self.assertIn(f"的 {name} 互换", said,
+                                  f"t={t} 的 {name} 不见了，但这一班没有任何换人事件解释")
+
 
     def test_逐次设置_同一人不同班次可以不一样(self):
         """`IdleToDormEntry` 可带 `cycle`/`shift`：同一人在第 2 班不动、第 3 班仍参与。"""

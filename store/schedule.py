@@ -917,8 +917,9 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     另外他们**不参与任何技能计数**（计数读的是 `world.facilities` 里的进驻者），
     这条有测试钉死（`tests/test_equivalence.py::Test不在基建`）。
 
-    实现说明：每个班次都会**深拷贝一份布局副本**（`worlds`）供模拟使用——
-    这样 `entry_restore_back=False`（位置也互换）只在这次模拟里生效，不会污染排班本身；
+    实现说明：**每一段（含每个周期的每一班）都从一份"未动过的计划副本"重建**当前布局
+    （`pristine` —— 见段循环里的说明）——这样 `entry_restore_back=False`（位置也互换）与
+    闲置入宿的换人**只在这一次生效**，既不污染排班本身、也不会跨周期继承；
     同时把"这一班的有效配置"挂到副本上，`apply_entry_events` 直接读它。
     """
     if cycles < 1:
@@ -942,13 +943,15 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         #    "只在她满心情时换 / 等她回满再换" 覆盖成"强制立刻换"。
         when=(normalize_entry_when(when) or "immediate"),
     )
-    worlds = [copy.deepcopy(s.world) for s in schedule.shifts]
+    #: 每个班次一份**"从未被动过"的计划副本** —— 引擎每段（含每个周期）都从它**重建**当前布局，
+    #: 见下面段循环里的说明（副本绝不能被就地改着复用）。
+    pristine = [copy.deepcopy(s.world) for s in schedule.shifts]
     # 闲置入宿：界面传了逐人设置就盖过 JSON 的（"界面口径优先"，与进驻事件同一约定）
     if idle_to_dorm:
         idle_cfg = (IdleToDormConfig(enabled=True, per_operator=list(idle_entries))
                     if idle_entries is not None else None)
         if idle_cfg is not None:
-            for w in worlds:
+            for w in pristine:
                 w.idle_to_dorm = idle_cfg
     # 每个班次解析一次"这一班的有效配置"，挂到该班次的副本上（按班次覆盖在这里生效）。
     # ⚠️ 覆盖列表要**显式传给 resolve_entry_config**：它默认读的是"第一个参数"的 per_shift，
@@ -958,7 +961,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     for i, s in enumerate(schedule.shifts):
         eff = resolve_entry_config(base, i, s.label, per_shift)
         effs.append(eff)
-        worlds[i].entry_events = eff
+        pristine[i].entry_events = eff
 
     times: List[Decimal] = [ZERO]
     series: Dict[str, List[Decimal]] = {n: [moods[n]] for n in names}
@@ -995,14 +998,16 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     seg_worlds: List[BaseLayout] = []
 
     for seg_i, (t0, seg_end, idx) in enumerate(segments):
-        world = worlds[idx]                 # 本班次的**可变副本**（位置互换只发生在副本里）
+        # ⚠️ **每段（含每个周期）都从"未动过的计划副本"重建**：布局改动只有两处 ——
+        #    进驻事件的「位置也一起互换」（`restore_back=False`）与**闲置入宿的换人** ——
+        #    它们都**就地改**这份副本；而同一个班次会被**跨班次、跨周期复用**，
+        #    不重建就会把上一轮改过的位置继承下来：第 2/3 周期那一班开局就没有她、
+        #    **既不重判心情、也没有任何事件**（用户报过"菲亚梅塔 20.4 却显示被闲置入宿换出"：
+        #    那次换出是第 1 周期用 24 判的旧决定，后面几个周期压根没再判）。
+        #    ⚠️ 重建只碰**布局**：心情在 `moods` 里，照旧**跨周期连续**（那是模型口径）。
+        #    成本 = 每段一次深拷贝（示例实测 ≈0.35ms，7 周期 21 段 ≈ 7ms）。
+        world = copy.deepcopy(pristine[idx])
         eff = effs[idx]                     # 本班次的**有效**进驻事件配置（含按班次覆盖）
-        # ⚠️ 位置也可能被改过（`restore_back=False` 的「位置也一起互换」）：那就**从计划重建**
-        #    这一班的副本。副本是跨班次 / 跨周期复用的，不重建就会带着上一轮换过的位置——
-        #    多周期时她可能因此不在宿舍里，「进驻宿舍时」这个触发条件直接不成立，那一班静默不换。
-        if eff.restore_back is False and worlds[idx] is not schedule.shifts[idx].world:
-            world = worlds[idx] = copy.deepcopy(schedule.shifts[idx].world)
-            world.entry_events = eff
         pending: List[str] = []             # "等她回满心情再换"的触发者（force）
         # —— 进驻事件（可选）：进入班次那一刻先试一次 ——
         # 这是 t0 处的**跳变**：t0 之前是换心情前的值，t0 起是换之后的（就地改写节点，
@@ -1010,10 +1015,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         # 总开关（entry_events）打开时，逐班看这次要不要做（per_shift 里写 "enabled": false 就不做）。
         if entry_events and eff.enabled is not False:
             _sync_moods(world, moods)
-            # ⚠️ 班次开始 = 一次**新的进驻瞬间**：同一个副本会被**跨周期复用**
-            #    （`worlds[idx]` 只建一次，第 2 周期起还是它），而 `apply_entry_events`
-            #    用 `Operator.entry_swapped` 保证"同一份快照只结算一次"——不归位的话
-            #    第 2 个周期开始就被标记挡住、换心情一次都不触发（多周期漏算的老 bug）。
+            # ⚠️ 班次开始 = 一次**新的进驻瞬间**：副本虽然每段都重建（见段首），但
+            #    `apply_entry_events` 用 `Operator.entry_swapped` 保证"同一份快照只结算一次"，
+            #    而**段内**还会因「等她回满」再进这个分支 ⇒ 每次进班次前都要归位，
+            #    否则第 2 个周期被标记挡住、换心情一次都不触发（多周期漏算的老 bug）。
             reset_entry_events(world)
             events = apply_entry_events(world, enabled=True)
             # ⚠️ 事件里可能只有"未执行"的说明（如配了 force 但她此刻没满心情）——
@@ -1042,10 +1047,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             for ev in apply_idle_to_dorm(world, enabled=True, idle=idle_moods, scope=scope):
                 marks.append(Mark(t0, "idle", ev.detail))
         # 本段**实际生效**的那份布局 → `Trajectory.world_at(t)`（界面看板 / API `layout_at` 都读它）。
-        # ⚠️ 闲置入宿**就地改这份副本**，而同一个副本会被**跨周期复用**（`worlds[idx]` 只建一次）：
-        #    整轮跑完后它只剩"最后一次跑这一班"的样子，直接记引用会让 `world_at(t)` 在第 1/2 周期
-        #    给出第 N 周期的排布。所以开着闲置入宿时**每段留一份快照**；
-        #    没开时位置不会被改（换心情只改心情值，位置互换那支自己会重建副本），照旧记引用。
+        # ⚠️ 闲置入宿 / 位置互换会**就地改这份副本**（`world` 是"本段这份"，每段重建，不再跨周期复用），
+        #    而**段内**还可能再改它（`restore_back=False` 的「等她回满再换」）：快照要留在**段首**，
+        #    这样 `world_at(t)` 给出的是"这一段开始时"的排布 —— 与"这一刻谁在宿舍"的判定口径一致。
+        #    没开闲置入宿时位置只在段内被改（换心情只改心情值），照旧记引用。
         seg_worlds.append(copy.deepcopy(world) if idle_to_dorm else world)
         groups = [[o.name for o in f.operators] for f in world.facilities]
 

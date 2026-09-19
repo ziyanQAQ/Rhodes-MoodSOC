@@ -109,7 +109,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 459 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 460 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
@@ -184,9 +184,10 @@ documents/
     超出 `PAGE_H` 由 `_fit_table_height()` 自校正兜底（见 10-图形界面.md §5 第 16~20 条）。
 
 20. **两层"世界"：界面显示"她在哪"一律读引擎那份（模拟副本），别读排班快照。**
-    引擎每班深拷贝一份布局（`store/schedule.py: worlds`），**进驻事件的位置互换与闲置入宿的
-    换人只改副本**；快照＝"你导入的排班"，导出时原样写回、**不改**。于是同一人两份"她在哪"，
-    换过人后必然不一致（实测：快照"在贸易站上班" vs 引擎"不在基建、平线 0"）。
+    引擎**每段**都从一份"未动过的计划副本"重建当前布局（`store/schedule.py: pristine` + 段首
+    `copy.deepcopy`），**进驻事件的位置互换与闲置入宿的换人只改这份副本**；快照＝"你导入的排班"，
+    导出时原样写回、**不改**。于是同一人两份"她在哪"，换过人后必然不一致
+    （实测：快照"在贸易站上班" vs 引擎"不在基建、平线 0"）。
     读法：`Trajectory.world_at(t)` ← `ui/app.py: _engine_world()` / `world_at_abs()`；
     落在班次边界取**右侧**（与 `mood_at`/`rate_at` 同口径）。
     看板、全员一览的位置标记、对点查询的所在设施、「干员与心情」的位置列都走它；
@@ -194,6 +195,11 @@ documents/
     ⚠️ **编辑仍写快照**（`set_slots` / 面板选人），改完 `recompute` 再重新派生副本。
     ⚠️ 开着**闲置入宿**时，引擎**每段留一份深拷贝快照**（否则同一个副本跨周期复用，
     `world_at(t)` 会在第 1/2 周期给出第 N 周期的排布——修过的 bug）；API 的 `layout_at` 读同一份。
+    ⚠️ **每段（含每个周期）都要从"未动过的计划副本"重建**（`pristine` → 段首 `deepcopy`）：
+    副本会被就地改（闲置入宿换人 / `restore_back=False` 的位置也互换），**跨班次跨周期复用它**
+    会让"第 1 周期把她换出去"继承到后面所有周期——那一班开局就没有她、**既不重判心情也没有事件**
+    （用户报过"菲亚梅塔 20.4 却显示被闲置入宿换出"）。**位置**每周期复位，**心情**仍跨周期连续
+    （在 `moods` 里）；代价 = 每段一次深拷贝（≈0.35ms）。回归 `test_跨周期位置复位_每周期都重新判定`。
 
 21. **「周期数」上限是 `store.session.MAX_CYCLES = 7`（唯一口径）**：界面两处下拉、`set_cycles`、
     `closure`、`idle_groups`、API `set_timeline`/`closure` 全部**夹到 1~7**（越界取边界、不报错；
