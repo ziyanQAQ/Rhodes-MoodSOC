@@ -252,6 +252,50 @@ class Test轨迹(MoodAssertMixin, unittest.TestCase):
         self.assertEqual(labels, [(D("0"), "Shift 1 · 12h"), (D("12"), "Shift 2 · 6h"), (D("18"), "Shift 3 · 6h")])
 
 
+class Test阈值吸附(MoodAssertMixin, unittest.TestCase):
+    """回归（`04-特殊机制.md` 第 35 条）：心情跨阈值时的「吸附」**不能把已经积分的值往回拽**。
+
+    实测过的 bug：吸附表是在**积分之后**才应用的，而那一刻 `nxt` 可能已在
+    `MAX_SEGMENT_HOURS`（0.25h）之外 —— 积分早就把这个人推过阈值了，"吸附"却把它拽回阈值，
+    白扣掉 4/h × 0.25h = **1.0** 点心情。表现：示例排班宿舍段（12.95~13.2h）同宿舍 8 名干员
+    的曲线被压平在阈值 20 上（看着像"卡在 20 不动、又没到 24"），而**把步长调到 0.05h 就全对**。
+    """
+
+    def test_跨阈值不被倒扣到阈值上(self):
+        """卡夫卡 12:00 起在宿舍#2（基础回复 4/h、12:00 时心情 16.2）⇒ 13:12 应是 21.0。"""
+        traj = simulate_schedule(load_schedule([SAMPLE_MAA]), cycles=1)
+        self.assertMood(traj.mood_at("卡夫卡", D("13.2")), D("21"), "宿舍回复段")
+        self.assertMood(traj.mood_at("卡夫卡", D("13.9")), D("23.8"), "宿舍回复段")
+
+    def test_同宿舍其他人也不被压平(self):
+        """那次 bug 一次压平了同宿舍 8 人，逐人钉住（阈值 20 上不许出现平台）。"""
+        traj = simulate_schedule(load_schedule([SAMPLE_MAA]), cycles=1)
+        for name in ("娜斯提", "水月", "褐果", "炎熔", "伺夜", "但书", "空弦", "卡夫卡"):
+            self.assertMood(traj.mood_at(name, D("13.0")), D("20.2"), name)
+            self.assertMood(traj.mood_at(name, D("13.2")), D("21"), name)
+
+    def test_步长不影响任何中间点(self):
+        """默认步长（0.25h）与极小步长（0.001h）算出的曲线必须一致。
+
+        "算得对"的定义之一就是**与积分步长无关**——这个 bug 只有它能拦住
+        （修之前两者最多差 1.0）。
+        """
+        sch = load_schedule([SAMPLE_MAA])
+        coarse = simulate_schedule(sch, cycles=1)                     # 默认 0.25h
+        fine = simulate_schedule(sch, cycles=1, max_segment=D("0.001"))
+        worst, who, at = D("0"), "", D("0")
+        for name in coarse.names:
+            t = D("0")
+            while t <= coarse.times[-1]:
+                d = abs(coarse.mood_at(name, t) - fine.mood_at(name, t))
+                if d > worst:
+                    worst, who, at = d, name, t
+                t += D("0.25")
+        self.assertLessEqual(
+            worst, TOL,
+            f"步长 0.25h 与 0.001h 的曲线不一致：{who} 在 {at}h 差 {worst}")
+
+
 class Test编辑接口(MoodAssertMixin, unittest.TestCase):
     """界面上的"改时长 / 改布局"走这两个方法（返回新 Schedule，不改原对象）。"""
 

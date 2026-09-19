@@ -671,25 +671,44 @@ def _next_event(schedule: Schedule, moods: Dict[str, Decimal], rates: Dict[str, 
                 t: Decimal, seg_end: Decimal, groups: Sequence[Sequence[str]]):
     """求下一个会让速率改变的时刻。
 
-    返回 `(时刻, 吸附表)`：吸附表 `{干员: 阈值}` 表示"这个人的心情正好在本段末尾
-    跨过该阈值"，积分后应把它**精确置为阈值**——否则 `dt = (m-h)/r` 的非终止小数会让
-    结果带上 `16.19999999999999999999999999` 这样的尾巴（数值卫生，不是精确性问题）。
+    返回 `(时刻, 吸附表, 就地吸附的人)`：
+
+    - **吸附表** `{干员: 阈值}` = "这个人的心情正好在**本段末尾**跨过该阈值"，积分之后
+      再把它**精确置为阈值**——否则 `dt = (m-h)/r` 的非终止小数会让结果带上
+      `16.19999999999999999999999999` 这样的尾巴（数值卫生，不是精确性问题）。
+    - **就地吸附的人** = 有人在 `MIN_EVENT_GAP` 以内**已经**跨过阈值（只差末位舍入那种），
+      本函数**当场**把它的心情置为阈值，并把这批人报给调用方去重算速率
+      （依赖心情的条件要按吸附后的值判）。
+
+    ⚠️ **这两条必须分开，不能把"只差 1e-26"的人也塞进吸附表**：吸附表是在**积分之后**
+    才应用的，而那一刻 `nxt` 可能已经过去了一整个 `MAX_SEGMENT_HOURS` —— 积分早就把这个人
+    推过阈值了，再"吸附"回去等于**把它往回拽**，白白扣掉一整段心情变化。
+    实测（2026-09，示例排班宿舍段）：默认步长 0.25h 时同宿舍 8 名干员在阈值处被倒扣
+    **整整 1.0**（速率 4/h × 0.25h），曲线看着像"卡在 20 不动、未满 24"；步长调到 0.05h
+    就全对——**步长不该影响结果**，所以那是 bug 不是口径。见 `04-特殊机制.md` 第 35 条。
     """
     nxt = seg_end
     snaps: Dict[str, Decimal] = {}
+    snapped: Dict[str, Decimal] = {}          # 就地吸附（此刻已在阈值上）
     # ① 心情触到阈值（含 0 与 24）
     for name, r in rates.items():
         if r == ZERO:
             continue
         m = moods[name]
         for h in EVENT_THRESHOLDS:
-            if (r > ZERO and m > h) or (r < ZERO and m < h):
-                dt = (m - h) / r
-                if MIN_EVENT_GAP <= dt < nxt - t:
-                    nxt = t + dt
-                    snaps = {name: h}
-                elif dt < MIN_EVENT_GAP and snaps:
-                    snaps[name] = h
+            if not ((r > ZERO and m > h) or (r < ZERO and m < h)):
+                continue
+            dt = (m - h) / r
+            if dt < MIN_EVENT_GAP:
+                # 此刻**已经**在阈值上（只差末位舍入）→ 就地吸附，绝不留给"积分之后"
+                if moods[name] != h:
+                    moods[name] = h
+                    snapped[name] = h
+            elif dt < nxt - t:
+                nxt = t + dt
+                snaps = {name: h}         # 更早的时刻 ⇒ 之前收的那些都在它之后，作废
+            elif dt == nxt - t:
+                snaps.setdefault(name, h)  # 同一时刻跨阈值 ⇒ 一起吸附（原先会互相顶掉）
     # ② 同设施内两人心情交叉（单体回复受益者 / 池分配对象会换人）
     for group in groups:
         for i in range(len(group)):
@@ -703,7 +722,7 @@ def _next_event(schedule: Schedule, moods: Dict[str, Decimal], rates: Dict[str, 
                 if MIN_EVENT_GAP <= dt < nxt - t:
                     nxt = t + dt
                     snaps = {}          # 交叉事件不吸附（两人相等，谁前谁后都不影响取值）
-    return nxt, snaps
+    return nxt, snaps, snapped
 
 
 def default_initial_moods(schedule: Schedule) -> Dict[str, Decimal]:
@@ -993,8 +1012,14 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                 #    （示例排班恰好对心情不敏感，换成有这类技能的真实阵容就会歪。）
                 _sync_moods(world, moods)
                 rates = rates_in_world(world, names)
-            nxt, snaps = _next_event(schedule, moods, rates, t, seg_end, groups)
-            event_fired = bool(snaps) or nxt < seg_end
+            nxt, snaps, snapped = _next_event(schedule, moods, rates, t, seg_end, groups)
+            if snapped:
+                # 就地吸附（只差末位舍入就跨过阈值）：把**刚记下的那个节点**也改成阈值，
+                # 免得轨迹里留一条 1e-26 的尾巴与内部值不一致。
+                for n, h in snapped.items():
+                    if series.get(n):
+                        series[n][-1] = h
+            event_fired = bool(snaps) or bool(snapped) or nxt < seg_end
             # ⚠️ 不许**跨过**心情指定事件：把 nxt 截到它那一刻，并丢掉原本那个时刻的阈值吸附
             #    （吸附是按"原 nxt"算的，截断之后不再成立——留着会把心情钉在不该钉的值上）。
             for tt in seg_moods:
@@ -1002,7 +1027,9 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                     nxt, snaps, event_fired = tt, {}, True
                     break
             if nxt - t > max_segment:          # 兜底上限截断 → 本段没有真事件
-                nxt, snaps, event_fired = t + max_segment, {}, False
+                nxt, snaps, event_fired = t + max_segment, {}, bool(snapped)
+            if nxt <= t:                       # 数值兜底，绝不原地打转
+                nxt, snaps, event_fired = min(t + max_segment, seg_end), {}, bool(snapped)
             if nxt <= t:                       # 数值兜底，绝不原地打转
                 nxt, snaps, event_fired = min(t + max_segment, seg_end), {}, False
             dt = nxt - t
