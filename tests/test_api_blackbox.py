@@ -1413,7 +1413,10 @@ class Test闲置入宿(unittest.TestCase):
     | ① | 任一间宿舍还有空位 | 直接住进去（宿舍顺序 `#4→#3→#2→#1`） |
     | ② | 宿舍全满 | 换「宿舍 `#4~#2` 第 2~5 位」里**实时满 24** 的那位 |
     | ③ | ②找不到 | 只在**白板**里挑满 24 的；**满 24 的菲亚梅塔**也放行 |
-    | ④ | 都找不到 | 有**点名**（`swap_with`）→ 与那位互换（**主动换，不限心情**）；没点名才不动 |
+    | ④ | 都找不到 | 有**点名**（`swap_with`）→ 与那位互换（**主动换，不限心情**）；没点名 → 与宿舍里**心情最高**的白板互换（**不限 24**）；连白板都没有才不动 |
+
+    ②③④ 的自动换人还都**跳过"挂件"**（`rules._is_pendant`：她一走别人就要吃亏）；
+    **点名不受限**。
     """
 
     @staticmethod
@@ -1460,14 +1463,62 @@ class Test闲置入宿(unittest.TestCase):
         self.assertEqual(self._where(world, "甲"), "未排班")    # 已是满心情，闲置不掉心情
         self.assertEqual(self._where(world, "加工站" if False else "丙"), "宿舍")
 
-    def test_没有满心情者可换则不动(self):
-        """宿舍既满员、又没有满心情的人 → 这一位不动，并记一条说明。"""
+    def test_第4级默认兜底_与宿舍里心情最高的白板互换(self):
+        """自动 ②③ 都挑不到**满 24** 的人时**不再直接不动**（用户口径）：与宿舍里
+        **心情最高**的白板互换 —— **不限 24**（例：最高只有 12，就跟 12 那位换）。"""
         world = self._layout(dorm=[("甲", "12")], dorm_slots=1,
                              others=[("加工站", [("丙", "6")])])
         events = apply_idle_to_dorm(world, enabled=True)
-        self.assertEqual([e.group for e in events], ["idle_to_dorm_skipped"])
+        self.assertEqual([e.group for e in events], ["idle_to_dorm"])
+        self.assertIn("优先级④的默认兜底", events[0].detail)
+        self.assertEqual(events[0].target, "甲")
+        self.assertEqual(self._where(world, "丙"), "宿舍")
+        self.assertEqual(self._where(world, "甲"), "未排班")
+
+    def test_第四级连白板都没有就这一班不动(self):
+        """④ 的默认兜底**也只挑白板**：宿舍里一个有阵营的人 —— 挑不到 → 记一条说明。"""
+        facs = [{"type": "宿舍", "level": 5, "slots": 1, "operators": [
+                    {"name": "有阵营甲", "mood": "12", "factions": ["测试阵营"]}]},
+                {"type": "加工站", "level": 1, "operators": [{"name": "丙", "mood": "6"}]}]
+        world = build_base_layout(scenario(*facs))
+        self.assertEqual([e.group for e in apply_idle_to_dorm(world, enabled=True)],
+                         ["idle_to_dorm_skipped"])
         self.assertEqual(self._where(world, "丙"), "加工站")
-        self.assertEqual(self._where(world, "甲"), "宿舍")
+        self.assertEqual(self._where(world, "有阵营甲"), "宿舍")
+
+    def test_挂件不被自动换出(self):
+        """用户口径的**挂件**："有阵营效果，**或者她在不在宿舍会影响其他干员的技能**" ——
+        自动换人（②③④）一律不碰她。
+
+        这里用**阿米娅**：她是白板，但「小提琴独奏」（`dorm_rec_all_010#1`）给同宿舍其他人
+        各 +0.15/h 群体回复 ⇒ 把她摘掉别人就变差 ⇒ 判据判她是挂件。
+        宿舍里只有她（没满）和一位有阵营的人 ⇒ ③④ 都挑不到可换的**白板** ⇒ 这一班不动；
+        点名（`swap_with`）不受这道闸限制，那是"主动换"。
+        """
+        from mood_soc.rules import _is_pendant
+
+        def world():
+            facs = [{"type": "宿舍", "level": 5, "slots": 2, "operators": [
+                        {"name": "阿米娅", "mood": "12"},
+                        {"name": "有阵营甲", "mood": "24", "factions": ["测试阵营"]}]},
+                    {"type": "加工站", "level": 1, "operators": [{"name": "丙", "mood": "6"}]}]
+            w = build_base_layout(scenario(*facs))
+            w.idle_to_dorm = build_idle_to_dorm_config({"enabled": True})
+            return w
+
+        w = world()
+        self.assertTrue(_is_pendant(w, "阿米娅"), "她在给别人 +0.15/h ⇒ 挂件")
+        self.assertFalse(_is_pendant(w, "有阵营甲"), "没给别人东西（有阵营由另一道闸管）")
+        self.assertEqual([e.group for e in apply_idle_to_dorm(w, enabled=True)],
+                         ["idle_to_dorm_skipped"])
+        self.assertEqual(self._where(w, "阿米娅"), "宿舍")
+        self.assertEqual(self._where(w, "丙"), "加工站")
+        # 点名 = 主动换：挂件挡不住它（④ 的替代动作）
+        w2 = world()
+        ev = apply_idle_to_dorm(w2, enabled=True, swap_with={"丙": "阿米娅"})
+        self.assertEqual([e.group for e in ev], ["idle_to_dorm"])
+        self.assertEqual(ev[0].target, "阿米娅")
+        self.assertEqual(self._where(w2, "丙"), "宿舍")
 
     def test_未排班的人也能进宿舍(self):
         """不在布局里的干员（本班未排班）——心情由调用方传入，也能被安排进宿舍。"""

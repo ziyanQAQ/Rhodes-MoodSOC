@@ -656,6 +656,9 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         要么有阵营（莱茵生命/龙门近卫局/叙拉古…），要么是**有阵营自身回复技能**的
         （菲亚梅塔/缪尔赛思）—— **一个白板都没有** ⇒ 这两班老实走优先级④"不动"。
         所以这里改成用**专门造的布局**验"能进"，示例排班的"进不去"另有用例钉住。
+        ⚠️ 又收了一次（用户口径"先选不是挂件"）：**挂件**（她一走别人就要吃亏）也不换。
+        这一篮子里 **阿米娅**是白板、却在给同宿舍其他人 +0.15/h 群体回复（「小提琴独奏」）
+        ⇒ ③ 必须跳过她，换出去的是**纯白板德克萨斯**（位次第 5，排在阿米娅之后）。
         """
         from store.schedule import Schedule, Shift
 
@@ -679,8 +682,9 @@ class Test闲置入宿(MoodAssertMixin, unittest.TestCase):
         self.assertMood(on.mood_at("泡泡", D("12")), D("24"),
                         "第 1 班与白板互换后应当回满（宿舍 Lv5 满氛围 4/h → 3.5h 回满）")
         idle = [m for m in on.marks if m.kind == "idle"]
-        self.assertTrue(any(("阿米娅" in m.label or "德克萨斯" in m.label) for m in idle),
-                        "应当与白板互换")
+        self.assertTrue(any("德克萨斯" in m.label for m in idle), "应当与纯白板互换")
+        self.assertFalse([m for m in idle if "阿米娅" in m.label],
+                         "阿米娅在给别人群体回复 ⇒ 她是挂件，不该被换出")
 
     def test_示例排班全满时换出满24的菲亚梅塔(self):
         """示例排班：4 间宿舍全满、白板一个都没有 —— 但 **满 24 的菲亚梅塔**在 ③ 被放行

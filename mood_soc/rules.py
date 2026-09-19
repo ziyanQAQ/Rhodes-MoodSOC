@@ -883,8 +883,12 @@ def _idle_candidates(world: BaseLayout, idle=None, only=None):
 #   ① 有空位 → 直接住进去（不换人）
 #   ② 宿舍全满 → 换「宿舍#2~#4 的第 2~5 位」里**实时满心情**的那位
 #   ③ 还找不到 → 只在**白板**（不属于任何已记录阵营的干员）里挑满心情的那位；
-#                **连白板都没有 → 这一班不换**（有阵营的不动）
-#   ④ 都不满足 → 这一班不动
+#                ＋满 24 的菲亚梅塔（`TIER3_EXTRA_NAMES`）
+#   ④ 都不满足 → 有点名 → 与你点名的那位"主动换"（不限心情）；
+#                没点名 → 与宿舍里**心情最高**的白板换（不限 24）；连白板都没有才"这一班不动"
+#
+# ②③④ 的自动换人还都**跳过"挂件"**（`_is_pendant`：她一走别人就要吃亏；
+#   用户口径"有阵营效果，或者她在不在宿舍会影响其他干员的技能"）；点名不受限。
 #
 # **同优先级内的顺序：优先 4、最后 1** ——
 #   宿舍之间：`#4 → #3 → #2 → #1`；同一宿舍内：第 2 位 → 第 5 位 → 第 1 位。
@@ -963,7 +967,8 @@ def _dorm_with_free_slot(world: BaseLayout):
     return None
 
 
-def _swap_mate(world: BaseLayout, exclude: Optional[set] = None):
+def _swap_mate(world: BaseLayout, exclude: Optional[set] = None,
+               memo: Optional[dict] = None):
     """挑一个「宿舍里**实时心情已满**」的干员互换 → `(宿舍, 干员, 第几优先级)`。
 
     两级回退（顺序即优先级）：
@@ -973,17 +978,20 @@ def _swap_mate(world: BaseLayout, exclude: Optional[set] = None):
     | `2` | 宿舍 `#4 → #3 → #2` 的**第 2~5 位** | 点名范围；每间内部按第 2 位→第 5 位 |
     | `3` | 宿舍里**其余任何位置**（含宿舍#1 的全部位次、以及上面那些宿舍的第 1 位） | 兜底 |
 
+    两级都**跳过"挂件"**（`_is_pendant`：她一走别人就要吃亏）与"自回型"（见 `_pickable`）。
+
     都找不到 → `(None, None, None)`，调用方走第 ④ 级"这一班不动"。
 
     ⚠️ **必须用"调用那一刻"的实时心情**（`op.mood`）：调用方在班次开始时已经
     `_sync_moods`，而且**先把进驻事件（换心情）结算完**才走到这里。
+    `memo` 是同一个班次内的"挂件判据"缓存（见 `_is_pendant`）。
     """
     dorms = _dorm_order(world)
     skip = exclude or set()
     by_no = dict(_dorm_numbered(world))                      # 宿舍序号（1 基）→ 设施
 
     def _pickable(dorm, op, allow_self_recovering: bool = False) -> bool:
-        """这个人此刻**真的还在**这间宿舍里、没被换出去、实时满心情、**且不是"自回型"**？
+        """这个人此刻**真的还在**这间宿舍里、没被换出去、实时满心情、**且不是"自回型" / "挂件"**？
 
         ⚠️ 必须查 `world.facility_of`：`dorm.operators` 是"跑了一整轮模拟"的那个副本，
         可能残留**已经不在基建里**的陈旧对象（她早先被换出去过）。只比对成员列表的话，
@@ -993,10 +1001,14 @@ def _swap_mate(world: BaseLayout, exclude: Optional[set] = None):
         —— 她自己就能回满，换出去只会白丢一份恢复能力、还让她的曲线"平线卡住"。
         `allow_self_recovering=True` 只给 **③ 的例外名单**（`TIER3_EXTRA_NAMES`）用：
         那些人满 24 时"待在宿舍"本来就没价值（见常量处的说明）。
+        ⚠️ `_is_pendant`（用户口径"先选不是挂件"）：她一走别人就要吃亏（见那个函数）——
+        ②③ 也一样不换她，顺位找下一位。**点名**（`_named_mate`）不受这道闸限制。
         """
         if op.name in skip or op.mood < MOOD_MAX:
             return False
         if not allow_self_recovering and _self_recovering_in_dorm(op):
+            return False
+        if _is_pendant(world, op.name, memo):
             return False
         here = world.facility_of(op.name)
         return here is not None and here is dorm
@@ -1025,6 +1037,119 @@ def _swap_mate(world: BaseLayout, exclude: Optional[set] = None):
             if (extra or _factionless(op)) and _pickable(dorm, op, allow_self_recovering=extra):
                 return dorm, op, 3
     return None, None, None
+
+
+def _is_pendant(world: BaseLayout, name: str, memo: Optional[dict] = None) -> bool:
+    """她是不是**"挂件"**（她一走，别人就要吃亏）？
+
+    用户口径（原话）：**"挂件指的就是有阵营效果，或者她在不在宿舍会影响其他干员的技能"**。
+    拆成三条：
+
+    | 类 | 判据 | 落在哪道闸 |
+    |---|---|---|
+    | **有阵营效果** | `_factionless(op)` 为假（属于某个已记录阵营） | "只换白板"那道闸（②③④ 都有） |
+    | **影响别人的技能** | 把她从宿舍摘掉 → **全基建**有人的净速率**变差** | 本函数 |
+    | **位置上的挂件** | 加工站 / 训练室入驻者、副手（不占正式位次、只为提供效果而在场） | 本函数 |
+
+    "变差" ＝ `compute_net_rate` 变大（消耗上升 / 回复下降）。**只看变差这一侧**，是为了
+    自动排除"她走了别人反而更爽"的假阳性 —— 典型是冰酿的池分摊：她走了分母少一个，
+    每人分得更多（那种不算挂件，见用户裁决）。
+
+    这一条能覆盖的机制：她把效果送给别人（宿舍群体 / 单体 / 定向回复、M17 元修正），
+    以及她的在场让别人的技能条件成立（"宿舍内每有 1 名干员"类中间货币、同设施点名条件）。
+    ⚠️ 反过来"她在场把别人的技能压住了"（如会客室「只有自身工作时」）**不算**挂件。
+
+    ⚠️ 判据用**调用那一刻**的实时心情：先是全基建各算一遍净速率，再在一份**浅拷贝探针**
+    （`_world_without`，把她从 `fac.operators` 里摘掉＝真被换出后的状态）上重新逐人比对。
+    **原世界一个字节都不改** —— 调用点正遍历着 `dorm.operators`，就地增删太脆弱。
+    ⚠️ `memo` 是**同一个班次内**的缓存（`apply_idle_to_dorm` 建一次、换过人后清空）：
+    一次判据要跑两遍全基建，不缓存的话"逐位闲置者 × 逐位候选"会重复试算
+    （实测一遍 ≈ 2.2ms / 47 人）。
+    """
+    if memo is not None and name in memo:
+        return memo[name]
+    verdict = _is_pendant_uncached(world, name)
+    if memo is not None:
+        memo[name] = verdict
+    return verdict
+
+
+def _is_pendant_uncached(world: BaseLayout, name: str) -> bool:
+    """`_is_pendant` 的实际计算（不带缓存）；见那里的口径说明。"""
+    fac = world.facility_of(name)
+    if fac is None:
+        return False
+    if fac.ftype in (FacilityType.WORKSHOP, FacilityType.TRAINING):
+        return True                          # 挂件位：本身就是"只为提供效果而在场"
+    if any(o.name == name for o in fac.deputies):
+        return True                          # 副手不占位次，同上
+    if fac.ftype != FacilityType.DORMITORY:
+        return False                         # 只对"宿舍成员被换出"这件事下判断
+
+    before = {o.name: compute_net_rate(world, o.name)
+              for o in world.all_operators() if o.name != name}
+    probe = _world_without(world, fac, name)  # 摘掉她 = 真被换出后的状态
+    for other, old in before.items():
+        if compute_net_rate(probe, other) > old:
+            return True                      # 有人变差 ⇒ 她走了别人吃亏 ⇒ 她是挂件
+    return False
+
+
+def _world_without(world: BaseLayout, fac: Facility, name: str) -> BaseLayout:
+    """**不动原世界**的一份探针：浅拷贝世界，并把 `name` 从那间设施里摘掉。
+
+    ⚠️ 为什么不用"就地摘掉、算完再放回去"：`_is_pendant` 的调用点正在**遍历
+    `dorm.operators`**（`_fallback_mate`），就地增删那个列表属于"边遍历边改"，
+    能跑但极其脆弱。浅拷贝只复制两层壳（世界 + 那一间设施），代价可忽略，
+    设施与干员对象本身照旧共享（判据只读它们）。
+    """
+    import copy as _copy                 # 局部导入：本模块只有这一处需要
+
+    probe = _copy.copy(world)
+    probe.facilities = list(world.facilities)
+    idx = next((i for i, f in enumerate(probe.facilities) if f is fac), None)
+    if idx is None:
+        return probe
+    clone = _copy.copy(fac)
+    clone.operators = [o for o in fac.operators if o.name != name]
+    probe.facilities[idx] = clone
+    return probe
+
+
+def _fallback_mate(world: BaseLayout, exclude: Optional[set] = None,
+                   memo: Optional[dict] = None):
+    """**第 ④ 级的默认兜底**（用户口径）：自动 ②③ 都挑不到**满 24** 的人时，
+    在宿舍里挑**心情最高**的那位互换 —— **不要求满 24**（例：宿舍里最高只有 21，就跟 21 那位换）。
+
+    仍然守三道门（用户口径"守"）：
+
+    | 门 | 判据 |
+    |---|---|
+    | 只换**白板** | `_factionless(op)`（与 ③ 同一道门：不属于任何已记录阵营） |
+    | 不换**自回型** | `_self_recovering_in_dorm(op)`（有宿舍自身回复技能的人自己就能回满） |
+    | **排除挂件** | `_is_pendant(world, name, memo)`（她一走别人就要吃亏：给别人送效果 / 让别人条件成立 / 加工站·训练室·副手那类位置挂件 —— 见那个函数） |
+
+    另外仍要求她**此刻真的还在宿舍里**（`facility_of` 校验，防"跑过一轮的副本"里的陈旧对象）。
+
+    排序：**心情从高到低**（换出损失最小的先换），同心情按名字。
+    返回 `(宿舍, 干员)`；一个都没有 → `(None, None)`（调用方走"这一班不动"）。
+    """
+    skip = exclude or set()
+    best = None
+    for dorm in _dorm_order(world):
+        for op in dorm.operators:
+            if op.name in skip or op.mood >= MOOD_MAX:
+                continue                     # 满 24 的留给 ②③（那里还要看位次与点名范围）
+            if _self_recovering_in_dorm(op) or not _factionless(op):
+                continue
+            if _is_pendant(world, op.name, memo):
+                continue
+            if world.facility_of(op.name) is not dorm:
+                continue                     # 陈旧对象 / 已经不在这间宿舍
+            key = (-op.mood, op.name)
+            if best is None or key < best[0]:
+                best = (key, dorm, op)
+    return (best[1], best[2]) if best else (None, None)
 
 
 def _named_mate(world: BaseLayout, name: str, exclude: Optional[set] = None):
@@ -1065,20 +1190,26 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
     |---|---|---|
     | ① | 任一间宿舍**还有未占满的位次** | **直接住进去**（有空位就不换人）；顺序"优先 4 最后 1" |
     | ② | 宿舍**全满** | 换「宿舍 **#4 → #3 → #2** 的**第 2~5 位**」里**实时心情已满**的那位 |
-    | ③ | ②找不到 | 只在**白板**（不属于任何已记录阵营的干员）里挑实时满心情的那位；**满 24 的菲亚梅塔**也在此列（她待在宿舍没价值，见 `TIER3_EXTRA_NAMES`）；**连这些都没有 → 看 ④** |
-    | ④ | 都找不到 | 有**点名**（`swap_with`）→ 与**你点名**的那位互换（**主动换**）；没点名才"这一班不动"（记 `idle_to_dorm_skipped`） |
+    | ③ | ②找不到 | 只在**白板**（不属于任何已记录阵营的干员）里挑实时满心情的那位；**满 24 的菲亚梅塔**也在此列（见 `TIER3_EXTRA_NAMES`） |
+    | ④ | 都找不到 | **有点名**（`swap_with`）→ 与**你点名**的那位互换（**主动换**，不限心情）；**没点名** → 与宿舍里**心情最高**的**白板**互换（**不限 24**，例：最高 21 就换 21 那位）；连白板都没有才"这一班不动"（记 `idle_to_dorm_skipped`） |
 
     - **同优先级内的顺序：优先 4、最后 1** —— 宿舍 `#4 → #3 → #2 → #1`；
       同一宿舍内 第 2 位 → 第 5 位 → 第 1 位（位次 1 只在③兜底时轮到）。
+      ④默认兜底则**按心情从高到低**挑（换出损失最小的先换），宿舍顺序只用于同分。
     - **"白板"**＝`_factionless(op)`：`OPERATOR_FACTIONS`（`data/factions.txt` + 人工补充表）
       里没有她。为什么兜底层只肯换白板：白板没有阵营联动技能，换出去不会连带打断别人的
       阵营类加成 —— **有阵营的人优先留在宿舍**（用户口径）。
       例外：**满 24 的菲亚梅塔**（③ 也放行）—— 她的价值在「患难之交」（M15a）**进驻那一刻**，
       满 24 就够，不靠"待在宿舍里"。
-    - **自动路径（①②③）的"被换出者"必须是实时满 24**；**"自回型"（有宿舍自身回复技能，
-      如菲亚梅塔「自律」）不被自动换出**（她自己就能回满，换出去白丢一份恢复能力）。
-    - **④ 的替代动作是"主动换"**（点名）：此时**不要求对方满 24**、也不受"只换白板 /
-      自回型不换出"限制 —— 代价由点名的人自己承担；仍要求对方**此刻真在某间宿舍里**。
+    - **"挂件"**＝`_is_pendant(world, name, memo)`：用户口径"**有阵营效果，或者她在不在宿舍
+      会影响其他干员的技能**"。前半句由上面那道"白板"闸挡（不属于任何已记录阵营 ⇒ 没有阵营
+      联动）；后半句由 `_is_pendant` 现场判：**把她从宿舍摘掉 → 全基建有人的净速率变差**
+      （消耗上升 / 回复下降）就算挂件（只看变差，故"她走了别人反而分得更多"那类池分摊不算）。
+      ②③④ 的自动换人**都不换挂件**，顺位找下一位；**点名不受这道闸限制**。
+    - **自动路径（②③）的"被换出者"必须是实时满 24**；**④ 的默认兜底不限心情**，
+      但仍守"只换白板 / 不换自回型 / **排除挂件**"三道门。
+    - **④ 的替代动作是"主动换"**（点名）：此时**不要求对方满 24**、也不受那三道门限制
+      —— 代价由点名的人自己承担；仍要求对方**此刻真在某间宿舍里**。
     - 被换出的那位**离开宿舍 → 既不工作也不在宿舍**（心情不再变化）。
       进来的人**接替他被换出的那个位次**（不是排到末尾）。
     - 候选按**心情从低到高**依次安排（最需要恢复的先来）；每处理一位都用**那一刻的实时心情**
@@ -1110,6 +1241,9 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
 
     events: List[Contribution] = []
     swapped_out: set = set()
+    # "挂件判据"的**班次内缓存**：一次判据要跑两遍全基建净速率，不缓存会重复试算。
+    # 每次真的换了人（成员表变了）就清掉——判据依赖"这一刻谁在宿舍里"。
+    pendant_memo: dict = {}
     cycle_no, shift_no = (scope if scope else (None, None))
     for op, name, mood, where in _idle_candidates(world, idle=idle, only=only):
         # 界面"逐人/逐次设置"里的参与 / 指定对象（按 (周期, 班次) 取最具体的那一条）
@@ -1174,7 +1308,7 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
             continue
 
         # ②③ **宿舍全满**：先走**自动**四级规则（点名范围 → 白板兜底 + 满 24 的菲亚梅塔）
-        dorm, mate, tier = _swap_mate(world, exclude=swapped_out)
+        dorm, mate, tier = _swap_mate(world, exclude=swapped_out, memo=pendant_memo)
         if mate is None and want:
             # ④ 的**替代动作**：自动彻底挑不到人时，才用**你点名**的那位。
             #    ⚠️ 这是"主动换"：不要求她满 24，也不受"只换白板 / 自回型不换出"限制
@@ -1182,6 +1316,12 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
             dorm, mate = _named_mate(world, want, exclude=swapped_out)
             if mate is not None:
                 tier = 0                     # 0 = 用户点名（走指定口径）
+        if mate is None:
+            # ④ 的**默认兜底**（用户口径）：没人点名时不再"不动"，而是与**宿舍里心情最高**的
+            #    白板互换（不限 24）——例：最高只有 21，就跟 21 那位换。
+            dorm, mate = _fallback_mate(world, exclude=swapped_out, memo=pendant_memo)
+            if mate is not None:
+                tier = 4
         if mate is None:
             why = (f"（{name} 心情 {mood} 想入宿，但宿舍全满、自动也挑不到可换的人"
                    + (f"，且你点名的「{want}」这一刻不在宿舍里" if want else "")
@@ -1200,9 +1340,11 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
         #    才名副其实；末尾追加会让位次随人数漂移、P2 的点名范围就说不清了。
         dorm.operators[mate_idx] = op                        # 她进宿舍
         swapped_out.add(mate.name)                           # 满心情那位**换出来 → 闲置**（不占位）
+        pendant_memo.clear()                                 # 成员表变了 ⇒ 挂件判据要重算
         how = ("你点名的（优先级④的替代动作）" if tier == 0 else
                ("宿舍#2~#4 的第 2~5 位（优先级②）" if tier == 2 else
-                "宿舍其余位置（优先级③）"))
+                ("宿舍其余位置（优先级③）" if tier == 3 else
+                 "宿舍里心情最高的白板（优先级④的默认兜底）")))
         full = "满心情" if mate.mood >= MOOD_MAX else f"心情 {mate.mood}（你主动换的）"
         events.append(Contribution(
             Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
