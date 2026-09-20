@@ -1188,6 +1188,58 @@ def _all_rates(world: BaseLayout, memo: Optional[dict] = None) -> Dict[str, Deci
 
 #: `memo` 里存共享速率表的键（干员名不会长这样，不会与"逐人判据缓存"撞键）
 _ALL_RATES_KEY = "\x00all_rates"
+#: `memo` 里存"依赖他人的技能持有者"集合的键
+_DEPENDENT_KEY = "\x00dependent"
+
+#: **依赖他人**的模板（聚合 / 池分配 / 定向 / 按人数 / 元修正）：持有这些技能的人，
+#: 速率可能因为"别人在不在"而变 —— 挂件判据的探针名单要把他们算进去（见 `_pendant_probe_names`）。
+DEPENDENT_TEMPLATES: Tuple[str, ...] = ("M01", "M02b", "M02c", "M03", "M04", "M05",
+                                        "M08", "M09", "M11", "M12", "M17")
+
+
+def _dependent_holders(world: BaseLayout, memo: Optional[dict] = None) -> set:
+    """**速率可能受"别人在不在"影响的干员**：持有"带条件 / 聚合·池分配·定向类模板"的技能的人。
+
+    为什么要单独列出来：挂件判据要问"把她换出去会不会有人变差"，而**最贵的一步**是逐个
+    重算别人的速率。实测（见 `_pendant_probe_names`）只要复核"她同设施的人 + 这批人"就够。
+    ⚠️ 只依赖"谁在哪 + 技能槽/练度"，所以按**世界**缓存一次（`memo`；换过人后调用方会清空）。
+    """
+    cached = memo.get(_DEPENDENT_KEY) if memo is not None else None
+    if cached is not None:
+        return cached
+    out: set = set()
+    for op in world.all_operators():
+        for sid in _active_skill_ids(op):
+            sk = SKILLS.get(sid)
+            if sk is None:
+                continue
+            if sk.condition is not None or sk.template_id.startswith(DEPENDENT_TEMPLATES):
+                out.add(op.name)
+                break
+    if memo is not None:
+        memo[_DEPENDENT_KEY] = out
+    return out
+
+
+def _pendant_probe_names(world: BaseLayout, fac: Facility, name: str,
+                         memo: Optional[dict] = None) -> set:
+    """挂件判据的**探针名单**：哪些人的净速率可能因为"她被换出宿舍"而变差？
+
+    用户口径 2026-09（P4-3）：原来是**全基建逐个复核**（示例 47 人）；实测真值始终落在
+    「她同设施的人 ∪ `_dependent_holders`（依赖他人的技能持有者）」里：
+
+    | 类 | 例子 | 为什么在这张名单里 |
+    |---|---|---|
+    | **同设施的人** | 宿舍群体回复、宿舍自身回复、氛围/人数减免、同设施点名条件 | 这些机制全都按**设施**计数或作用 |
+    | **依赖他人的技能持有者** | 「潮汐守望」按**全宿舍/宿舍外**的深海猎人计数（`data/conditions.py` 的 `_cond_dorm_abyssals_full_mood` / `_cond_no_abyssal_outside_dorm`）、池分配、元修正、共事点名 | 条件里读的是**跨设施**的东西 ⇒ 她换出去可能让**别的房间**的人条件翻转 |
+
+    实测（2500 条判定 + 571 条"真值非空"的抽样）：这两类**不漏一条**；而只留"同设施"在
+    571 条里也不漏 —— 但审计发现条件里确实有跨设施读取（上面那两条深海猎人条件），
+    所以保守带上"依赖他人的技能持有者"（示例里平均 12 人），不比"全基建 47 人"贵多少。
+    回归：`tests/test_equivalence.py::Test挂件判据探针范围`（窄探针必须与全探针逐条一致）。
+    """
+    mates = {o.name for o in fac.operators}
+    return (mates | _dependent_holders(world, memo)) - {name}
 
 
 def _is_pendant_uncached(world: BaseLayout, name: str, memo: Optional[dict] = None) -> bool:
@@ -1204,10 +1256,10 @@ def _is_pendant_uncached(world: BaseLayout, name: str, memo: Optional[dict] = No
 
     before = _all_rates(world, memo)
     probe = _world_without(world, fac, name)   # 摘掉她 = 真被换出后的状态
-    for other, old in before.items():
-        if other == name:
-            continue                         # 她自己不在"别人"里
-        if compute_net_rate(probe, other) > old:
+    for other in _pendant_probe_names(world, fac, name, memo):
+        if other not in before:
+            continue                         # 陈旧对象 / 已不在基建
+        if compute_net_rate(probe, other) > before[other]:
             return True                      # 有人变差 ⇒ 她走了别人吃亏 ⇒ 她是挂件
     return False
 

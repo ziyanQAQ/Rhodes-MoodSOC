@@ -109,7 +109,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 467 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 470 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
@@ -246,7 +246,16 @@ documents/
     （浅拷贝会把索引**引用**带过去，探针必须自己作废）。漏调 = 查询给出"她还在原来那间"的陈旧答案；
     ③ `rules._all_rates(world, memo)` 把"挂件判据用的**摘人之前**全基建速率表"挂在 `memo` 上共享
     （原来每个被评的人各算 47 个速率）—— 生命周期与 `memo` 一致：**每次真的改了成员表都要
-    `pendant_memo.clear()`**（含 ⓪① 放人那两条，不只是"互换"），否则表里留的是旧世界。
+    `pendant_memo.clear()`**（含 ⓪① 放人那两条，不只是"互换"），否则表里留的是旧世界；
+    ④ `rules._pendant_probe_names` 把挂件判据的**探针范围**从"全基建"缩到
+    **「她同设施的人 ∪ `_dependent_holders`（带条件 / 聚合·池分配·定向类技能的持有者）」**
+    （示例 45 人 → 平均 10.5 人，判据耗时占比 27% → 13.6%，整机 A/B **1.22×**）。
+    ⚠️ **保住口径的关键**：真值只落在这两类里 —— 设施计数类机制（宿舍回复/氛围·人数减免/同设施点名）
+    看同设施；而**条件里读跨设施计数**的技能（`data/conditions.py` 的 `_cond_dorm_abyssals_full_mood` /
+    `_cond_no_abyssal_outside_dorm`：按**全宿舍 / 宿舍外**的深海猎人计数）让"别的房间的人"也可能变差 ⇒
+    `_dependent_holders` 就是兜这个的**保守带**，别为了再省几个百分点把它删掉。
+    回归 `test_equivalence.Test挂件判据探针范围`（60 个同种子随机世界逐条与"全探针"对照 + 跨设施条件用例）
+    —— 实测 2000 条判定 0 不一致。
     渲染层不用管：`idle_groups` 6.8ms、`_build_shift_buttons` 5.4ms、`world_at` 0ms —— **瓶颈只在引擎**。
     详见 `documents/09-开发指南.md` 的性能基线表与 `documents/07-设计史.md` P9。
 24. **编辑走「异步重算」，而 `decimal` 上下文是线程局部的 —— 两者是一套，别拆开看**（2026-09，P5）：

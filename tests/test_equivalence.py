@@ -723,6 +723,130 @@ class Test线程与精度(unittest.TestCase):
         use_project_decimal_context()                  # 收尾：把当前线程设回规范值
 
 
+class Test挂件判据探针范围(unittest.TestCase):
+    """**P4-3**：挂件判据的探针范围从"全基建逐个复核"缩到
+    「她同设施的人 ∪ 依赖他人的技能持有者」（`rules._pendant_probe_names`）。
+
+    为什么能缩：实测真值（摘掉她之后真的变差的人）始终落在这两类里 ——
+    ① 宿舍回复/氛围·人数减免/同设施点名这类机制**都按设施计数**；
+    ② 剩下的是**条件里读跨设施计数**的技能（如「潮汐守望」按全宿舍/宿舍外的深海猎人计数），
+    它们的持有人由 `_dependent_holders` 兜住。
+    因此这里钉两件事：窄探针与"全基建逐个复核"的老口径**逐条一致**（同种子随机世界），
+    以及那个跨设施条件的持有人**确实进了探针名单**（只留"同设施"就会漏）。
+    """
+
+    SAMPLES = 60          # 随机世界个数（同种子 → 确定性）
+
+    @staticmethod
+    def _old_pendant(world, name) -> bool:
+        """改造前的老口径：全基建逐个复核（对照用，原样保留）。"""
+        from mood_soc import rules as R
+        from mood_soc.config import FacilityType
+        from mood_soc.rules import compute_net_rate
+
+        fac = world.facility_of(name)
+        if fac is None:
+            return False
+        if fac.ftype in (FacilityType.WORKSHOP, FacilityType.TRAINING):
+            return True
+        if any(o.name == name for o in fac.deputies):
+            return True
+        if fac.ftype != FacilityType.DORMITORY:
+            return False
+        before = {o.name: compute_net_rate(world, o.name) for o in world.all_operators()}
+        probe = R._world_without(world, fac, name)
+        for other, val in before.items():
+            if other != name and compute_net_rate(probe, other) > val:
+                return True
+        return False
+
+    def _random_worlds(self):
+        """从示例排班造随机世界：随机挑一间宿舍，换上随机真人住客（含"依赖他人"技能的持有者）。"""
+        import copy as _copy
+        import random
+
+        from data.paths import MAA_SAMPLE
+        from mood_soc import rules as R
+        from mood_soc.config import FacilityType
+        from mood_soc.scenario import build_operator
+        from store.session import Session
+
+        s = Session()
+        s.load_paths([MAA_SAMPLE])
+        s.recompute()
+        pool = list(s.operator_names())
+        hot = list(R._dependent_holders(s.traj.segments[0][2]))
+        rnd = random.Random(5)
+        out = []
+        for _ in range(self.SAMPLES):
+            _a, _b, w = s.traj.segments[rnd.randrange(len(s.traj.segments))]
+            w = _copy.deepcopy(w)
+            dorms = [f for f in w.facilities if f.ftype == FacilityType.DORMITORY]
+            if not dorms:
+                continue
+            dorm = rnd.choice(dorms)
+            names = rnd.sample(hot, min(3, len(hot))) if hot else []
+            rest = [n for n in pool if n not in names]
+            names += rnd.sample(rest, max(0, 5 - len(names)))
+            # ⚠️ 重名会让她同时落在工作设施与宿舍（`facility_of` 命中前一个）→ 先把同名摘干净
+            for f in w.facilities:
+                if f is dorm:
+                    continue
+                f.operators = [o for o in f.operators if o.name not in names]
+                f.deputies = [o for o in f.deputies if o.name not in names]
+            dorm.operators = [build_operator({"name": n, "mood": str(rnd.randint(3, 24))})
+                              for n in names]
+            w.invalidate_index()
+            out.append((w, names))
+        return out
+
+    def test_窄探针与全探针逐条一致(self):
+        from mood_soc.rules import _is_pendant_uncached
+
+        n = pos = 0
+        for w, names in self._random_worlds():
+            memo = {}
+            for x in names:
+                if w.facility_of(x) is None:
+                    continue
+                new = _is_pendant_uncached(w, x, memo)
+                old = self._old_pendant(w, x)
+                n += 1
+                pos += 1 if old else 0
+                self.assertEqual(new, old, f"{x}：窄探针 {new} ≠ 全探针 {old}")
+        self.assertGreater(n, 100, "样本太少，钉不住口径")
+        self.assertGreater(pos, 10, "样本里几乎没判成挂件 ⇒ 等价性没验到东西")
+
+    def test_跨设施条件的人也在探针名单里(self):
+        """宿舍里的深海猎人会影响**别的宿舍**里「潮汐守望」持有者的条件 ⇒ 必须进探针名单。"""
+        from data.paths import MAA_SAMPLE  # noqa: F401  （只为与其他用例同源）
+        from mood_soc.rules import _pendant_probe_names
+        from store.layout import build_base_layout
+
+        world = build_base_layout({"facilities": [
+            {"type": "宿舍", "level": 5, "operators": ["乌尔比安", "路人乙"]},
+            {"type": "宿舍", "level": 5, "operators": ["歌蕾蒂娅", "路人丙"]},
+        ]})
+        fac = world.facility_of("乌尔比安")
+        probe = _pendant_probe_names(world, fac, "乌尔比安", {})
+        self.assertIn("歌蕾蒂娅", probe,
+                      "「潮汐守望」的条件读的是全宿舍/宿舍外的深海猎人 ⇒ 她在别的宿舍也必须复核")
+        self.assertNotIn("乌尔比安", probe, "探针名单里不该有她自己")
+
+    def test_位置挂件与非宿舍成员不受探针范围影响(self):
+        """前四行判定（位置）与探针范围无关：加工站＝挂件、正在上班＝不是。"""
+        from mood_soc.rules import _is_pendant_uncached
+        from store.layout import build_base_layout
+
+        world = build_base_layout({"facilities": [
+            {"type": "加工站", "level": 1, "operators": ["路人甲"]},
+            {"type": "制造站", "level": 3, "operators": ["路人丁"]},
+            {"type": "宿舍", "level": 5, "operators": ["路人乙"]},
+        ]})
+        self.assertTrue(_is_pendant_uncached(world, "路人甲", {}))
+        self.assertFalse(_is_pendant_uncached(world, "路人丁", {}))
+
+
 class Test不在基建(unittest.TestCase):
     """**「不在基建」的人**（既不在工作设施、也不在宿舍）：平线 + 不参与技能计数。
 
