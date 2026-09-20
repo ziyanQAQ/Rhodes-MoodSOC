@@ -27,6 +27,7 @@ from .config import (
     cc_reduction,
     dormitory_recovery,
     facility_mood_reduction,
+    use_project_decimal_context,
 )
 from .config import DORM_LEVEL_TABLE
 from .ledger import Bucket, Contribution, MoodLedger
@@ -1736,7 +1737,11 @@ def time_to_mood(world: BaseLayout, operator_name: str, target_mood) -> Decimal:
 
 
 def evaluate(world: BaseLayout, operator_name: str, period_hours=Decimal("0")) -> MoodResult:
-    """single 模式：一次性测算目标干员在指定时段结束后的状态汇总。"""
+    """single 模式：一次性测算目标干员在指定时段结束后的状态汇总。
+
+    ⚠️ 入口先固定**本线程**的 Decimal 上下文（线程局部；见 `config.use_project_decimal_context`）。
+    """
+    use_project_decimal_context()
     op = world.get_operator(operator_name)
     if op is None:
         raise KeyError(f"基建布局中不存在干员：{operator_name}")
@@ -1794,7 +1799,9 @@ def evaluate_base(world: BaseLayout, period_hours=Decimal("0")) -> BaseResult:
          若 layout_sustain_hours 为 Infinity（无人会红脸），则二者均为 None（JSON null）。
 
     注：这是解析解（速率恒定）。若需要"红脸后技能失效引发联动"的精确轨迹，用 simulator.simulate。
+    ⚠️ 入口先固定**本线程**的 Decimal 上下文（线程局部；见 `config.use_project_decimal_context`）。
     """
+    use_project_decimal_context()
     entries = []   # (name, facility_label, mood, net, 个体到红脸时长)
     for op in world.all_operators():
         facility = world.facility_of(op.name)

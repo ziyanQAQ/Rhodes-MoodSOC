@@ -157,6 +157,7 @@ class Test界面冒烟(unittest.TestCase):
 
         app.cycles_var.set("1")                                 # 收尾：回到 1 周期
         app._on_cycles()
+        app.wait_recalc()                                       # 异步重算：等落地（P5）
         app.update_idletasks()
         self.assertEqual(app.cycle_buttons, [])
         self.assertEqual(app.current_t, Decimal("0"))            # 超出新跨度 → 夹回起点
@@ -206,6 +207,7 @@ class Test界面冒烟(unittest.TestCase):
                                  "3. 15:00 – 21:00"])
 
         app.apply_shift_hours([Decimal("8")] * 3)   # 改班次时长 → 再重建（班次名会同步改名）
+        app.wait_recalc()                           # 异步重算：等落地（P5）
         app.update_idletasks()
         labels, texts = bar()
         self.assertEqual(labels, ["班次"])
@@ -252,6 +254,7 @@ class Test界面冒烟(unittest.TestCase):
 
         # 右键设心情 → 影响周期起点
         app.set_time(Decimal("0"))
+        app.wait_recalc()                                        # 异步重算：等落地（P5）
         slot = next(s for s in app.board.slots if s.operator)
         who = slot.operator
         try:
@@ -259,6 +262,7 @@ class Test界面冒烟(unittest.TestCase):
             app.on_slot_right(slot.fac_index, slot.slot_index)
         finally:
             app_mod.ask_mood = orig_mood
+        app.wait_recalc()                                        # 异步重算：等落地（P5）
         self.assertEqual(app.initial_moods.get(who), Decimal("6"))
         self.assertEqual(app.traj.mood_at(who, 0), Decimal("6"))
 
@@ -739,6 +743,7 @@ class Test新增交互(unittest.TestCase):
         #    ⚠️ 第 6 项 `per_shift=[]` 不能省：不传就"沿用当前值"（示例 MAA 自带的
         #    Fiammetta 逐班配置会留下覆盖项），而面板每次都会把 6 项一并交出。
         app.apply_entry_event((True, "塞雷娅", "anywhere", True, "full", []))
+        app.wait_recalc()                                # 异步重算：等落地（P5）
         self.assertTrue(app.entry_events.get())
         self.assertEqual(app.entry_swap_with, "塞雷娅")
         self.assertEqual(app.entry_scope, "anywhere")
@@ -786,6 +791,7 @@ class Test新增交互(unittest.TestCase):
         finally:
             app_mod.ask_mood = orig_mood
         app.apply_entry_event((True, "any", "anywhere", True, "wait", []))
+        app.wait_recalc()                                # 异步重算：等落地（P5）
         self.assertEqual(app.entry_swap_with, "any")
         self.assertEqual(app.entry_scope, "anywhere")
         self.assertTrue(app.entry_restore_back)
@@ -1063,6 +1069,7 @@ class Test新增交互(unittest.TestCase):
             panel.enabled.set(True)
             panel._on_toggle()
             panel._rebuild()                      # 不等防抖，直接重建
+            app.wait_recalc()                     # 异步重算：等落地（P5）
             self.assertTrue(seen, "改动必须回调（实时重算）")
             self.assertTrue(app.idle_to_dorm.get())
             self.assertIn("闲置入宿：已开启", app._idle_status())
@@ -1088,6 +1095,45 @@ class Test新增交互(unittest.TestCase):
         app._sync_idle_label()
         app.recompute()
         self.assertEqual(app.idle_detail.cget("text"), "未开启")
+
+    def test_异步重算不冻界面且只落地最后一版(self):
+        """**P5 后台重算**：编辑不再阻塞界面；连续改多次只落地最后一版，数值与同步重算一致。
+
+        三件事一起钉：
+          ① `recompute_async` 立刻返回（重活在后台线程），状态栏先写「计算中…」；
+          ② 期间再改一轮 ⇒ 代数推高：先前那代的结果**丢弃**，最终采用最后一次设置的轨迹；
+          ③ `wait_recalc()` 之后，轨迹与"老老实实同步重算"的结果**逐点相同**。
+        """
+        app = self.app
+        app.cycles_var.set("2")
+        app._on_cycles()
+        app.wait_recalc()
+        # ① 立刻返回：调用点不阻塞（这里用"返回时新代数还没落地"来证明）
+        app.session.set_initial_mood("菲亚梅塔", Decimal("5"))
+        before_gen = app._recalc_gen
+        app.recompute_async()
+        self.assertEqual(app._recalc_gen, before_gen + 1)
+        self.assertNotEqual(app._recalc_done_gen, app._recalc_gen,
+                            "异步重算返回时结果还没落地（否则就是又变回同步了）")
+        # ② 连续再改两次 → 只应落地最后一版（菲亚梅塔 3）
+        app.session.set_initial_mood("菲亚梅塔", Decimal("7"))
+        app.recompute_async()
+        app.session.set_initial_mood("菲亚梅塔", Decimal("3"))
+        app.recompute_async()
+        self.assertTrue(app.wait_recalc(), "应当能等到落地")
+        self.assertEqual(app.traj.mood_at("菲亚梅塔", 0), Decimal("3"),
+                         "应当采用**最后**那次设置（过期代次的结果必须丢弃）")
+        # ③ 与同步重算逐点一致
+        async_series = {n: list(v) for n, v in app.traj.moods.items()}
+        app.session.recompute()                       # 同步（同一份设置）
+        for name, series in async_series.items():
+            self.assertEqual(series, list(app.traj.moods[name]), f"{name} 的轨迹与同步重算不一致")
+        # 收尾：别把心情留给别的用例
+        app.session.set_initial_mood("菲亚梅塔", Decimal("24"))
+        app.recompute()
+        app.cycles_var.set("1")
+        app._on_cycles()
+        app.wait_recalc()
 
     def test_闲置入宿可选空位(self):
         """「去哪／与谁换」里同时有空位（宿舍01、宿舍02…）与满心情的人；选空位就进那间。"""
@@ -1188,6 +1234,7 @@ class Test新增交互(unittest.TestCase):
         app = self.app
         app.cycles_var.set("2")
         app._on_cycles()
+        app.wait_recalc()                                # 异步重算：等落地（P5）
         app.update()
         chart = app.chart
         chart.set_data(app.traj, app.curve_operator)
@@ -1204,6 +1251,7 @@ class Test新增交互(unittest.TestCase):
         # 单周期时不该出现天数那一行
         app.cycles_var.set("1")
         app._on_cycles()
+        app.wait_recalc()                                # 异步重算：等落地（P5）
         app.update()
         chart.redraw()
         app.update()
@@ -1267,6 +1315,7 @@ class Test新增交互(unittest.TestCase):
         fac = app.schedule.shifts[0].world.facilities[idx]
         self.assertEqual(fac.level, 2)
         self.assertEqual(fac.capacity, 2)
+        app.wait_recalc()                                # 异步重算：等落地（P5，状态栏那句在落地后写）
         self.assertIn("Lv2", app.status.cget("text"))
         # 3 个人塞进容量 2 的房间 → 自检要报出来（看板卡头也会标红）
         self.assertIn("超过 Lv2 容量 2 人", app._layout_issues())
@@ -1342,6 +1391,7 @@ class Test新增交互(unittest.TestCase):
             f["operators"] = [({"name": n, "elite": 1} if n == "卡夫卡" else n)
                               for n in f.get("operators", [])]
         app._apply_facilities(0, facs)
+        app.wait_recalc()                                  # 异步重算：等落地（P5）
         app.update()
         self.assertEqual(app._elite_badges().get("卡夫卡"), "E1")
         board_chip = next(s for s in app.board.slots if s.operator == "卡夫卡")
@@ -1360,6 +1410,7 @@ class Test新增交互(unittest.TestCase):
             f["operators"] = [n.get("name", "") if isinstance(n, dict) else n
                               for n in f.get("operators", [])]
         app._apply_facilities(0, facs)
+        app.wait_recalc()                                # 异步重算：等落地（P5）
         app.update()
         self.assertEqual(app._elite_badges(), {})
         self.assertNotIn("因未满练少", app.stats.cget("text"))

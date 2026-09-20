@@ -297,6 +297,7 @@ class Test批量设置(unittest.TestCase):
         app.session.set_initial_moods({"板凳甲": 10})
         app.idle_to_dorm.set(True)
         app.apply_idle_to_dorm(True, {})
+        app.wait_recalc()                        # 异步重算：等落地再断言（P5）
         app.update()
 
         dlg = self._open(0)
@@ -922,13 +923,18 @@ class Test批量设置(unittest.TestCase):
             time.sleep(0.01)
 
     def _apply(self, panel):
-        """把面板收出来的结果真正落到排班上（等价于 `app.apply_batch`）。"""
+        """把面板收出来的结果真正落到排班上（等价于 `app.apply_batch`），并**等重算落地**。
+
+        ⚠️ 界面上的重算是**异步**的（P5，`app.recompute_async`）：`apply_batch` 返回时新的
+        轨迹还没算完，所以这里要 `wait_recalc()` —— 断言 `app.traj` / 心情的地方才看得到新值。
+        """
         res = panel.value()
         if res is None:                          # 报错时面板还在，能读到提示
             self.fail(f"收结果失败：{panel.err.cget('text')}")
         changes, moods, events, detached = res
         app = self.app
         app.apply_batch(changes, moods, events, detached)
+        app.wait_recalc()
         return changes, moods, events
 
 

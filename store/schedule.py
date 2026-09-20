@@ -52,7 +52,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from mood_soc import (apply_entry_events, apply_idle_to_dorm, compute_net_rate,
                       entry_event_holders, reset_entry_events)
 from mood_soc.battery import ZERO, to_decimal
-from mood_soc.config import MOOD_MAX, MOOD_MIN
+from mood_soc.config import MOOD_MAX, MOOD_MIN, use_project_decimal_context
 from mood_soc.models import (BaseLayout, EntryEventConfig, EntryShiftOverride,
                              IdleToDormConfig, IdleToDormEntry,
                              build_entry_event_config, normalize_entry_when,
@@ -902,6 +902,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       max_segment: Decimal = MAX_SEGMENT_HOURS) -> Trajectory:
     """把排班跑成"整周期心情轨迹"（事件驱动精确积分）。
 
+    ⚠️ **入口先固定本线程的 Decimal 上下文**（`use_project_decimal_context`）：`decimal` 的
+    上下文是线程局部的，后台线程默认是 `ROUND_HALF_EVEN`，不设就会在末位差 1e-26 并连锁
+    改变事件时刻（界面异步重算 P5 实测踩到：主线程与工作线程 52 名干员的轨迹不同）。
+
     参数：
         cycles        跑几个周期（心情跨周期连续，用来看是否收敛）
         initial_moods 周期起点的心情；缺省取**第一班布局里写的值**（没有则 24）
@@ -945,6 +949,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     闲置入宿的换人**只在这一次生效**，既不污染排班本身、也不会跨周期继承；
     同时把"这一班的有效配置"挂到副本上，`apply_entry_events` 直接读它。
     """
+    use_project_decimal_context()      # 本线程的 Decimal 上下文（见上：线程局部，必须显式设）
     if cycles < 1:
         raise ValueError("cycles 至少为 1")
     total = schedule.cycle_hours * Decimal(cycles)

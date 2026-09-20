@@ -330,6 +330,14 @@ class BatchMixin:
                 pass
             self._notify_job = None
 
+    def has_pending_edit(self) -> bool:
+        """有没有"还在 500ms 防抖窗口里"的心情输入？（`app` 的异步重算据此决定先别落地）。
+
+        ⚠️ 不这么判的话：重算（异步，0.3~1.5s）可能比防抖先落地，落地刷新会**按轨迹重写格子**
+        —— 用户刚敲进去的值就被盖掉、那次编辑整个丢失（实测过）。
+        """
+        return self._notify_job is not None
+
     # ================================================================ 房间等级区
     def _build_level_bar(self) -> None:
         """逐间房改**等级**（容量随之变化）——上游 `rooms[].phases[lv].maxStationedNum`。

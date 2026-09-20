@@ -15,9 +15,13 @@
 """
 from __future__ import annotations
 
+import gc
+import queue
 import sys
+import threading
 import time
 import tkinter as tk
+import weakref
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -123,6 +127,16 @@ class MoodSocApp(tk.Tk):
         self._last_refresh = 0.0
         self._roster_dirty = False
         self._roster_names: list = []     # 「全员一览」当前画的是哪些干员（没变就不重建）
+        # 异步重算（P5）：编辑不再冻住界面 —— 工作线程算，主线程轮询收结果。
+        self._recalc_gen = 0              # 请求代数：只有"最新那一代"的结果会被采用
+        self._recalc_done_gen = 0         # 已经落地的最新一代
+        self._recalc_thread = None
+        self._recalc_q: "queue.Queue" = queue.Queue()
+        self._recalc_fit = False          # 这一轮要不要把滑块拉回起点
+        self._recalc_ready = None         # 算好但还没落地的结果（等面板防抖窗口过去）
+        self._recalc_poll_job = None
+        self._recalc_listeners: list = []  # 结果落地后要刷新的面板（弱引用）
+        self._status_after_recalc: Optional[str] = None   # 落地后要盖上去的状态文案
 
         self._init_style()
         self._build_toolbar()
@@ -542,6 +556,20 @@ class MoodSocApp(tk.Tk):
         if self.settings_dlg is not None and self.settings_dlg.winfo_exists():
             self.settings_dlg.destroy()
         self.settings_dlg = None
+        # ⚠️ 换排班 = 之前还在算的那次异步重算**整个作废**（代数推高 + 丢掉待落地结果），
+        #    否则旧排班的结果可能在新排班之后落地、把状态栏与看板又刷回去（实测踩过）。
+        self._recalc_gen += 1
+        self._recalc_ready = None
+        self._recalc_done_gen = self._recalc_gen
+        # 旧排班那次编辑留下的"落地后要写进状态栏的话"也一起作废（否则会盖掉导入摘要）；
+        # 轮询任务也停掉 —— 它跑完会去 `_settle_recalc`，又把状态栏写成通用那句。
+        self._status_after_recalc = None
+        if self._recalc_poll_job is not None:
+            try:
+                self.after_cancel(self._recalc_poll_job)
+            except tk.TclError:
+                pass
+            self._recalc_poll_job = None
         # 装配（解析 → 排班 → 池/变量初始值/导入报告 → 同步 JSON 里的设置）**全在 Session 里**：
         # `load_paths` 读完文件会顺手把 `entry_events` / `idle_to_dorm` / `initial_global`
         # 同步成会话设置，界面只负责把它们画出来。
@@ -573,7 +601,11 @@ class MoodSocApp(tk.Tk):
             messagebox.showerror("读取失败", str(exc), parent=self)
 
     def recompute(self, fit_slider: bool = False):
-        """结构变化后重算轨迹（改布局 / 改时长 / 改周期数 / 改换心情设置）。"""
+        """结构变化后重算轨迹（**同步**；导入 / 测试 / 程序路径用它）。
+
+        界面上的"编辑"走 `recompute_async()`（后台线程 + 落地），这样窗口不再冻住 ——
+        这里保留同步语义：函数返回时轨迹已经是新的。
+        """
         if self.schedule is None:
             return
         t0 = time.perf_counter()
@@ -583,6 +615,162 @@ class MoodSocApp(tk.Tk):
         # 包括"全不勾的 per_shift 要原样传空列表"那条口径，见 store/session.py）。
         self.session.recompute()
         self.session.last_recompute_ms = (time.perf_counter() - t0) * 1000
+        self._publish_recompute(fit_slider)
+
+    # ---------------------------------------------------------------- 异步重算（P5）
+    def recompute_async(self, fit_slider: bool = False):
+        """**不阻塞界面**的重算：工作线程算，主线程轮询收结果（编辑路径用它）。
+
+        规则（连续编辑时只落地最后一版）：
+          - 每来一次请求 `_recalc_gen += 1`；已经在算的那次算完若"代数过期"就**丢弃**，
+            紧接着按最新设置再算一次；
+          - 结果只由**主线程**装进 `Session`（`adopt`），再触发 `_publish_recompute` 刷新界面；
+          - 计算期间状态栏写「计算中…」，窗口照常响应（拖滑块/切页/继续编辑都不卡）。
+        """
+        if self.schedule is None:
+            return
+        self._recalc_gen += 1
+        self._recalc_fit = self._recalc_fit or bool(fit_slider)
+        if self._recalc_thread is not None and self._recalc_thread.is_alive():
+            return                              # 让它算完自己接着跑最新一代
+        self._launch_recalc()
+
+    def _launch_recalc(self):
+        """按**当前**设置冻结输入并起一个工作线程。"""
+        inputs = self.session.recompute_inputs()
+        if inputs is None:
+            return
+        gen, fit = self._recalc_gen, self._recalc_fit
+        self._recalc_fit = False
+        self.status.configure(text=f"计算中…（周期数 {self.cycles}）")
+        self.update_idletasks()
+
+        def _work():
+            # ⚠️ 工作线程里**临时关掉 gc**：Tk 的 `Variable.__del__` 只能在主线程跑，
+            #    如果析构正好发生在算的时候（GC 在工作线程触发），Tk 会打印
+            #    `RuntimeError: main thread is not in main loop`（测试输出里很吵）。
+            #    算完立刻恢复；这段时间主线程的回收只是推迟，不会漏。
+            gc_was = gc.isenabled()
+            gc.disable()
+            try:
+                traj = Session.compute_trajectory(inputs)
+            except Exception as exc:            # noqa: BLE001 —— 线程里出错也要让主线程知道
+                traj = exc
+            finally:
+                if gc_was:
+                    gc.enable()
+            self._recalc_q.put((gen, fit, traj))
+
+        self._recalc_thread = threading.Thread(target=_work, name="dsh-recalc", daemon=True)
+        self._recalc_thread.start()
+        if self._recalc_poll_job is None:
+            self._recalc_poll_job = self.after(30, self._poll_recalc)
+
+    def _panels_busy(self) -> bool:
+        """设置中心里有没有"编辑还在防抖窗口里"的面板？
+
+        ⚠️ 为什么异步重算要看它：面板的防抖（心情 500ms / 闲置入宿 250ms）到点才 `_collect`，
+        而**落地刷新会把面板里的格子按轨迹重写** —— 如果重算比防抖先落地（P5 之后完全可能），
+        用户刚敲进去的值会被轨迹值盖掉、那次编辑就丢了（实测：改「泡泡 8」后
+        `apply_batch` 收到空 mood）。所以：**面板还在等防抖就先别落地**，
+        等它把编辑提交上去（`has_pending_edit()` 变假）再刷新。
+        """
+        dlg = self.settings_dlg
+        if dlg is None:
+            return False
+        try:
+            return bool(dlg.winfo_exists() and dlg.has_pending_edit())
+        except tk.TclError:
+            return False
+
+    def _poll_recalc(self):
+        """主线程轮询：收结果 → 采用（或丢弃）→ 需要的话接着算最新一代。
+
+        顺序：① 收线程结果（只留最新一条）→ ② 线程还活着就继续等 → ③ 有"最新一代"的结果
+        但**面板还在防抖**就先不落地（否则会把用户正在敲的值盖掉）→ ④ 期间又改了 / 结果过期
+        就按最新设置重算 → ⑤ 都落地了收尾。
+        """
+        self._recalc_poll_job = None
+        if not self.winfo_exists():
+            return
+        latest = None
+        while True:
+            try:
+                item = self._recalc_q.get_nowait()
+            except queue.Empty:
+                break
+            latest = item                        # 队列里只留最后一条（旧的直接丢）
+        if latest is not None and latest[0] == self._recalc_gen:
+            self._recalc_ready = latest          # 过期代次直接丢，不进 ready
+        if self._recalc_thread is not None and self._recalc_thread.is_alive():
+            self._recalc_poll_job = self.after(30, self._poll_recalc)
+            return
+        self._recalc_thread = None
+        if self._recalc_ready is not None and self._recalc_ready[0] == self._recalc_gen:
+            if self._panels_busy():
+                self._recalc_poll_job = self.after(30, self._poll_recalc)
+                return
+            gen, fit, traj = self._recalc_ready
+            self._recalc_ready = None
+            self._recalc_done_gen = gen
+            if isinstance(traj, Exception):
+                self.status.configure(text=f"重算失败：{traj}")
+            else:
+                self.session.adopt(traj)
+                self._publish_recompute(fit)
+        if self._recalc_ready is not None or self._recalc_done_gen != self._recalc_gen:
+            if self._recalc_ready is None:       # 设置又变了 ⇒ 按最新设置重算
+                self._launch_recalc()
+            if self._recalc_poll_job is None:
+                self._recalc_poll_job = self.after(30, self._poll_recalc)
+            return
+        self._settle_recalc()                    # 全部落地：把状态栏/面板收尾
+
+    def _settle_recalc(self):
+        """异步链结束后的收尾：状态栏恢复（或盖上调用方指定的文案）+ 通知监听者。"""
+        if self._status_after_recalc is not None:
+            self.status.configure(text=self._status_after_recalc)
+            self._status_after_recalc = None
+        elif self.schedule is not None and self.session.traj is not None:
+            self.status.configure(text=self.session.status_text()
+                                       + f"　｜　{self._entry_status()}　｜　{self._idle_status()}")
+        for ref in list(self._recalc_listeners):
+            fn = ref()
+            if fn is None:
+                self._recalc_listeners.remove(ref)
+                continue
+            try:
+                fn()
+            except tk.TclError:
+                self._recalc_listeners.remove(ref)
+
+    def wait_recalc(self, timeout: float = 120.0):
+        """**等异步重算落地**（测试与面板用；返回是否等到）。
+
+        做法：一边 `update()` 跑事件循环（轮询任务因此会执行），一边看"已经算到最新一代没有"。
+        """
+        deadline = time.perf_counter() + timeout
+        while time.perf_counter() < deadline:
+            if (self._recalc_thread is None or not self._recalc_thread.is_alive()) \
+                    and self._recalc_done_gen == self._recalc_gen:
+                return True
+            try:
+                self.update()
+            except tk.TclError:
+                return False
+            time.sleep(0.005)
+        return False
+
+    def add_recalc_listener(self, fn):
+        """注册"重算落地后要刷新"的回调（弱引用；面板销毁后自动摘掉）。
+
+        用途：闲置入宿面板的表格内容依赖**新轨迹**（逐位候选的宿舍态），
+        而它拿到的那份 `groups` 是改动前的 —— 落地后必须按新表重建一次。
+        """
+        self._recalc_listeners.append(weakref.WeakMethod(fn))
+
+    def _publish_recompute(self, fit_slider: bool):
+        """把 `session.traj` 的**最新结果**铺到界面上（同步/异步两条路共用）。"""
         total = self._total_hours()
         if fit_slider or self.current_t > total:
             self.current_t = Decimal("0")
@@ -806,7 +994,7 @@ class MoodSocApp(tk.Tk):
         ops[slot_index] = picked                      # "" = 清空
         self.session.set_slots(idx, fac_index, ops)
         self._layout_sig = None
-        self.recompute()
+        self.recompute_async()
 
     def on_slot_right(self, fac_index: int, slot_index: int):
         """右键：设置该位置干员的心情（周期起点）。"""
@@ -838,11 +1026,11 @@ class MoodSocApp(tk.Tk):
             return
         self.session.set_room_level(idx, fac_index, int(new_lv))
         self._layout_sig = None
-        self.recompute()
-        self.status.configure(
-            text=f"{facility.display_name} 已设为 Lv{new_lv}"
-                 f"（可放 {facility_slots(ftype, new_lv)} 人）"
-                 + (f"　⚠ {self._layout_issues()}" if self._layout_issues() else ""))
+        self.recompute_async()
+        self._status_after_recalc = (
+            f"{facility.display_name} 已设为 Lv{new_lv}"
+            f"（可放 {facility_slots(ftype, new_lv)} 人）"
+            + (f"　⚠ {self._layout_issues()}" if self._layout_issues() else ""))
 
     def set_curve_mood(self):
         """右侧面板：给当前曲线选中的干员设心情。"""
@@ -871,7 +1059,7 @@ class MoodSocApp(tk.Tk):
         if v is None:
             return
         self.session.set_initial_mood(who, v)
-        self.recompute()
+        self.recompute_async()
 
     def _current_start_mood(self, who: str) -> Decimal:
         return self.session.imported_moods().get(who, MOOD_MAX)
@@ -960,7 +1148,10 @@ class MoodSocApp(tk.Tk):
         """
         self.session.idle_to_dorm = bool(enabled)
         self.session.idle_entries = dict(entries)
-        self.recompute()                           # 看板/曲线跟着刷新
+        # ⚠️ 异步重算（P5）：`recompute_async` 立即返回，返回的 `groups` 还是**改动前**那份；
+        #    落地后由 `_settle_recalc` 通知监听者（设置中心注册了自己）按新表重建 ——
+        #    见 `ui/settings.py` 里 `add_recalc_listener` 那处。
+        self.recompute_async()                     # 看板/曲线跟着刷新
         self._sync_idle_label()
         return self._idle_groups()
 
@@ -993,22 +1184,18 @@ class MoodSocApp(tk.Tk):
         if detached is not None:
             self.session.set_detached(list(detached))      # 名单同步进 Schedule 与各班 world
         self._layout_sig = None
-        # 整周期重算是同步的（实测 0.23~1.2s）：先把"在算什么"写出来再算，
-        # 否则点了「全部满心情」这种大动作会像卡死。
-        self.status.configure(text="正在重算…（设置已改动，周期数 "
-                                   f"{self.cycles}）")
-        self.update_idletasks()
-        self.recompute()
+        # 整周期重算走**异步**（P5）：状态栏先写"计算中…"（`_launch_recalc` 负责），
+        # 落地后 `_settle_recalc` 把下面这句盖上去。
         which = ("第 " + "、".join(str(i + 1) for i in sorted(changes)) + " 班"
                  if changes else "未改动布局")
         n_bench = len(self.session.bench_names())
-        self.status.configure(
-            text=f"设置已生效：{which}"
-                 + (f"（{n_ops} 个位置）" if changes else "")
-                 + f"　｜　手动起点心情 {len(moods)} 名，其余用导入值"
-                 + (f"　｜　不在基建 {n_bench} 名" if n_bench else "")
-                 + (f"　｜　心情指定事件 {len(self.mood_events)} 条" if self.mood_events
-                    else ""))
+        self._status_after_recalc = (
+            f"设置已生效：{which}"
+            + (f"（{n_ops} 个位置）" if changes else "")
+            + f"　｜　手动起点心情 {len(moods)} 名，其余用导入值"
+            + (f"　｜　不在基建 {n_bench} 名" if n_bench else "")
+            + (f"　｜　心情指定事件 {len(self.mood_events)} 条" if self.mood_events else ""))
+        self.recompute_async()
 
     def apply_start_clock(self, clock) -> None:
         """「时间轴」→「初始时间点」落地：**只改显示口径**（周期起点是几点）。
@@ -1140,12 +1327,13 @@ class MoodSocApp(tk.Tk):
         self.session.entry_when = when or "full"   # 界面口径：缺省＝"没满就不换"
         self.session.entry_per_shift = list(per_shift or [])
         self._sync_entry_label()
-        self.recompute()                      # 先重算（recompute 会写状态栏）
+        # 异步重算（P5）：状态栏文案留到**落地之后**再写（否则会被"计算中…"/通用状态盖掉）
         if not self._entry_candidates()[0]:
-            self.status.configure(text="本排班里没有能触发进驻事件的干员（如菲亚梅塔），"
-                                        "这个开关暂时不会有任何效果")
+            self._status_after_recalc = ("本排班里没有能触发进驻事件的干员（如菲亚梅塔），"
+                                         "这个开关暂时不会有任何效果")
         else:
-            self.status.configure(text=self._entry_summary())   # 再用配置摘要盖上去
+            self._status_after_recalc = self._entry_summary()   # 配置摘要
+        self.recompute_async()
 
     def _layout_issues(self) -> str:
         """当前班次布局的自检问题（上游约束：单类型上限 / 建造位总量 9 / 人数 ≤ 等级容量）。"""
@@ -1181,7 +1369,7 @@ class MoodSocApp(tk.Tk):
         """改完某个班次的布局 → 重建 Schedule → 重算（转发到 Session）。"""
         self.session.replace_facilities(idx, facs)
         self._layout_sig = None
-        self.recompute()
+        self.recompute_async()
 
     def edit_shifts(self):
         """（旧入口，现等价于）打开设置中心的「时间轴」分区。"""
@@ -1202,7 +1390,7 @@ class MoodSocApp(tk.Tk):
             return
         self.session.set_timeline(hours=hours)      # 周期自动 = 各班长之和
         self._build_shift_buttons()
-        self.recompute(fit_slider=True)
+        self.recompute_async(fit_slider=True)
         # 班次时长/数量变了 → 别的分区里的班次下拉、逐次表都得重建（设置窗口自己不用）
         self._invalidate_settings("batch", "entry", "idle")
 
@@ -1219,7 +1407,7 @@ class MoodSocApp(tk.Tk):
         self.cycles_var.set(str(self.session.cycles))
         # 周期数变了 → 底部「周期」选择器要跟着出现/消失（`_build_shift_buttons` 按它决定）
         self._build_shift_buttons()
-        self.recompute(fit_slider=True)
+        self.recompute_async(fit_slider=True)
         # 逐次表按周期展开、干员与心情的「周期」下拉也有 1~周期数 项 → 两个分区都得重建
         self._invalidate_settings("idle", "batch")
 
@@ -1424,14 +1612,18 @@ class MoodSocApp(tk.Tk):
             except tk.TclError:
                 pass
             self.settings_dlg = None
-        for attr in ("_refresh_job", "_settle_job", "_play_job", "_autoload_job"):
+        for attr in ("_refresh_job", "_settle_job", "_play_job", "_autoload_job",
+                     "_recalc_poll_job"):
             job = getattr(self, attr, None)
             if job:
                 try:
                     self.after_cancel(job)
                 except tk.TclError:
                     pass
-                setattr(self, attr, None)
+            setattr(self, attr, None)
+        # 在算的那次异步重算：把代数推高 ⇒ 结果回来时会被判为过期、不碰已销毁的控件
+        self._recalc_gen += 1
+        self._recalc_thread = None
         super().destroy()
 
 

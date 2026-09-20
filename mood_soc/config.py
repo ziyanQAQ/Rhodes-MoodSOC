@@ -24,9 +24,26 @@
 """
 from decimal import ROUND_HALF_UP, Decimal, getcontext
 
-# 全局十进制上下文：28 位有效数字 + 四舍五入，保证除法结果确定且精度足够。
-getcontext().prec = 28
-getcontext().rounding = ROUND_HALF_UP
+#: 本项目的**规范 Decimal 上下文**：28 位有效数字 + 四舍五入（保证除法结果确定且精度足够）。
+DECIMAL_PREC = 28
+DECIMAL_ROUNDING = ROUND_HALF_UP
+
+
+def use_project_decimal_context() -> None:
+    """把**当前线程**的 Decimal 上下文设成本项目的规范值（幂等、极便宜）。
+
+    ⚠️ 为什么必须有它（2026-09 踩到）：`decimal` 的上下文是**线程局部**的，模块 import 时
+    这行只设到"导入它的那个线程"。引擎一旦在**别的线程**里跑（界面的异步重算 P5），
+    新线程拿到的是 Python 默认上下文（`prec=28` 但舍入是 `ROUND_HALF_EVEN`）——
+    末位会差 1e-26，再经"跨阈值吸附"连锁改变事件时刻：实测**同一份输入**主线程与工作线程
+    算出来的轨迹在 52 名干员上不同。所以引擎的入口都要先调一下它。
+    """
+    ctx = getcontext()
+    ctx.prec = DECIMAL_PREC
+    ctx.rounding = DECIMAL_ROUNDING
+
+
+use_project_decimal_context()
 
 from data.domain import (  # noqa: E402  （放在设置 Decimal 上下文之后）
     ACTIVITY_ROOM_FACILITIES,

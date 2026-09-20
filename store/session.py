@@ -253,17 +253,25 @@ class Session:
                 self.idle_entries[(e.cycle or 1, e.shift or 1, e.name)] = (bool(e.enabled), label)
 
     # ================================================================ 重算
-    def recompute(self) -> Optional[Trajectory]:
-        """按当前设置重算整周期轨迹（**唯一的重算入口**）。"""
+    def recompute_inputs(self) -> Optional[dict]:
+        """把"重算要用的**全部输入**"冻结成一个参数包（`simulate_schedule` 的关键字参数）。
+
+        为什么要拆出来（2026-09，响应速度 P5）：界面把重算挪到**工作线程**去跑，
+        线程里只能碰"主线程不会再改"的东西 —— 于是这里做三件事：
+          ① 该同步的先同步（「不在基建」名单写回 `Schedule`，与 `recompute` 原来一致）；
+          ② 传**浅拷贝**：`initial_moods` / `mood_events` / `entry_per_shift` 都 `dict()`/`list()`
+             一份 —— 界面上这些字段是**就地改**的（`set_initial_moods` 等）；
+          ③ `schedule` 直接传引用：它是**换新对象**的（`set_slots`/`set_timeline`/`with_detached`
+             都返回新 `Schedule`），线程拿着旧对象不会被主线程改到。
+        没有排班（未导入）→ `None`。
+        """
         if self.schedule is None:
-            self.traj = None
             return None
-        # 「不在基建」名单是**排班级**设置：重算前同步进 Schedule（界面/接口改的是会话字段）
         if list(getattr(self.schedule, "detached", []) or []) != list(self.detached):
             self.schedule = self.schedule.with_detached(self.detached)
-        self.traj = simulate_schedule(
-            self.schedule, cycles=self.cycles,
-            initial_moods=self.initial_moods,
+        return dict(
+            schedule=self.schedule, cycles=self.cycles,
+            initial_moods=dict(self.initial_moods),
             entry_events=self.entry_events,
             entry_swap_with=self.entry_swap_with,
             entry_scope=self.entry_scope,
@@ -275,7 +283,33 @@ class Session:
             entry_per_shift=list(self.entry_per_shift),
             idle_to_dorm=self.idle_to_dorm,
             idle_entries=self.idle_entry_list(),
-            mood_events=list(self.mood_events))
+            mood_events=list(self.mood_events),
+        )
+
+    @staticmethod
+    def compute_trajectory(inputs: dict) -> Trajectory:
+        """**纯计算**：由参数包算一条轨迹（不碰 `Session` 的任何状态）。
+
+        界面把它丢进工作线程；`Session` 自己的 `recompute()` 也在主线程直接调它。
+        `simulate_schedule` 全程只读参数包、返回全新对象，所以线程安全。
+        """
+        return simulate_schedule(**inputs)
+
+    def adopt(self, traj: Optional[Trajectory]) -> None:
+        """把算好的轨迹**装进会话**（只该在主线程调）。"""
+        self.traj = traj
+
+    def recompute(self) -> Optional[Trajectory]:
+        """按当前设置重算整周期轨迹（**唯一的重算入口**；同步、阻塞）。
+
+        ⚠️ 界面上的"编辑"走的是异步版（`ui/app.py: recompute_async`，后台线程 + 落地），
+        这里保持同步语义：导入 / 程序接口 / 测试都指望"函数返回时轨迹已经是新的"。
+        """
+        inputs = self.recompute_inputs()
+        if inputs is None:
+            self.traj = None
+            return None
+        self.traj = self.compute_trajectory(inputs)
         return self.traj
 
     @property

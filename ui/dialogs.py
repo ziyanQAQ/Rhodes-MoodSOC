@@ -661,8 +661,12 @@ class IdleToDormMixin:
 
     def _init_idle_body(self, parent, enabled: bool, groups: Sequence,
                         on_change=None, note: str = "", table_height="auto",
-                        page_height: int = 0):
-        """把状态收好并建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。"""
+                        page_height: int = 0, groups_provider=None):
+        """把状态收好并建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
+
+        `groups_provider`：无参可调用，返回**当前**分组表（设置中心传 `app.idle_groups`）。
+        异步重算落地后由 `refresh_from_provider()` 用它取新表 —— 见那个方法。
+        """
         self.result = None
         # 表格高度：显式数字（独立对话框）或 "auto"（设置中心：吃内容区剩余高度）
         self._table_h = None if table_height == "auto" else int(table_height)
@@ -671,6 +675,7 @@ class IdleToDormMixin:
         self.state: dict = {}
         self._groups = list(groups)
         self._on_change = on_change
+        self._groups_provider = groups_provider
         self._rows: list = []          # [(周期, 班次, 干员, 参与 BooleanVar, 换谁 StringVar)]
         self._widgets: list = []       # ① 关掉时要置灰的控件
         self._job = None
@@ -847,7 +852,12 @@ class IdleToDormMixin:
         self._rebuild()
 
     def _rebuild(self) -> None:
-        """把当前状态交给调用方重算，并用返回的新分组表重建表格。"""
+        """把当前状态交给调用方重算，并用返回的新分组表重建表格。
+
+        ⚠️ 现在重算是**异步**的（`app.recompute_async`，见 `ui/app.py`）：`on_change` 返回的
+        分组表是**改动前**那份，所以这里先用它把表画出来（不闪烁），真正的"新表"由
+        `refresh_groups`（设置中心注册的落地回调）在算完之后重建。
+        """
         self._collect()
         if self._on_change is not None:
             groups = self._on_change(bool(self.enabled.get()), dict(self.state))
@@ -855,6 +865,26 @@ class IdleToDormMixin:
                 self._groups = list(groups)
         if self.winfo_exists():
             self._fill_table()
+
+    def refresh_groups(self, groups) -> None:
+        """**重算落地后**由设置中心回调：换掉分组表并重建（保留用户当前的选择）。"""
+        if groups is None or not self.winfo_exists():
+            return
+        self._groups = list(groups)
+        self._fill_table()
+
+    def refresh_from_provider(self) -> None:
+        """异步重算落地后的刷新入口（**绑定方法**，设置中心用 `add_recalc_listener` 注册它）。
+
+        ⚠️ 它必须是绑定方法：`app.add_recalc_listener` 存的是 `weakref.WeakMethod`，
+        面板销毁后回调自动失效；lambda 不行（会被立刻回收，而且强引用会吊住控件）。
+        """
+        if self._groups_provider is not None:
+            self.refresh_groups(self._groups_provider())
+
+    def has_pending_edit(self) -> bool:
+        """面板有没有"还在防抖窗口里"的改动？（`app` 的异步重算据此决定"先别落地"）。"""
+        return self._job is not None
 
     def _sync(self) -> None:
         """关掉总开关时把整张表置灰。"""
@@ -889,10 +919,11 @@ class IdleToDormPanel(tk.Frame, IdleToDormMixin):
 
     def __init__(self, master, enabled: bool, groups: Sequence,
                  on_change=None, note: str = "", table_height="auto",
-                 page_height: int = 0):
+                 page_height: int = 0, groups_provider=None):
         super().__init__(master, bg=theme.BG)
         self._init_idle_body(master, enabled, groups, on_change=on_change, note=note,
-                             table_height=table_height, page_height=page_height)
+                             table_height=table_height, page_height=page_height,
+                             groups_provider=groups_provider)
 
     def destroy(self) -> None:
         """销毁时取消还没跑的重建任务（否则会对着已销毁的控件报 invalid command name）。"""

@@ -657,6 +657,72 @@ class Test闲置入宿优先级(unittest.TestCase):
 
 
 
+class Test线程与精度(unittest.TestCase):
+    """**同一份输入，在任何线程里都必须算出逐位相同的轨迹**。
+
+    为什么单独立一条：`decimal` 的上下文是**线程局部**的，`mood_soc/config.py` 里那两行
+    （`prec=28` + `ROUND_HALF_UP`）只设到"导入它的那个线程"。界面的异步重算（P5）把引擎丢进
+    后台线程 —— 新线程默认是 `ROUND_HALF_EVEN`，末位差 1e-26，再经"跨阈值吸附"连锁改变事件
+    时刻。实测**同一份输入**主线程与工作线程在 52 名干员的轨迹上不同（节点数一样、数值末位不同），
+    所以引擎入口必须显式重设上下文（`config.use_project_decimal_context`）。
+    """
+
+    def test_主线程与工作线程逐位一致(self):
+        import threading
+
+        from data.paths import MAA_SAMPLE
+        from store.session import Session
+
+        s = Session()
+        s.load_paths([MAA_SAMPLE])
+        s.set_cycles(2)
+        s.set_initial_mood("菲亚梅塔", Decimal("3"))
+        s.recompute()
+        main_traj = s.compute_trajectory(s.recompute_inputs())
+
+        box = {}
+
+        def work():
+            box["traj"] = Session.compute_trajectory(s.recompute_inputs())
+
+        th = threading.Thread(target=work, name="test-recalc")
+        th.start()
+        th.join()
+        other = box["traj"]
+
+        self.assertEqual(list(main_traj.times), list(other.times), "事件节点必须逐位相同")
+        diff = [n for n in main_traj.moods
+                if list(main_traj.moods[n]) != list(other.moods[n])]
+        self.assertEqual(diff, [], "工作线程算出来的轨迹必须与主线程逐位一致")
+
+    def test_引擎入口会重设本线程的上下文(self):
+        """直接验证机制本身：把当前线程的上下文故意改坏，引擎入口应当把它设回来。"""
+        import threading
+        from decimal import ROUND_DOWN, getcontext
+
+        from data.paths import MAA_SAMPLE
+        from mood_soc.config import (DECIMAL_PREC, DECIMAL_ROUNDING,
+                                     use_project_decimal_context)
+        from store.session import Session
+
+        box = {}
+
+        def work():
+            getcontext().prec = 6                      # 故意改坏
+            getcontext().rounding = ROUND_DOWN
+            s = Session()
+            s.load_paths([MAA_SAMPLE])
+            s.set_cycles(1)
+            s.recompute()                              # 引擎入口应当先重设上下文
+            box["ctx"] = (getcontext().prec, getcontext().rounding)
+
+        th = threading.Thread(target=work, name="test-ctx")
+        th.start()
+        th.join()
+        self.assertEqual(box["ctx"], (DECIMAL_PREC, DECIMAL_ROUNDING))
+        use_project_decimal_context()                  # 收尾：把当前线程设回规范值
+
+
 class Test不在基建(unittest.TestCase):
     """**「不在基建」的人**（既不在工作设施、也不在宿舍）：平线 + 不参与技能计数。
 

@@ -109,7 +109,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 464 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 467 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
@@ -249,6 +249,26 @@ documents/
     `pendant_memo.clear()`**（含 ⓪① 放人那两条，不只是"互换"），否则表里留的是旧世界。
     渲染层不用管：`idle_groups` 6.8ms、`_build_shift_buttons` 5.4ms、`world_at` 0ms —— **瓶颈只在引擎**。
     详见 `documents/09-开发指南.md` 的性能基线表与 `documents/07-设计史.md` P9。
+24. **编辑走「异步重算」，而 `decimal` 上下文是线程局部的 —— 两者是一套，别拆开看**（2026-09，P5）：
+    ① 界面上的**编辑**（改布局/心情/换心情/闲置入宿/时间轴/看板左右键）调 `ui/app.py: recompute_async()`：
+    工作线程算、主线程 `after(30, _poll_recalc)` 收结果并 `Session.adopt()`；**导入/测试/程序路径**仍走
+    同步的 `Session.recompute()`（返回时轨迹已是新的）。连续编辑只落地最后一版（请求**代数** `_recalc_gen`，
+    过期结果丢弃）。`app.wait_recalc()` 给测试/面板用（泵事件循环直到落地）。
+    ② ⚠️ **结果落地前不许刷面板**：面板的防抖（心情 500ms / 闲置入宿 250ms）还没提交时落地刷新会
+    **按轨迹重写格子**，把用户刚敲的值盖掉、那次编辑整个丢失（实测：改「泡泡 8」后 `apply_batch` 收到空 mood）。
+    所以 `_poll_recalc` 先看 `SettingsDialog.has_pending_edit()`（各面板实现同一个探针）——还忙就把结果
+    攥在 `_recalc_ready` 里、30ms 后再看。**换排班（`load_paths`）则把在算的整代作废**（代数推高 +
+    丢结果 + 停轮询 + 清 `_status_after_recalc`），否则旧排班的结果会盖掉导入摘要。
+    ③ ⚠️ **`decimal` 上下文是线程局部**：`mood_soc/config.py` 那两行只设到导入它的线程，工作线程默认
+    `ROUND_HALF_EVEN` ⇒ 末位差 1e-26 ⇒ 经阈值吸附放大成**事件时刻不同**（实测同一份输入主线程与
+    工作线程在 **52 名干员**的轨迹上不一致）。修法：引擎入口（`store.schedule.simulate_schedule`、
+    `rules.evaluate` / `evaluate_base`）都先调 `config.use_project_decimal_context()`；
+    回归 `Test线程与精度`（逐位一致 + 故意改坏上下文也会被设回来）。
+    ④ 工作线程里**临时 `gc.disable()`**：Tk 的 `Variable.__del__` 只能在主线程跑，析构落在工作线程会打印
+    `RuntimeError: main thread is not in main loop`（测试输出很吵）。
+    ⑤ `apply_batch` / `apply_entry_event` / 改房间等级这类"落地后要写状态栏"的，文案放
+    `app._status_after_recalc`（由 `_settle_recalc` 盖上）；面板要按新轨迹重建的就用
+    `app.add_recalc_listener(绑定方法)`（`weakref.WeakMethod`，**不能传 lambda**）。
 
 ---
 

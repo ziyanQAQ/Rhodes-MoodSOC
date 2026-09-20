@@ -237,6 +237,18 @@ class SettingsDialog(tk.Toplevel):
         nxt.focus_set()
         return "break"
 
+    def has_pending_edit(self) -> bool:
+        """**已建出来的分区里**有没有"还在防抖窗口里"的改动？
+
+        `ui/app.py` 的异步重算用它决定"结果先别落地"：重算可能比面板防抖先算完，
+        而落地刷新会按轨迹重写面板格子 —— 会把用户刚敲进去的值盖掉（实测过）。
+        """
+        for page in self._pages.values():
+            probe = getattr(page, "has_pending_edit", None)
+            if probe is not None and probe():
+                return True
+        return False
+
     def invalidate(self, *keys: str) -> None:
         """把这些分区**标脏**（下次进入时重建）。
 
@@ -380,9 +392,14 @@ class SettingsDialog(tk.Toplevel):
     def _build_idle(self) -> tk.Frame:
         app = self.app
         # 闲置入宿的表也按内容区剩余高度算：它要跟别的分区共用同一块内容区
-        return IdleToDormPanel(self.host, app.idle_to_dorm.get(), app.idle_groups(),
-                              on_change=app.apply_idle_to_dorm,
-                              table_height="auto", page_height=PAGE_H)
+        panel = IdleToDormPanel(self.host, app.idle_to_dorm.get(), app.idle_groups(),
+                                on_change=app.apply_idle_to_dorm,
+                                table_height="auto", page_height=PAGE_H,
+                                groups_provider=app.idle_groups)
+        # ⚠️ 重算是**异步**的（`app.recompute_async`）：面板拿到的那份 `groups` 是改动前的，
+        #    真正的新表要等结果落地 —— 注册一个落地回调按新轨迹重建（弱引用，面板销毁即失效）。
+        app.add_recalc_listener(panel.refresh_from_provider)
+        return panel
 
     # ------------------------------------------------------------------ 杂务
     def _center(self, parent) -> None:
