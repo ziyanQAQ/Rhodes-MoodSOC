@@ -641,7 +641,7 @@ class MoodSocApp(tk.Tk):
         if inputs is None:
             return
         gen, fit = self._recalc_gen, self._recalc_fit
-        fp = inputs.get("_fingerprint")      # P6a：轨迹得记住"是哪套设置算的"（供周期数增量续算）
+        sigs = inputs.get("_sigs")           # 增量重算的"逐段指纹"（供周期数/后段编辑续算）
         self._recalc_fit = False
         self.status.configure(text=f"计算中…（周期数 {self.cycles}）")
         self.update_idletasks()
@@ -660,7 +660,7 @@ class MoodSocApp(tk.Tk):
             finally:
                 if gc_was:
                     gc.enable()
-            self._recalc_q.put((gen, fit, fp, traj))
+            self._recalc_q.put((gen, fit, sigs, traj))
 
         self._recalc_thread = threading.Thread(target=_work, name="dsh-recalc", daemon=True)
         self._recalc_thread.start()
@@ -711,13 +711,13 @@ class MoodSocApp(tk.Tk):
             if self._panels_busy():
                 self._recalc_poll_job = self.after(30, self._poll_recalc)
                 return
-            gen, fit, fp, traj = self._recalc_ready
+            gen, fit, sigs, traj = self._recalc_ready
             self._recalc_ready = None
             self._recalc_done_gen = gen
             if isinstance(traj, Exception):
                 self.status.configure(text=f"重算失败：{traj}")
             else:
-                self.session.adopt(traj, fp)
+                self.session.adopt(traj, sigs)
                 self._publish_recompute(fit)
         if self._recalc_ready is not None or self._recalc_done_gen != self._recalc_gen:
             if self._recalc_ready is None:       # 设置又变了 ⇒ 按最新设置重算

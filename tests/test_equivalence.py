@@ -27,7 +27,7 @@ if str(ROOT) not in sys.path:
 from mood_soc import build_base_layout, evaluate, evaluate_base            # noqa: E402
 from mood_soc.ledger import Bucket                                        # noqa: E402
 from mood_soc.rules import mood_ledger                                    # noqa: E402
-from store.schedule import load_schedule, simulate_schedule               # noqa: E402
+from store.schedule import load_schedule, simulate_schedule, MoodSetEvent        # noqa: E402
 from store.session import Session                                         # noqa: E402
 
 D = Decimal
@@ -847,12 +847,13 @@ class Test挂件判据探针范围(unittest.TestCase):
         self.assertFalse(_is_pendant_uncached(world, "路人丁", {}))
 
 
-class Test周期数增量重算(unittest.TestCase):
-    """**P6a**：改「周期数」时只算**尾部**（变少＝只截断），结果必须与"从头全量算"**逐位相同**。
+class Test增量重算(unittest.TestCase):
+    """**P6a/P6b**：按"逐段输入指纹"从**第一个变了的段**续算（周期数变少＝只截断），
+    结果必须与"从头全量算"**逐位相同**。
 
-    为什么值得单独立一条：这是"调周期数看能不能永动"这条主路径的性能来源（7→6 几乎免费、
-    6→7 只算 3 段），但增量一旦把"段首事件之前的种子"取错（比如用 `mood_at(t0)` 拿到跳变**后**
-    的值），段首的进驻事件就会被算两遍 —— 数值静默出错。所以这里既逐位比对，又钉住"真的走了续算"。
+    为什么值得单独立一条：增量一旦把"段首事件之前的种子"取错（比如用 `mood_at(t0)` 拿到跳变**后**
+    的值），段首的进驻事件就会被算两遍；而"切点算早了/算晚了"分别意味着数值出错与白算。所以这里
+    既逐位比对，又钉住"切点落在哪一段"。
     """
 
     @staticmethod
@@ -913,14 +914,14 @@ class Test周期数增量重算(unittest.TestCase):
 
     def test_加周期只算尾巴且逐位一致(self):
         seen = self._spy()
-        s = self._session(2)                 # 1 → 2 周期：续算（种子 = 已算完的 1 个周期）
+        s = self._session(2)                 # 1 → 2 周期：续算（种子 = 已算完的 1 个周期 = 3 段）
         self.assertTrue(seen and seen[-1] is not None, "加周期应当走增量（continue_from 非空）")
-        self.assertEqual(seen[-1][1], 1, "种子应当是「已算完 1 个周期」")
+        self.assertEqual(seen[-1][1], 3, "种子应当是「已算完 3 段」（1 个周期 × 3 班）")
         self._assert_same(s.traj, self._engine_reference(s, 2), "1→2 周期")
 
-        s.set_cycles(4)                      # 2 → 4 周期：再从 2 个周期处续
+        s.set_cycles(4)                      # 2 → 4 周期：再从 6 段处续
         s.recompute()
-        self.assertEqual(seen[-1][1], 2)
+        self.assertEqual(seen[-1][1], 6)
         self._assert_same(s.traj, self._engine_reference(s, 4), "2→4 周期")
 
     def test_减周期就是截断且逐位一致(self):
@@ -929,24 +930,64 @@ class Test周期数增量重算(unittest.TestCase):
         s.set_cycles(2)                      # 6 → 2：只截断，一段都不用算
         s.recompute()
         self.assertTrue(seen and seen[-1] is not None)
-        self.assertEqual(seen[-1][1], 6, "种子就是那份 6 周期的轨迹（引擎自己按新周期数截断）")
+        self.assertEqual(seen[-1][1], 6, "种子是那份 6 周期（18 段）的轨迹，引擎自己按新长度截断")
         self._assert_same(s.traj, self._engine_reference(s, 2), "6→2 周期")
 
     def test_改了别的设置就不再用增量(self):
         s = self._session(3)
-        # 改初始心情（全局设置）⇒ 指纹变了 ⇒ 必须整条重算
+        # 改初始心情（全局设置）⇒ 全局指纹变了 ⇒ 必须从第 0 段整条重算
         s.set_initial_mood("菲亚梅塔", Decimal("9"))
         seen = self._spy()
         s.set_cycles(5)
         s.recompute()
-        self.assertIsNone(seen[-1], "改了别的设置之后不能拿旧轨迹当种子")
+        self.assertIsNone(seen[-1], "改了全局设置之后不能拿旧轨迹当种子")
         self._assert_same(s.traj, self._engine_reference(s, 5), "改心情后 3→5 周期")
         # 但**这次**算完之后缓存又有效了：再改周期数就能续算
         s.set_cycles(6)
         s.recompute()
         self.assertIsNotNone(seen[-1])
-        self.assertEqual(seen[-1][1], 5)
+        self.assertEqual(seen[-1][1], 15, "5 个周期 = 15 段")
         self._assert_same(s.traj, self._engine_reference(s, 6), "5→6 周期")
+
+    def test_改某班布局只从那一班起重算(self):
+        """**P6b**：布局按班次存、那个班每周期都会出现 ⇒ 切点＝它在**第 1 周期**的出现处。"""
+        s = self._session(4)
+        facs = s.facilities_of(2)                       # 第 3 班
+        facs[0]["operators"] = list(facs[0].get("operators", []))[:1]   # 少放一个人
+        seen = self._spy()
+        s.replace_facilities(2, facs)
+        self.assertEqual(seen[-1][1], 2, "第 3 班 ⇒ 切点在第 2 段（0 基）")
+        self._assert_same(s.traj, self._engine_reference(s, 4), "改第 3 班布局")
+
+    def test_改末周期的心情锚点只算那一段(self):
+        """**P6b**：锚点是"周期×时刻"的，命中哪一段就从那一段起算（第 7 周期第 1 班 = 3 段）。"""
+        s = self._session(7)
+        seen = self._spy()
+        s.set_mood_at("菲亚梅塔", Decimal("6"), t=Decimal("2"))   # 第 1 周期第 1 班内
+        s.recompute()                        # ⚠️ `set_mood_at` 只登记锚点，重算由调用方发起
+        self.assertIsNone(seen[-1], "第 1 周期的锚点命中第 0 段 ⇒ 只能整条重算")
+        self._assert_same(s.traj, self._engine_reference(s, 7), "第 1 周期锚点")
+        # 换成最后一个周期的锚点：切点应当落在第 7 周期第 1 班 = 第 18 段
+        s.clear_mood_events()
+        s.recompute()                        # 先让"没有锚点"的那一版落地，作为续算基准
+        ev2 = MoodSetEvent(name="菲亚梅塔", mood=Decimal("6"), t=Decimal("2"), cycle=7)
+        seen = self._spy()
+        s.mood_events = [ev2]
+        s.recompute()
+        self.assertEqual(seen[-1][1], 18, "第 7 周期的锚点 ⇒ 切点在第 18 段")
+        self._assert_same(s.traj, self._engine_reference(s, 7), "第 7 周期锚点")
+
+    def test_改末周期的逐次设置只算那一段(self):
+        """**P6b**：闲置入宿的逐次设置按「周期×班次×干员」存 ⇒ 只算命中那一段。"""
+        s = self._session(7)
+        groups = s.idle_groups()
+        title, (cyc, shf), rows = next(g for g in groups if g[1] == (7, 3))
+        name = rows[0][0]
+        seen = self._spy()
+        s.idle_entries[(cyc, shf, name)] = (False, None)     # 第 7 周期第 3 班：这一位不参与
+        s.recompute()
+        self.assertEqual(seen[-1][1], 20, "第 7 周期第 3 班 = 第 20 段（0 基）")
+        self._assert_same(s.traj, self._engine_reference(s, 7), "改第 7 周期第 3 班逐次设置")
 
 
 class Test不在基建(unittest.TestCase):

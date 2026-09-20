@@ -134,9 +134,9 @@ class Session:
     #: 最近一次重算耗时（毫秒），状态栏与 `status_text()` 用
     last_recompute_ms: float = 0.0
 
-    #: **P6a 增量重算的种子**：`(算好的轨迹, 它覆盖的周期数, 那套设置的指纹)`；
-    #: 只有"同一套设置、只是周期数变了"才拿它续算（见 `recompute_inputs`）。
-    _resume_from: Optional[Tuple[Trajectory, int, tuple]] = None
+    #: **增量重算的种子**：`(算好的轨迹, 它的逐段输入指纹)`；
+    #: 只有"前缀段的指纹没变"才拿它续算（见 `recompute_inputs` / `_segment_signatures`）。
+    _resume_from: Optional[Tuple[Trajectory, list]] = None
 
     # ================================================================ 装配
     def load_paths(self, paths: Sequence[Union[str, Path]]) -> "LoadedSchedule":
@@ -257,25 +257,62 @@ class Session:
                 self.idle_entries[(e.cycle or 1, e.shift or 1, e.name)] = (bool(e.enabled), label)
 
     # ================================================================ 重算
-    def _inputs_fingerprint(self) -> tuple:
-        """**除周期数之外**全部重算输入的指纹（用来判断"上一份轨迹还能不能当增量种子"）。
+    @staticmethod
+    def _world_digest(world) -> tuple:
+        """一份布局的**内容摘要**（用它判"这一班变没变"）。
 
-        为什么用指纹而不是"在每个 setter 里清缓存"：能改设置的地方太多（布局 / 心情 / 锚点 /
-        换心情 / 闲置入宿 / 名单 / 时长…），漏清一处就会拿**旧设置的轨迹**当种子 ⇒ 数值静默出错。
-        指纹把"能改的东西"全列一遍，代价只有几次 `repr`（几十微秒）。
-        ⚠️ `schedule` 用 `id()`：改布局/时长/名单都是**换一个新 `Schedule` 对象**
-        （`replaced_shift` / `with_hours` / `with_detached`），身份变了就说明该整条重算。
+        ⚠️ 为什么不只用 `id(world)`：改练度（`set_training`）之类是**就地改**干员对象的，
+        对象身份不变 —— 只比身份会以为"这一段没变"，于是拿旧轨迹当种子、数值静默出错。
+        摘要按内容算（房间/等级/进驻者/练度/副手），一次重算只算几遍，代价可忽略。
         """
-        return (
-            id(self.schedule),
+        return tuple(
+            (f.display_name, int(getattr(f, "level", 0) or 0), bool(getattr(f, "enabled", True)),
+             tuple((o.name, int(getattr(o, "elite", 0) or 0), int(getattr(o, "level", 0) or 0))
+                   for o in f.operators),
+             tuple(o.name for o in f.deputies))
+            for f in world.facilities)
+
+    def _segment_signatures(self, cycles: int) -> list:
+        """**逐段输入指纹**（P6b）：只要前 k 段的指纹与上一份轨迹一致，那 k 段就能复用。
+
+        "一段的输入"＝ 全局设置 ＋ 这一班的布局/按班覆盖 ＋ 落在这一段里的心情锚点
+        ＋ 这一格（周期×班次）的闲置入宿逐次设置。改哪一类，切点就落在第一个受影响段：
+        布局/练度/房间等级 ⇒ 那一班在**第 1 周期**的出现处；末周期的锚点/逐次设置 ⇒ 那一段；
+        全局设置（初始心情/总开关/名单/时间轴）⇒ 第 0 段（整条重算）。
+        """
+        sch = self.schedule
+        n = len(sch.shifts)
+        glob = (
+            n, str(sch.cycle_hours), tuple(str(s.hours) for s in sch.shifts),
+            str(getattr(sch, "start_clock", "")),
             tuple(sorted((str(k), str(v)) for k, v in self.initial_moods.items())),
-            tuple(repr(e) for e in self.mood_events),
             bool(self.entry_events), self.entry_swap_with, self.entry_scope,
             bool(self.entry_restore_back), self.entry_when,
-            tuple(repr(e) for e in self.entry_per_shift),
-            bool(self.idle_to_dorm),
-            tuple(repr(e) for e in (self.idle_entry_list() or ())),
+            bool(self.idle_to_dorm), tuple(self.detached),
         )
+        per_shift = []
+        for i, s in enumerate(sch.shifts):
+            overrides = tuple(sorted(repr(e) for e in self.entry_per_shift
+                                     if int(getattr(e, "key", 0) or 0) == i + 1))
+            per_shift.append((self._world_digest(s.world), overrides))
+        cells: Dict[tuple, list] = {}
+        for (cyc, shf, name), val in self.idle_entries.items():
+            cells.setdefault((cyc, shf), []).append((name, repr(val)))
+        ev_by_seg: Dict[int, list] = {}
+        for ev in self.mood_events:
+            cyc = int(getattr(ev, "cycle", 1) or 1)
+            if cyc < 1 or cyc > cycles:
+                continue
+            at = to_decimal(ev.t) + sch.cycle_hours * (cyc - 1)
+            seg = int(at // sch.cycle_hours) * n + sch.index_at(at)
+            ev_by_seg.setdefault(seg, []).append(repr(ev))
+        sigs = []
+        for k in range(cycles):
+            for i in range(n):
+                sigs.append((glob, per_shift[i],
+                             tuple(sorted(cells.get((k + 1, i + 1), ()))),
+                             tuple(sorted(ev_by_seg.get(k * n + i, ())))))
+        return sigs
 
     def recompute_inputs(self) -> Optional[dict]:
         """把"重算要用的**全部输入**"冻结成一个参数包（`simulate_schedule` 的关键字参数）。
@@ -287,20 +324,23 @@ class Session:
              一份 —— 界面上这些字段是**就地改**的（`set_initial_moods` 等）；
           ③ `schedule` 直接传引用：它是**换新对象**的（`set_slots`/`set_timeline`/`with_detached`
              都返回新 `Schedule`），线程拿着旧对象不会被主线程改到。
-        **P6a 增量**：上一份轨迹若是"同一套设置"（指纹一致）算的、只是周期数不同，
-        就带上 `continue_from` —— 引擎只算尾部（周期数变少＝只截断，一段都不算）。
+        **增量（P6a/P6b）**：逐段输入指纹一比对，就能算出"第一个变了的段" —— 从它续算，
+        前面的段直接复用（周期数变少＝只截断，一段都不算）。
         没有排班（未导入）→ `None`。
         """
         if self.schedule is None:
             return None
         if list(getattr(self.schedule, "detached", []) or []) != list(self.detached):
             self.schedule = self.schedule.with_detached(self.detached)
-        fp = self._inputs_fingerprint()
+        sigs = self._segment_signatures(self.cycles)
         cached = self._resume_from
         resume = None
-        if (cached is not None and cached[2] == fp and cached[0] is self.traj
-                and cached[1] != self.cycles):
-            resume = (cached[0], cached[1])
+        if cached is not None and cached[0] is self.traj:
+            prev_sigs = cached[1] or ()
+            m = min(len(prev_sigs), len(sigs))
+            cut = next((i for i in range(m) if prev_sigs[i] != sigs[i]), m)
+            if cut > 0:
+                resume = (cached[0], cut)
         return dict(
             schedule=self.schedule, cycles=self.cycles,
             initial_moods=dict(self.initial_moods),
@@ -317,7 +357,7 @@ class Session:
             idle_entries=self.idle_entry_list(),
             mood_events=list(self.mood_events),
             continue_from=resume,
-            _fingerprint=fp,          # 给 `adopt` 记账用，不进引擎（见 `compute_trajectory`）
+            _sigs=sigs,               # 给 `adopt` 记账用，不进引擎（见 `compute_trajectory`）
         )
 
     @staticmethod
@@ -328,14 +368,13 @@ class Session:
         `simulate_schedule` 全程只读参数包、返回全新对象，所以线程安全。
         """
         args = dict(inputs)
-        args.pop("_fingerprint", None)
+        args.pop("_sigs", None)
         return simulate_schedule(**args)
 
-    def adopt(self, traj: Optional[Trajectory], fingerprint: Optional[tuple] = None) -> None:
-        """把算好的轨迹**装进会话**（只该在主线程调），并记下"它是哪套设置算出来的"。"""
+    def adopt(self, traj: Optional[Trajectory], sigs: Optional[list] = None) -> None:
+        """把算好的轨迹**装进会话**（只该在主线程调），并记下"它是哪套输入算出来的"。"""
         self.traj = traj
-        self._resume_from = ((traj, self.cycles, fingerprint)
-                             if traj is not None and fingerprint is not None else None)
+        self._resume_from = (traj, sigs) if traj is not None and sigs is not None else None
 
     def recompute(self) -> Optional[Trajectory]:
         """按当前设置重算整周期轨迹（**唯一的重算入口**；同步、阻塞）。
@@ -347,9 +386,9 @@ class Session:
         if inputs is None:
             self.traj = None
             return None
-        fp = inputs["_fingerprint"]
+        sigs = inputs["_sigs"]
         self.traj = self.compute_trajectory(inputs)
-        self._resume_from = (self.traj, self.cycles, fp)
+        self._resume_from = (self.traj, sigs)
         return self.traj
 
     @property
