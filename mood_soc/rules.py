@@ -98,8 +98,23 @@ def _skills_of(op: Operator, kind: SkillKind):
       - β 替换 α：同一干员同一 family 内，若"提升"技能（enhanced=True）已解锁，
         则其 replaces 指向的低版本被替换（不叠加）；
       - 待译技能（untranslated=True）暂不生效。
+
+    ⚠️ 结果**按 `(技能槽, 练度, kind)` 缓存**在干员实例上：实测一次 7 周期重算里它被调
+    164 万次（每次都要重建一个列表）。`_active_skill_ids` 已经缓存，这里再省掉列表重建。
+    **调用方只读**（全仓库没有任何地方改它的返回值）。
     """
-    return [SKILLS[sid] for sid in _active_skill_ids(op) if SKILLS[sid].kind == kind]
+    key = (op.elite, op.level, len(op.skill_ids), id(op.skill_ids))
+    cache = op.__dict__.get("_skills_by_kind_cache")
+    if cache is not None and cache[0] == key:
+        got = cache[1].get(kind)
+        if got is not None:
+            return got
+    else:
+        cache = (key, {})
+        op.__dict__["_skills_by_kind_cache"] = cache
+    val = [SKILLS[sid] for sid in _active_skill_ids(op) if SKILLS[sid].kind == kind]
+    cache[1][kind] = val
+    return val
 
 
 def _template_skills(op: Operator, template_id: str):
@@ -125,7 +140,20 @@ def _unlocked(op: Operator, sid: str) -> bool:
 
 
 def _active_skill_ids(op: Operator):
-    """干员当前生效的技能 id 集合（已解锁 + 未被 β 替换 + 非待译）。"""
+    """干员当前生效的技能 id 集合（已解锁 + 未被 β 替换 + 非待译）。
+
+    ⚠️ **结果缓存在干员实例上**（性能，2026-09）：它只依赖"技能槽 + 练度 + 技能表"，
+    与心情、位置无关 —— 而实测一次 7 周期重算里它被调 **164 万次**（占 profile 32% 累计），
+    因为每次算速率都会把同一个人的技能槽重新过滤一遍、`base_skill_id` 还要拆 140 万次字符串。
+    缓存键＝`(精英化, 等级, len(skill_ids), id(skill_ids))`：
+    前两项管解锁与 β 替换，后两项管"构造完再往 `skill_ids` 里塞东西"的场景
+    （`scripts/verify_skills.py` 的 L2 就靠手工注入 skill_id 造场景）；
+    换成另一个列表对象或改了长度都会自动失效，所以**不需要任何手工清理**。
+    """
+    key = (op.elite, op.level, len(op.skill_ids), id(op.skill_ids))
+    cache = op.__dict__.get("_active_ids_cache")
+    if cache is not None and cache[0] == key:
+        return cache[1]
     unlocked = {
         sid for sid in op.skill_ids
         if sid in SKILLS and not SKILLS[sid].untranslated and _unlocked(op, sid)
@@ -135,7 +163,9 @@ def _active_skill_ids(op: Operator):
     # 否则同一技能的其它分句会漏剔（历史 bug，见 generate_skills_data.load_operators 注释）。
     replaced = {base_skill_id(e.replaces) for sid in unlocked
                 if (e := _equip_of(op, sid)) is not None and e.replaces}
-    return {sid for sid in unlocked if base_skill_id(sid) not in replaced}
+    val = {sid for sid in unlocked if base_skill_id(sid) not in replaced}
+    op.__dict__["_active_ids_cache"] = (key, val)
+    return val
 
 
 def _active(op: Operator) -> bool:
@@ -664,6 +694,7 @@ def _swap_positions(world: BaseLayout, a: Operator, b: Operator) -> str:
     if fa is None or fb is None:
         return ""
     fa.operators[ia], fb.operators[ib] = fb.operators[ib], fa.operators[ia]
+    world.invalidate_index()             # 成员换了房间 ⇒ 名字索引作废（见 `models._name_index`）
     return (f"（位置也对调：{a.name} 去 {fb.display_name}，"
             f"{b.name} 去 {fa.display_name}）")
 
@@ -1068,10 +1099,12 @@ def _swap_mate(world: BaseLayout, exclude: Optional[set] = None,
         """
         if op.name in skip or op.mood < MOOD_MAX:
             return False
-        if _is_pendant(world, op.name, memo):
+        here = world.facility_of(op.name)      # 便宜的先判（名字索引 O(1)）：陈旧对象/已换出去
+        if here is None or here is not dorm:
             return False
-        here = world.facility_of(op.name)
-        return here is not None and here is dorm
+        if _is_pendant(world, op.name, memo):  # 贵的一步（全基建净速率探针）放最后
+            return False
+        return True
 
     # --- 第 ② 级：宿舍 #4 → #3 → #2 的第 2~5 位 ---
     for no in sorted(DORM_PREFERRED_RANGE, reverse=True):
@@ -1122,19 +1155,41 @@ def _is_pendant(world: BaseLayout, name: str, memo: Optional[dict] = None) -> bo
     ⚠️ 判据用**调用那一刻**的实时心情：先是全基建各算一遍净速率，再在一份**浅拷贝探针**
     （`_world_without`，把她从 `fac.operators` 里摘掉＝真被换出后的状态）上重新逐人比对。
     **原世界一个字节都不改** —— 调用点正遍历着 `dorm.operators`，就地增删太脆弱。
-    ⚠️ `memo` 是**同一个班次内**的缓存（`apply_idle_to_dorm` 建一次、换过人后清空）：
-    一次判据要跑两遍全基建，不缓存的话"逐位闲置者 × 逐位候选"会重复试算
-    （实测一遍 ≈ 2.2ms / 47 人）。
+    ⚠️ `memo` 是**同一个班次内**的缓存（`apply_idle_to_dorm` 建一次、换过人后清空）。
+    2026-09 起那张"摘人**之前**的全基建速率表"也挂在 `memo` 上共享（`_all_rates`）：
+    原来"每评一个人就把 47 个速率重算一遍"，而"除她以外所有人的速率"只差她自己那一项
+    ⇒ 一张表就够（实测 7 周期重算里判据占 41% 的耗时，共享后砍掉约一半）。
     """
     if memo is not None and name in memo:
         return memo[name]
-    verdict = _is_pendant_uncached(world, name)
+    verdict = _is_pendant_uncached(world, name, memo)
     if memo is not None:
         memo[name] = verdict
     return verdict
 
 
-def _is_pendant_uncached(world: BaseLayout, name: str) -> bool:
+def _all_rates(world: BaseLayout, memo: Optional[dict] = None) -> Dict[str, Decimal]:
+    """**这一刻全基建每人的净速率**（挂件判据的共享底表）。
+
+    为什么共享：判据要看"把她摘掉之后有没有人变差"，而"除她以外所有人的速率"在
+    **同一个世界快照**里是同一张表 —— 原先每个被评的人都要重算一遍（47 人 × 2 遍），
+    现在一张表 + 每次只做"摘掉她"那一遍。
+    ⚠️ 有效期＝**世界没变**：表挂在 `memo` 上，换人（位置变了）时随 `memo.clear()` 一起失效；
+    心情在同一轮闲置入宿里也不变（调用方进循环前 `_sync_moods` 过一次）。
+    """
+    cached = memo.get(_ALL_RATES_KEY) if memo is not None else None
+    if cached is None:
+        cached = {o.name: compute_net_rate(world, o.name) for o in world.all_operators()}
+        if memo is not None:
+            memo[_ALL_RATES_KEY] = cached
+    return cached
+
+
+#: `memo` 里存共享速率表的键（干员名不会长这样，不会与"逐人判据缓存"撞键）
+_ALL_RATES_KEY = "\x00all_rates"
+
+
+def _is_pendant_uncached(world: BaseLayout, name: str, memo: Optional[dict] = None) -> bool:
     """`_is_pendant` 的实际计算（不带缓存）；见那里的口径说明。"""
     fac = world.facility_of(name)
     if fac is None:
@@ -1146,10 +1201,11 @@ def _is_pendant_uncached(world: BaseLayout, name: str) -> bool:
     if fac.ftype != FacilityType.DORMITORY:
         return False                         # 只对"宿舍成员被换出"这件事下判断
 
-    before = {o.name: compute_net_rate(world, o.name)
-              for o in world.all_operators() if o.name != name}
-    probe = _world_without(world, fac, name)  # 摘掉她 = 真被换出后的状态
+    before = _all_rates(world, memo)
+    probe = _world_without(world, fac, name)   # 摘掉她 = 真被换出后的状态
     for other, old in before.items():
+        if other == name:
+            continue                         # 她自己不在"别人"里
         if compute_net_rate(probe, other) > old:
             return True                      # 有人变差 ⇒ 她走了别人吃亏 ⇒ 她是挂件
     return False
@@ -1167,6 +1223,7 @@ def _world_without(world: BaseLayout, fac: Facility, name: str) -> BaseLayout:
 
     probe = _copy.copy(world)
     probe.facilities = list(world.facilities)
+    probe.invalidate_index()             # 浅拷贝会把索引**引用**带过来 ⇒ 必须丢掉（探针改了成员）
     idx = next((i for i, f in enumerate(probe.facilities) if f is fac), None)
     if idx is None:
         return probe
@@ -1378,6 +1435,8 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
             _leave_previous_facility(world, name)
             pos = len(dorm.operators) + 1
             dorm.operators.append(op)
+            world.invalidate_index()
+            pendant_memo.clear()             # 成员表变了 ⇒ 挂件判据与共享速率表都要重算
             extra = ""
             if entry.slot is not None and entry.slot != pos:
                 extra = (f"（指定第 {entry.slot} 位，但最靠前的空位是第 {pos} 位；"
@@ -1398,6 +1457,8 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
             _leave_previous_facility(world, name)
             pos = len(dorm.operators) + 1
             dorm.operators.append(op)
+            world.invalidate_index()
+            pendant_memo.clear()             # 成员表变了 ⇒ 挂件判据与共享速率表都要重算
             events.append(Contribution(
                 Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
                 owner=name, target=dorm.display_name, detail=(
@@ -1452,6 +1513,7 @@ def apply_idle_to_dorm(world: BaseLayout, enabled=None, idle=None, only=None,
         # ⚠️ 让进来的人**接替被换出者的那个位次**（而不是排到末尾）：这样"换的是第 2~5 位"
         #    才名副其实；末尾追加会让位次随人数漂移、P2 的点名范围就说不清了。
         dorm.operators[mate_idx] = op                        # 她进宿舍
+        world.invalidate_index()                             # 成员换了 ⇒ 名字索引作废
         swapped_out.add(mate.name)                           # 满心情那位**换出来 → 闲置**（不占位）
         pendant_memo.clear()                                 # 成员表变了 ⇒ 挂件/阵营判据都要重算
         how = ("你点名的（优先级④的替代动作）" if tier == 0 else
@@ -1474,6 +1536,7 @@ def _leave_previous_facility(world: BaseLayout, name: str) -> None:
         for i, o in enumerate(list(f.operators)):
             if o.name == name:
                 del f.operators[i]
+                world.invalidate_index()   # 成员变了 ⇒ 名字索引作废
                 return
 
 

@@ -556,26 +556,49 @@ class BaseLayout:
         return self.get_facility(FacilityType.CONTROL_CENTER)
 
     def facility_of(self, operator_name: str) -> Optional[Facility]:
-        """查找某干员（含副手）所在的设施。"""
-        for f in self.facilities:
-            if any(o.name == operator_name for o in f.operators):
-                return f
-        for f in self.facilities:
-            if any(o.name == operator_name for o in f.deputies):
-                return f
-        return None
+        """查找某干员（含副手）所在的设施。
+
+        ⚠️ 走 `_name_index()`（懒建的名字索引）—— 原先是"逐间房扫 `operators` + genexpr"，
+        实测一次重算里被调 13 万次、4.66M 次生成器迭代（占 profile 13%）。
+        **改了设施成员就一定要 `invalidate_index()`**（`rules` 里换人/摘人/位置对调那几处
+        已经调了）：索引是**快照**，不失效就会给出"她还在原来那间"的错答案。
+        """
+        entry = self._name_index().get(operator_name)
+        return None if entry is None else entry[0]
+
+    def _name_index(self) -> Dict[str, tuple]:
+        """懒建的**名字索引**：`{名字: (设施, 干员)}`（只在 `facility_of` / `get_operator` 里用）。
+
+        语义与原来的两趟线性扫描**逐字对齐**：先扫所有房间的 `operators`、再扫所有房间的
+        `deputies`，同名取**先出现**的那个（`setdefault`）。
+        ⚠️ 它是**快照**：设施成员一变就必须 `invalidate_index()`。
+        ⚠️ 存在实例上（不是类/全局）：`deepcopy` 会连它一起复制 —— 复制时刻它是自洽的，
+        之后对副本的修改由副本自己的 `invalidate_index()` 管。
+        """
+        idx = self.__dict__.get("_name_index_cache")
+        if idx is None:
+            idx = {}
+            for f in self.facilities:
+                for o in f.operators:
+                    idx.setdefault(o.name, (f, o))
+            for f in self.facilities:                       # 副手：只在 operators 里没有她时才算
+                for o in f.deputies:
+                    idx.setdefault(o.name, (f, o))
+            self.__dict__["_name_index_cache"] = idx
+        return idx
+
+    def invalidate_index(self) -> None:
+        """**设施成员变了**之后必须调用：丢掉名字索引（下次查询重建）。
+
+        调用点集中在 `mood_soc/rules.py`（闲置入宿换人 / 摘人、进驻事件的位置对调）。
+        忘了调 = 查询给出"她还在原来那间"的陈旧答案。
+        """
+        self.__dict__.pop("_name_index_cache", None)
 
     def get_operator(self, operator_name: str) -> Optional[Operator]:
-        """按名字查找干员（含副手）。"""
-        for f in self.facilities:
-            for o in f.operators:
-                if o.name == operator_name:
-                    return o
-        for f in self.facilities:
-            for o in f.deputies:
-                if o.name == operator_name:
-                    return o
-        return None
+        """按名字查找干员（含副手）。⚠️ 同样走名字索引，改成员后要 `invalidate_index()`。"""
+        entry = self._name_index().get(operator_name)
+        return None if entry is None else entry[1]
 
     def all_operators(self) -> List[Operator]:
         """基建内所有**进驻**干员（扁平化）。副手不参与心情消耗，见 `all_deputies()`。"""
