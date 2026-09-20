@@ -49,7 +49,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
-from mood_soc import (apply_entry_events, apply_idle_to_dorm, compute_net_rate,
+from mood_soc import (apply_entry_events, apply_idle_to_dorm, compute_net_rate, net_rates,
                       entry_event_holders, reset_entry_events)
 from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import MOOD_MAX, MOOD_MIN, use_project_decimal_context
@@ -712,9 +712,11 @@ def rates_in_world(world, names: Sequence[str]) -> Dict[str, Decimal]:
 
     与 `compute_rates` 的区别：直接吃一个 `BaseLayout`，用于"模拟期间布局会被改动"
     的场景（如进驻事件把两人的位置也对调了）。
+
+    ⚠️ 走 `mood_soc.net_rates`（**一次收一份变量快照**给这批人共用）—— 原先每人各收一遍，
+    实测占整轮重算 ~15%（`collect_variables` 一次 ≈15µs × 47 人 × 每次重算速率）。
     """
-    return {n: (compute_net_rate(world, n) if world.get_operator(n) is not None else ZERO)
-            for n in names}
+    return net_rates(world, names)
 
 
 def compute_rates(schedule: Schedule, index: int, moods: Dict[str, Decimal],

@@ -20,7 +20,7 @@ from typing import List, Tuple
 from .battery import ampere_hour_integration, to_decimal
 from .config import MOOD_MAX
 from .models import BaseLayout
-from .rules import compute_net_rate
+from .rules import net_rates
 
 
 def simulate(world: BaseLayout, operator_name: str, duration,
@@ -53,7 +53,7 @@ def simulate(world: BaseLayout, operator_name: str, duration,
         if i == steps:
             break
         # 每步先统一算速率，再统一更新，避免先后顺序影响结果
-        rates = {o.name: compute_net_rate(world, o.name) for o in world.all_operators()}
+        rates = net_rates(world)
         for o in world.all_operators():
             o.mood = ampere_hour_integration(o.mood, rates[o.name], dt, MOOD_MAX)
 

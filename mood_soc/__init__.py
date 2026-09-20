@@ -10,7 +10,7 @@
   - build_base_layout(data)      从字典构建基建布局
   - evaluate(world, name, hours) 单个干员测算（single 模式）
   - evaluate_base(world, hours)  整个基建布局测算（base 模式）
-  - compute_net_rate / remaining_mood_after / remaining_work_hours  底层查询
+  - compute_net_rate / net_rates / remaining_mood_after / remaining_work_hours  底层查询
   - mood_ledger(world, name)     **心情流水账**：逐条来源 + 轴 F 叠加规则（.explain() 可读）
   - work_rest_ratio(x, y)        工休比指标
   - simulate(...)                时间步进模拟（处理红脸等时变情况）
@@ -33,6 +33,7 @@ from .rules import (
     find_entry_target,
     mood_ledger,
     mood_skill_summary,
+    net_rates,
     recovery_ledger,
     remaining_mood_after,
     remaining_work_hours,
@@ -89,6 +90,7 @@ __all__ = [
     "find_entry_target",
     "mood_ledger",
     "mood_skill_summary",
+    "net_rates",
     "recovery_ledger",
     "remaining_mood_after",
     "remaining_work_hours",

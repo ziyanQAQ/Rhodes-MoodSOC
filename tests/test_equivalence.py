@@ -990,6 +990,66 @@ class Test增量重算(unittest.TestCase):
         self._assert_same(s.traj, self._engine_reference(s, 7), "改第 7 周期第 3 班逐次设置")
 
 
+class Test变量快照共享(unittest.TestCase):
+    """**P7：一批人的净速率共享一份变量快照**（`rules.net_rates`）。
+
+    为什么要有回归：`collect_variables(world)` 是**世界级**的量（人间烟火/热情值/无声共鸣…），
+    优化后"算一批人只收一次"、由调用方传进 `mood_ledger` / `compute_net_rate`。
+    这一步**不许改变任何数值** —— 所以既逐人核对，也把整条轨迹与"逐人自收"的旧行为逐位对照。
+    """
+
+    @staticmethod
+    def _world():
+        from data.paths import MAA_SAMPLE
+        from store.schedule import load_schedule
+
+        return load_schedule([str(MAA_SAMPLE)]).shifts[0].world
+
+    def test_共享与逐人自收逐位相同(self):
+        from mood_soc.rules import compute_net_rate, net_rates
+
+        world = self._world()
+        names = [o.name for o in world.all_operators()]
+        shared = net_rates(world, names)
+        self.assertEqual({n: str(v) for n, v in shared.items()},
+                         {n: str(compute_net_rate(world, n)) for n in names},
+                         "共享快照算出来的速率必须与逐人自收完全一致")
+
+    def test_整条轨迹与逐人自收逐位相同(self):
+        """把引擎退回"每人各收一份"的旧行为，同一条轨迹必须逐位相同。"""
+        import mood_soc.rules as rules
+        from data.paths import MAA_SAMPLE
+        from store.session import Session
+
+        s = Session()
+        s.load_paths([MAA_SAMPLE])
+        s.set_cycles(3)
+        s.recompute()
+        base = s.traj
+
+        orig_rate, orig_ledger = rules.compute_net_rate, rules.mood_ledger
+
+        def old_rate(world, name, variables=None):
+            return orig_rate(world, name, None)          # 忽略传进来的快照 = 旧行为
+
+        def old_ledger(world, name, variables=None):
+            return orig_ledger(world, name, None)
+
+        rules.compute_net_rate, rules.mood_ledger = old_rate, old_ledger
+        try:
+            s._resume_from = None                        # 强制整条重算
+            s.recompute()
+        finally:
+            rules.compute_net_rate, rules.mood_ledger = orig_rate, orig_ledger
+
+        self.assertEqual([str(t) for t in s.traj.times], [str(t) for t in base.times])
+        for n in base.names:
+            self.assertEqual([str(v) for v in s.traj.moods[n]],
+                             [str(v) for v in base.moods[n]], n)
+        self.assertEqual([(str(m.t), m.kind, m.label) for m in s.traj.marks],
+                         [(str(m.t), m.kind, m.label) for m in base.marks])
+
+
 class Test不在基建(unittest.TestCase):
     """**「不在基建」的人**（既不在工作设施、也不在宿舍）：平线 + 不参与技能计数。
 

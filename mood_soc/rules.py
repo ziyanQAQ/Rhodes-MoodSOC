@@ -1180,7 +1180,7 @@ def _all_rates(world: BaseLayout, memo: Optional[dict] = None) -> Dict[str, Deci
     """
     cached = memo.get(_ALL_RATES_KEY) if memo is not None else None
     if cached is None:
-        cached = {o.name: compute_net_rate(world, o.name) for o in world.all_operators()}
+        cached = net_rates(world)            # 共享同一份变量快照（见 `net_rates`）
         if memo is not None:
             memo[_ALL_RATES_KEY] = cached
     return cached
@@ -1256,10 +1256,11 @@ def _is_pendant_uncached(world: BaseLayout, name: str, memo: Optional[dict] = No
 
     before = _all_rates(world, memo)
     probe = _world_without(world, fac, name)   # 摘掉她 = 真被换出后的状态
+    probe_vars = collect_variables(probe)      # 探针世界级快照：一圈里共享（见 `net_rates`）
     for other in _pendant_probe_names(world, fac, name, memo):
         if other not in before:
             continue                         # 陈旧对象 / 已不在基建
-        if compute_net_rate(probe, other) > before[other]:
+        if compute_net_rate(probe, other, probe_vars) > before[other]:
             return True                      # 有人变差 ⇒ 她走了别人吃亏 ⇒ 她是挂件
     return False
 
@@ -1661,13 +1662,18 @@ def compute_recovery(world: BaseLayout, op: Operator, facility: Facility,
 # ----------------------------------------------------------------------------
 # 顶层查询：净速率 / 剩余心情 / 剩余工作时间 / 工休比
 # ----------------------------------------------------------------------------
-def mood_ledger(world: BaseLayout, operator_name: str) -> MoodLedger:
+def mood_ledger(world: BaseLayout, operator_name: str,
+                variables: Optional[VariableLedger] = None) -> MoodLedger:
     """**完整流水账**：消耗 + 回复 + 净速率（唯一计算路径，见 ledger.py）。
 
     这是"让内部完全理解干员心情机制"的入口：
         lg = mood_ledger(world, "刺玫"); print(lg.explain())
     会逐条列出：谁（owner）→ 哪条技能（skill/template）→ 作用于谁 → 多少值
     → 按轴 F 哪条规则合成（同种取最高 / 跨干员取最高 / 池分配 / 归零 / 独占）。
+
+    `variables`：**基建级变量快照**（人间烟火/热情值/无声共鸣…）。它只跟"这一刻的世界"有关、
+    与"算谁"无关 ⇒ 一次算一批人时**传同一份**（见 `net_rates`），别每人重算一遍
+    （实测占整轮重算 ~15%：一次 ≈15µs × 47 人 × 每次重算速率）。
     """
     op = world.get_operator(operator_name)
     if op is None:
@@ -1678,23 +1684,43 @@ def mood_ledger(world: BaseLayout, operator_name: str) -> MoodLedger:
         lg.add(Contribution(Bucket.CONSUME, "未进驻任何设施：不消耗也不回复", ZERO,
                             group="base", template="BASE", target=operator_name))
         return lg
-    variables = collect_variables(world)
+    variables = variables if variables is not None else collect_variables(world)
     lg = consume_ledger(world, op, facility, variables)
     lg.items.extend(recovery_ledger(world, op, facility, variables).items)
     return lg
 
 
-def compute_net_rate(world: BaseLayout, operator_name: str) -> Decimal:
-    """干员的净消耗速率（点 / 时）。>0 心情下降，<0 心情上升。"""
+def compute_net_rate(world: BaseLayout, operator_name: str,
+                     variables: Optional[VariableLedger] = None) -> Decimal:
+    """干员的净消耗速率（点 / 时）。>0 心情下降，<0 心情上升。
+
+    `variables` 同 `mood_ledger`（算一批人时传同一份，见 `net_rates`）。
+    """
     op = world.get_operator(operator_name)
     if op is None:
         raise KeyError(f"基建布局中不存在干员：{operator_name}")
     if world.facility_of(operator_name) is None:
         return ZERO   # 不在任何设施内，视为既不消耗也不回复
-    return mood_ledger(world, operator_name).net_rate()
+    return mood_ledger(world, operator_name, variables).net_rate()
 
 
-def remaining_mood_after(world: BaseLayout, operator_name: str, hours) -> Decimal:
+def net_rates(world: BaseLayout, names: Optional[Sequence[str]] = None) -> Dict[str, Decimal]:
+    """**一次算一批人的净速率**（`names` 缺省＝全基建所有人）。
+
+    存在的意义只有一个：`collect_variables(world)` 是**世界级**的量（与"算谁"无关），
+    一次算一批人时共享同一份快照，而不是每人重算一遍 —— 示例排班实测**整轮重算快 1.3×**。
+    ⚠️ 快照跟 `world` 的**成员与心情**绑定：世界一变（换人 / 改心情）就得重新收集，
+    所以只在"同一个世界快照、连续算一批人"的场景里用。
+    """
+    if names is None:
+        names = [o.name for o in world.all_operators()]
+    variables = collect_variables(world)
+    return {n: (compute_net_rate(world, n, variables) if world.get_operator(n) is not None else ZERO)
+            for n in names}
+
+
+def remaining_mood_after(world: BaseLayout, operator_name: str, hours,
+                         variables: Optional[VariableLedger] = None) -> Decimal:
     """目标时段（hours 小时）结束后，该干员的剩余心情（安时积分，钳位到 [0,24]）。
 
     注：假设时段内基建布局不变、且其余干员心情无限（即速率恒定）。
@@ -1703,7 +1729,7 @@ def remaining_mood_after(world: BaseLayout, operator_name: str, hours) -> Decima
     op = world.get_operator(operator_name)
     if op is None:
         raise KeyError(f"基建布局中不存在干员：{operator_name}")
-    net = compute_net_rate(world, operator_name)
+    net = compute_net_rate(world, operator_name, variables)
     return ampere_hour_integration(op.mood, net, hours, MOOD_MAX)
 
 
@@ -1799,8 +1825,9 @@ def evaluate(world: BaseLayout, operator_name: str, period_hours=Decimal("0")) -
         raise KeyError(f"基建布局中不存在干员：{operator_name}")
     facility = world.facility_of(operator_name)
 
-    net = compute_net_rate(world, operator_name)
-    remaining = remaining_mood_after(world, operator_name, period_hours)
+    variables = collect_variables(world)       # 下面三处共用同一份（见 `net_rates`）
+    net = compute_net_rate(world, operator_name, variables)
+    remaining = remaining_mood_after(world, operator_name, period_hours, variables)
     # 需求口径：先按目标时段推进心情，再以"时段结束后的剩余心情"为起点，
     # 在"其余干员心情无限（速率恒定）"假设下计算还能维持/恢复多久。
     # 工作（net>0）→ 到红脸时长；宿舍（net<0）→ 恢复满心情时长。
@@ -1829,7 +1856,7 @@ def evaluate(world: BaseLayout, operator_name: str, period_hours=Decimal("0")) -
         remaining_mood=remaining,
         sustain_hours=sustain,
         state=state,
-        ledger=mood_ledger(world, operator_name),
+        ledger=mood_ledger(world, operator_name, variables),
     )
 
 
@@ -1854,10 +1881,11 @@ def evaluate_base(world: BaseLayout, period_hours=Decimal("0")) -> BaseResult:
     ⚠️ 入口先固定**本线程**的 Decimal 上下文（线程局部；见 `config.use_project_decimal_context`）。
     """
     use_project_decimal_context()
+    rates = net_rates(world)         # 一次算全基建（共享变量快照，见 `net_rates`）
     entries = []   # (name, facility_label, mood, net, 个体到红脸时长)
     for op in world.all_operators():
         facility = world.facility_of(op.name)
-        net = compute_net_rate(world, op.name)
+        net = rates.get(op.name, ZERO)
         mood = ampere_hour_integration(op.mood, net, period_hours, MOOD_MAX)
         facility_label = FACILITY_LABELS.get(facility.ftype, "（不在基建内）") if facility else "（不在基建内）"
         entries.append((op.name, facility_label, mood, net, _time_to_red_face(mood, net)))
