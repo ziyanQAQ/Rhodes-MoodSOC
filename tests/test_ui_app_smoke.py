@@ -91,6 +91,20 @@ class Test入口跑法(unittest.TestCase):
         r = self._run(code)
         self.assertEqual(r.returncode, 7, f"stdout={r.stdout!r} stderr={r.stderr!r}")
 
+    @unittest.skipUnless(TK_OK, "无图形环境（Tk 不可用）")
+    def test_smoke参数跑得通且退出码为0(self):
+        """`--smoke`：**打包成 exe 之后的自检口子**。
+
+        `--windowed` 的 exe 没有控制台、看不到 stdout，只能靠**退出码**判断
+        "窗口到底建没建起来"（`scripts/build_exe.py` 出的包就是这么验的）。
+        顺带它也是"这台机器能不能开界面"的探针。
+        """
+        r = subprocess.run(
+            [sys.executable, "-m", "ui", "--smoke"], cwd=str(ROOT),
+            capture_output=True, text=True, encoding="utf-8", timeout=180,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr[-2000:]!r}")
+
 
 @unittest.skipUnless(TK_OK, "无图形环境（Tk 不可用），跳过界面冒烟测试")
 class Test界面冒烟(unittest.TestCase):
@@ -208,6 +222,11 @@ class Test界面冒烟(unittest.TestCase):
 
         app.apply_shift_hours([Decimal("8")] * 3)   # 改班次时长 → 再重建（班次名会同步改名）
         app.wait_recalc()                           # 异步重算：等落地（P5）
+        # ⚠️ 再多泵几轮事件循环：落地后的"按新轨迹重建"可能排在 `after(...)` 里，
+        #    全量测试跑（机器被压着）时曾经出现过"按钮已是 8h、曲线班次带还写着 12h"的偶发
+        #    —— 那不是口径问题，是用例读得太早。
+        for _ in range(3):
+            app.update()
         app.update_idletasks()
         labels, texts = bar()
         self.assertEqual(labels, ["班次"])

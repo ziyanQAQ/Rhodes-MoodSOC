@@ -75,6 +75,21 @@ class Test设置中心(unittest.TestCase):
         self.app.update()
         return self.dlg
 
+    def _assert_view_time(self, panel, want, text=None):
+        """断言「干员与心情」的时刻跟到了 `want`（**带容差**）。
+
+        ⚠️ 为什么不能直接 `assertEqual`：`app.set_time()` 会把时刻写进 Tk 滑块，
+        而滑块随后会把自己的**浮点回值**再回灌一次（实测 `19 → 19.00013888888888888888888889`，
+        差 1/7200 ≈ 0.5 秒）。全量测试跑（机器被压着）时那一轮回灌会落在用例的 `update()`
+        里，于是内部十进制值差半秒 —— 用户看到的时刻（`view_time_var`）照样是 `19:00`，
+        心情数值也读的是同一刻。所以：**显示口径按字符串精确断言，内部值用容差**。
+        """
+        want = Decimal(str(want))
+        self.assertLess(abs(panel._view_t - want), Decimal("0.01"),
+                        f"_view_t={panel._view_t} 应当≈{want}（滑块回灌的浮点差）")
+        if text is not None:
+            self.assertEqual(panel.view_time_var.get(), text)
+
     # ------------------------------------------------------------- 统一大小
     def test_四个分区都装得进固定内容区(self):
         """每个分区的**自然尺寸**都不超过内容区（超了就得让窗口缩放/裁剪 → 切换会跳、内容会看不见）。
@@ -294,19 +309,18 @@ class Test设置中心(unittest.TestCase):
         app.set_time(Decimal("19"))
         app.update()
         self.assertEqual(panel._view_cycle, 1)
-        self.assertEqual(panel._view_t, Decimal("19"))
-        self.assertEqual(panel.view_time_var.get(), "19:00")
+        self._assert_view_time(panel, "19", text="19:00")
         # 切到别的分区：滑块再动也不转发（省掉每帧刷一张看不见的表）
         dlg.open_page("timeline")
         app.update()
         app.set_time(Decimal("5"))
         app.update()
-        self.assertEqual(panel._view_t, Decimal("19"))
+        self._assert_view_time(panel, "19")
         # 切回来：补一次"现在这一刻"
         # （注意：切走期间可能被标脏重建过 —— 那就直接断言 `dlg.panel`，重建与否都该是 5:00）
         dlg.open_page("batch")
         app.update()
-        self.assertEqual(dlg.panel._view_t, Decimal("5"))
+        self._assert_view_time(dlg.panel, "5")
         self.assertEqual(float(dlg.panel.view_time_var.get().split(":")[0]), 5.0)
         app.set_time(Decimal("0"))
         app.update()
@@ -326,11 +340,11 @@ class Test设置中心(unittest.TestCase):
         panel._on_follow()
         app.set_time(Decimal("13"))
         app.update()
-        self.assertEqual(panel._view_t, Decimal("13"))
+        self._assert_view_time(panel, "13")
         # ① 焦点进出（值没变）
         panel._on_view_change()
         self.assertTrue(panel.follow.get(), "值没变时不该取消勾选")
-        self.assertEqual(panel._view_t, Decimal("13"))
+        self._assert_view_time(panel, "13")
         # ② 切页再回来
         dlg.open_page("timeline")
         app.update()
@@ -339,7 +353,7 @@ class Test设置中心(unittest.TestCase):
         dlg.open_page("batch")
         app.update()
         self.assertTrue(dlg.panel.follow.get(), "切页回来勾选不该丢")
-        self.assertEqual(dlg.panel._view_t, Decimal("20"), "切回来要补到这一刻")
+        self._assert_view_time(dlg.panel, "20", text="20:00")   # 切回来要补到这一刻
         dlg.panel.follow.set(False)
         dlg.panel._on_follow()
         app.set_time(Decimal("0"))
