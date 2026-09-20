@@ -899,7 +899,8 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       idle_to_dorm: bool = True,
                       idle_entries: Optional[Sequence["IdleToDormEntry"]] = None,
                       mood_events: Optional[Sequence[MoodSetEvent]] = None,
-                      max_segment: Decimal = MAX_SEGMENT_HOURS) -> Trajectory:
+                      max_segment: Decimal = MAX_SEGMENT_HOURS,
+                      continue_from: Optional[Tuple["Trajectory", int]] = None) -> Trajectory:
     """把排班跑成"整周期心情轨迹"（事件驱动精确积分）。
 
     ⚠️ **入口先固定本线程的 Decimal 上下文**（`use_project_decimal_context`）：`decimal` 的
@@ -948,6 +949,19 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     （`pristine` —— 见段循环里的说明）——这样 `entry_restore_back=False`（位置也互换）与
     闲置入宿的换人**只在这一次生效**，既不污染排班本身、也不会跨周期继承；
     同时把"这一班的有效配置"挂到副本上，`apply_entry_events` 直接读它。
+    ```
+    ⚠️ **`continue_from`（P6a 增量）**：`(上一份轨迹, 它已经算完的周期数)` —— 只算**尾部**。
+    界面上改「周期数」是最常见的一次重算，而"同一个班次每周期都重复"，所以：
+      · 变多 ⇒ 从第 `已算完周期数 × 班数` 段继续算（省掉前面全部段）；
+      · 变少 ⇒ 传 `已算完周期数 == cycles`（等于"只截断"，一段都不算）。
+    ⚠️ 两个前提（调用方负责，见 `store.session.Session.recompute_inputs`）：
+      ① `continue_from` 的那份轨迹必须是**同一套设置**算出来的（差一点都得整条重算）；
+      ② `已算完周期数 <= cycles`。
+    种子取"**段边界上第一个节点**"的值＝**段首事件之前**的心情（段首的进驻事件会在续算时
+    再跑一遍；用 `mood_at(t0)` 会拿到跳变**后**的值 ⇒ 进驻事件被算两次）。
+    实现上是把前缀的 `times/series/marks/seg_worlds/idle_states` 预填进累加器、
+    段循环从 `start_seg` 起跑 —— 于是产出的轨迹与"从头全量算"**逐位相同**（回归
+    `Test周期数增量重算`）。
     """
     use_project_decimal_context()      # 本线程的 Decimal 上下文（见上：线程局部，必须显式设）
     if cycles < 1:
@@ -994,8 +1008,39 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     times: List[Decimal] = [ZERO]
     series: Dict[str, List[Decimal]] = {n: [moods[n]] for n in names}
     marks: List[Mark] = []
-    for i, s in enumerate(schedule.shifts):
-        marks.append(Mark(schedule.starts[i], "shift", s.label))
+    seg_worlds: List[BaseLayout] = []
+    idle_states: Dict[Decimal, Dict[str, dict]] = {}
+    start_seg = 0
+    if continue_from is not None:
+        # —— P6a：从"上一个轨迹的周期边界"续算（累加器用前缀预填）——
+        prev, done_cycles = continue_from
+        if done_cycles < 0:
+            raise ValueError(f"continue_from 的已算周期数 {done_cycles} 不合法")
+        # 变少 = 只截断：切点取新的周期数（`done_cycles` 比它大也没关系，前缀里有那段历史）
+        cut_cycles = min(done_cycles, cycles)
+        t_cut = schedule.cycle_hours * Decimal(cut_cycles)
+        start_seg = cut_cycles * len(schedule.shifts)
+        if cut_cycles:
+            # 种子＝段边界上**第一个**节点（段首事件之前的值）
+            i = bisect.bisect_left(prev.times, t_cut)
+            if i >= len(prev.times) or prev.times[i] != t_cut:
+                raise ValueError("continue_from 的轨迹没有落在该周期边界上（换过周期时长？请整条重算）")
+            moods = {n: prev.moods[n][i] for n in names}
+            times = list(prev.times[:i + 1])
+            series = {n: list(prev.moods[n][:i + 1]) for n in names}
+            # 标记：**红脸标记不复用**（末尾统一按合并后的曲线重算），其余只留切点之前的
+            marks = [m for m in prev.marks if m.t < t_cut and m.kind != "redface"]
+            seg_worlds = [w for (a, _b, w) in prev.segments if a < t_cut]
+            idle_states = {t: v for t, v in prev.idle_states.items() if t < t_cut}
+        else:
+            times = [ZERO]
+            series = {n: [moods[n]] for n in names}
+            marks = []
+    # 班次标记**排在最前面**（与"从头全量算"的顺序一致：全量时它也是最先加进去的）。
+    # ⚠️ 续算时**不能再加一遍** —— 前缀那份轨迹里已经带着它们了。
+    if start_seg == 0:
+        marks = [Mark(schedule.starts[i], "shift", s.label)
+                 for i, s in enumerate(schedule.shifts)] + marks
 
     # —— 心情指定事件：换算成**绝对时刻** → `{绝对时刻: {干员: 值}}` ——
     # 只对 `1 <= cycle <= cycles` 的生效（周期数被调小后超范围的那些自然失效）；
@@ -1022,12 +1067,9 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             segments.append((t, end, i))
             t = end
 
-    # 每段**实际用的那份布局副本**（界面要显示"引擎这一刻怎么排的"，见 `Trajectory.world_at`）
-    seg_worlds: List[BaseLayout] = []
-    # 每段**逐位候选**的宿舍态（界面「闲置入宿」逐次表逐行取用，见 `Trajectory.idle_state_at`）
-    idle_states: Dict[Decimal, Dict[str, dict]] = {}
-
     for seg_i, (t0, seg_end, idx) in enumerate(segments):
+        if seg_i < start_seg:
+            continue                        # P6a：这一段（含它的产物）由 `continue_from` 的前缀带着
         # ⚠️ **每段（含每个周期）都从"未动过的计划副本"重建**：布局改动只有两处 ——
         #    进驻事件的「位置也一起互换」（`restore_back=False`）与**闲置入宿的换人** ——
         #    它们都**就地改**这份副本；而同一个班次会被**跨班次、跨周期复用**，

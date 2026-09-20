@@ -847,6 +847,108 @@ class Test挂件判据探针范围(unittest.TestCase):
         self.assertFalse(_is_pendant_uncached(world, "路人丁", {}))
 
 
+class Test周期数增量重算(unittest.TestCase):
+    """**P6a**：改「周期数」时只算**尾部**（变少＝只截断），结果必须与"从头全量算"**逐位相同**。
+
+    为什么值得单独立一条：这是"调周期数看能不能永动"这条主路径的性能来源（7→6 几乎免费、
+    6→7 只算 3 段），但增量一旦把"段首事件之前的种子"取错（比如用 `mood_at(t0)` 拿到跳变**后**
+    的值），段首的进驻事件就会被算两遍 —— 数值静默出错。所以这里既逐位比对，又钉住"真的走了续算"。
+    """
+
+    @staticmethod
+    def _engine_reference(session, cycles: int):
+        """直接用引擎从头全量算（绕开会话的增量路径），作为金标准。"""
+        from store.schedule import simulate_schedule
+
+        return simulate_schedule(
+            session.schedule, cycles=cycles,
+            initial_moods=dict(session.initial_moods),
+            entry_events=session.entry_events,
+            entry_swap_with=session.entry_swap_with,
+            entry_scope=session.entry_scope,
+            entry_restore_back=session.entry_restore_back,
+            entry_when=session.entry_when,
+            entry_per_shift=list(session.entry_per_shift),
+            idle_to_dorm=session.idle_to_dorm,
+            idle_entries=session.idle_entry_list(),
+            mood_events=list(session.mood_events))
+
+    def _assert_same(self, a, b, note=""):
+        self.assertEqual([str(t) for t in a.times], [str(t) for t in b.times],
+                         f"{note}：节点时刻不同")
+        for n in a.names:
+            self.assertEqual([str(v) for v in a.moods[n]], [str(v) for v in b.moods[n]],
+                             f"{note}：{n} 的曲线不同")
+        self.assertEqual([(str(m.t), m.kind, m.label) for m in a.marks],
+                         [(str(m.t), m.kind, m.label) for m in b.marks], f"{note}：标记不同")
+        self.assertEqual(sorted(str(t) for t in a.idle_states),
+                         sorted(str(t) for t in b.idle_states), f"{note}：逐次宿舍态不同")
+        self.assertEqual([(str(x), str(y)) for x, y, _w in a.segments],
+                         [(str(x), str(y)) for x, y, _w in b.segments], f"{note}：段不同")
+
+    def _session(self, cycles: int):
+        from data.paths import MAA_SAMPLE
+        from store.session import Session
+
+        s = Session()
+        s.load_paths([MAA_SAMPLE])           # 这一下算 1 个周期
+        s.set_cycles(cycles)
+        s.recompute()                        # ⚠️ `set_cycles` 只改数字，重算由调用方发起（界面也是）
+        return s
+
+    def _spy(self):
+        """把引擎调用记下来（看 `continue_from` 到底传了什么）。"""
+        from store import session as session_mod
+
+        seen = []
+        orig = session_mod.simulate_schedule
+
+        def spy(*a, **kw):
+            seen.append(kw.get("continue_from"))
+            return orig(*a, **kw)
+
+        session_mod.simulate_schedule = spy
+        self.addCleanup(lambda: setattr(session_mod, "simulate_schedule", orig))
+        return seen
+
+    def test_加周期只算尾巴且逐位一致(self):
+        seen = self._spy()
+        s = self._session(2)                 # 1 → 2 周期：续算（种子 = 已算完的 1 个周期）
+        self.assertTrue(seen and seen[-1] is not None, "加周期应当走增量（continue_from 非空）")
+        self.assertEqual(seen[-1][1], 1, "种子应当是「已算完 1 个周期」")
+        self._assert_same(s.traj, self._engine_reference(s, 2), "1→2 周期")
+
+        s.set_cycles(4)                      # 2 → 4 周期：再从 2 个周期处续
+        s.recompute()
+        self.assertEqual(seen[-1][1], 2)
+        self._assert_same(s.traj, self._engine_reference(s, 4), "2→4 周期")
+
+    def test_减周期就是截断且逐位一致(self):
+        s = self._session(6)
+        seen = self._spy()
+        s.set_cycles(2)                      # 6 → 2：只截断，一段都不用算
+        s.recompute()
+        self.assertTrue(seen and seen[-1] is not None)
+        self.assertEqual(seen[-1][1], 6, "种子就是那份 6 周期的轨迹（引擎自己按新周期数截断）")
+        self._assert_same(s.traj, self._engine_reference(s, 2), "6→2 周期")
+
+    def test_改了别的设置就不再用增量(self):
+        s = self._session(3)
+        # 改初始心情（全局设置）⇒ 指纹变了 ⇒ 必须整条重算
+        s.set_initial_mood("菲亚梅塔", Decimal("9"))
+        seen = self._spy()
+        s.set_cycles(5)
+        s.recompute()
+        self.assertIsNone(seen[-1], "改了别的设置之后不能拿旧轨迹当种子")
+        self._assert_same(s.traj, self._engine_reference(s, 5), "改心情后 3→5 周期")
+        # 但**这次**算完之后缓存又有效了：再改周期数就能续算
+        s.set_cycles(6)
+        s.recompute()
+        self.assertIsNotNone(seen[-1])
+        self.assertEqual(seen[-1][1], 5)
+        self._assert_same(s.traj, self._engine_reference(s, 6), "5→6 周期")
+
+
 class Test不在基建(unittest.TestCase):
     """**「不在基建」的人**（既不在工作设施、也不在宿舍）：平线 + 不参与技能计数。
 

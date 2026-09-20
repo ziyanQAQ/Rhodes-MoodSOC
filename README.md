@@ -971,7 +971,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 ## 六、测试（黑盒）
 
 测试为**黑盒测试**：只通过「命令行」「公开 API」与「图形界面的计算核心」断言
-**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **470 个用例全绿**。
+**输入 → 输出**是否正确，不测试任何内部结构 / 内部函数。当前共 **473 个用例全绿**。
 
 ```bash
 # 运行全部测试
@@ -990,7 +990,7 @@ print(dump_json(base_result_to_dict(b), "results/out.json"))
 .venv/Scripts/python.exe -m unittest tests.test_ui_settings_blackbox -v  # 「设置」中心（同上）
 ```
 
-当前 **470 个测试全绿**（其中 `test_layers.py` 是**结构回归网**：依赖方向、
+当前 **473 个测试全绿**（其中 `test_layers.py` 是**结构回归网**：依赖方向、
 兼容转发壳不漏名字、源码里不许手拼资源路径）。
 
 技能侧另有一道"体检"（与测试同源，可独立跑、可出报告）：

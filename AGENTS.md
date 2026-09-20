@@ -109,7 +109,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 470 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 473 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
@@ -255,7 +255,19 @@ documents/
     `_cond_no_abyssal_outside_dorm`：按**全宿舍 / 宿舍外**的深海猎人计数）让"别的房间的人"也可能变差 ⇒
     `_dependent_holders` 就是兜这个的**保守带**，别为了再省几个百分点把它删掉。
     回归 `test_equivalence.Test挂件判据探针范围`（60 个同种子随机世界逐条与"全探针"对照 + 跨设施条件用例）
-    —— 实测 2000 条判定 0 不一致。
+    —— 实测 2000 条判定 0 不一致；
+    ⑤ **改「周期数」只算尾部**（P6a）：`store.schedule.simulate_schedule(continue_from=(上一份轨迹, 它算完的周期数))`。
+    改周期数是界面上最常见的重算，而"同一个班次每周期都重复" ⇒ 变多时从 `已算完周期数 × 班数` 段继续算、
+    变少时**只截断**（一段都不算）。实测 7→6 **6.5 ms**（原 1300 ms）、6→7 **217 ms**（约 6×）。
+    ⚠️ 种子必须取"**段边界上第一个节点**"的值＝**段首事件之前**的心情（段首的进驻事件会在续算时再跑一遍；
+    用 `mood_at(t0)` 会拿到跳变**后**的值 ⇒ 进驻事件被算两遍）；续算时**不要再加一遍班次标记**
+    （前缀里已经带着），红脸标记一律按合并后的曲线重算。
+    ⚠️ 能不能增量由 `Session._inputs_fingerprint()` 决定：**除周期数外**任何输入变了就整条重算
+    （用指纹而不是"在每个 setter 里清缓存"——能改设置的地方太多，漏一处就会拿旧轨迹当种子、数值静默出错）；
+    `ui/app.py` 的异步重算要把 `_fingerprint` 一起传给 `Session.adopt`。
+    回归 `Test周期数增量重算`（加/减周期逐位等于全量 + 改别的设置后必须整条重算）。
+    ⚠️ 它**救不了"改班次布局"**：布局按班次存、那个班每周期都会出现 ⇒ 最早切点在第一个周期 ⇒
+    7 周期下只省 ~10%（实测 1342 ms）。
     渲染层不用管：`idle_groups` 6.8ms、`_build_shift_buttons` 5.4ms、`world_at` 0ms —— **瓶颈只在引擎**。
     详见 `documents/09-开发指南.md` 的性能基线表与 `documents/07-设计史.md` P9。
 24. **编辑走「异步重算」，而 `decimal` 上下文是线程局部的 —— 两者是一套，别拆开看**（2026-09，P5）：

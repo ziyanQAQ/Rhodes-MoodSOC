@@ -134,6 +134,10 @@ class Session:
     #: 最近一次重算耗时（毫秒），状态栏与 `status_text()` 用
     last_recompute_ms: float = 0.0
 
+    #: **P6a 增量重算的种子**：`(算好的轨迹, 它覆盖的周期数, 那套设置的指纹)`；
+    #: 只有"同一套设置、只是周期数变了"才拿它续算（见 `recompute_inputs`）。
+    _resume_from: Optional[Tuple[Trajectory, int, tuple]] = None
+
     # ================================================================ 装配
     def load_paths(self, paths: Sequence[Union[str, Path]]) -> "LoadedSchedule":
         """按文件集合装配排班（自动识别 4 种格式），并把文件里的设置同步进来。
@@ -253,6 +257,26 @@ class Session:
                 self.idle_entries[(e.cycle or 1, e.shift or 1, e.name)] = (bool(e.enabled), label)
 
     # ================================================================ 重算
+    def _inputs_fingerprint(self) -> tuple:
+        """**除周期数之外**全部重算输入的指纹（用来判断"上一份轨迹还能不能当增量种子"）。
+
+        为什么用指纹而不是"在每个 setter 里清缓存"：能改设置的地方太多（布局 / 心情 / 锚点 /
+        换心情 / 闲置入宿 / 名单 / 时长…），漏清一处就会拿**旧设置的轨迹**当种子 ⇒ 数值静默出错。
+        指纹把"能改的东西"全列一遍，代价只有几次 `repr`（几十微秒）。
+        ⚠️ `schedule` 用 `id()`：改布局/时长/名单都是**换一个新 `Schedule` 对象**
+        （`replaced_shift` / `with_hours` / `with_detached`），身份变了就说明该整条重算。
+        """
+        return (
+            id(self.schedule),
+            tuple(sorted((str(k), str(v)) for k, v in self.initial_moods.items())),
+            tuple(repr(e) for e in self.mood_events),
+            bool(self.entry_events), self.entry_swap_with, self.entry_scope,
+            bool(self.entry_restore_back), self.entry_when,
+            tuple(repr(e) for e in self.entry_per_shift),
+            bool(self.idle_to_dorm),
+            tuple(repr(e) for e in (self.idle_entry_list() or ())),
+        )
+
     def recompute_inputs(self) -> Optional[dict]:
         """把"重算要用的**全部输入**"冻结成一个参数包（`simulate_schedule` 的关键字参数）。
 
@@ -263,12 +287,20 @@ class Session:
              一份 —— 界面上这些字段是**就地改**的（`set_initial_moods` 等）；
           ③ `schedule` 直接传引用：它是**换新对象**的（`set_slots`/`set_timeline`/`with_detached`
              都返回新 `Schedule`），线程拿着旧对象不会被主线程改到。
+        **P6a 增量**：上一份轨迹若是"同一套设置"（指纹一致）算的、只是周期数不同，
+        就带上 `continue_from` —— 引擎只算尾部（周期数变少＝只截断，一段都不算）。
         没有排班（未导入）→ `None`。
         """
         if self.schedule is None:
             return None
         if list(getattr(self.schedule, "detached", []) or []) != list(self.detached):
             self.schedule = self.schedule.with_detached(self.detached)
+        fp = self._inputs_fingerprint()
+        cached = self._resume_from
+        resume = None
+        if (cached is not None and cached[2] == fp and cached[0] is self.traj
+                and cached[1] != self.cycles):
+            resume = (cached[0], cached[1])
         return dict(
             schedule=self.schedule, cycles=self.cycles,
             initial_moods=dict(self.initial_moods),
@@ -284,6 +316,8 @@ class Session:
             idle_to_dorm=self.idle_to_dorm,
             idle_entries=self.idle_entry_list(),
             mood_events=list(self.mood_events),
+            continue_from=resume,
+            _fingerprint=fp,          # 给 `adopt` 记账用，不进引擎（见 `compute_trajectory`）
         )
 
     @staticmethod
@@ -293,11 +327,15 @@ class Session:
         界面把它丢进工作线程；`Session` 自己的 `recompute()` 也在主线程直接调它。
         `simulate_schedule` 全程只读参数包、返回全新对象，所以线程安全。
         """
-        return simulate_schedule(**inputs)
+        args = dict(inputs)
+        args.pop("_fingerprint", None)
+        return simulate_schedule(**args)
 
-    def adopt(self, traj: Optional[Trajectory]) -> None:
-        """把算好的轨迹**装进会话**（只该在主线程调）。"""
+    def adopt(self, traj: Optional[Trajectory], fingerprint: Optional[tuple] = None) -> None:
+        """把算好的轨迹**装进会话**（只该在主线程调），并记下"它是哪套设置算出来的"。"""
         self.traj = traj
+        self._resume_from = ((traj, self.cycles, fingerprint)
+                             if traj is not None and fingerprint is not None else None)
 
     def recompute(self) -> Optional[Trajectory]:
         """按当前设置重算整周期轨迹（**唯一的重算入口**；同步、阻塞）。
@@ -309,7 +347,9 @@ class Session:
         if inputs is None:
             self.traj = None
             return None
+        fp = inputs["_fingerprint"]
         self.traj = self.compute_trajectory(inputs)
+        self._resume_from = (self.traj, self.cycles, fp)
         return self.traj
 
     @property
