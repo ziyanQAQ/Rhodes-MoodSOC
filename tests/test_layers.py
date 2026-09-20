@@ -11,6 +11,8 @@
 3. **程序接口不拉图形界面**：`api` / `store` 的 import 链里不许出现 tkinter。
 4. **数据只有一处**：`data/paths.py` 是唯一拼资源路径的地方
    （源码里不许再出现 `"resources"` 字面路径拼接）。
+5. **打包（冻结）时路径跟着 `sys._MEIPASS` 走**：见 `Test打包路径`
+   （`scripts/build_exe.py` 出的 exe 里 `resources/` 整目录不存在，取用处都要容错）。
 
 运行：.venv/Scripts/python.exe -m unittest tests.test_layers -v
 """
@@ -178,6 +180,38 @@ class Test数据目录只放表(unittest.TestCase):
                      REQUIREMENTS_DOCX):
             self.assertTrue(path.exists(), f"{path} 不存在")
             self.assertEqual(path.parent.name, "resources", f"{path} 应在仓库根 resources/ 下")
+
+
+class Test打包路径(unittest.TestCase):
+    """**冻结（打包成 exe）时路径怎么算** —— `data.paths.project_root()`。
+
+    为什么要有：PyInstaller 打出来的 exe 里，`data/paths.py` 已不是磁盘上那个文件，
+    数据都放在**解包目录**（`sys._MEIPASS`：onedir 是 `<dist>/App/_internal`）。
+    猜"`__file__` 的上两级"曾经能用，但那是实现细节（PyInstaller 6.14 前后连
+    `__file__` 用 `.py` 还是 `.pyc` 都改过）——所以要有一条回归钉住"冻结时认 `_MEIPASS`"，
+    并且顺带钉住"exe 里 `resources/` 整目录不存在也不会炸"（界面冷启动据此降级）。
+    """
+
+    def test_冻结时根目录跟随_MEIPASS(self):
+        from unittest import mock
+
+        import data.paths as paths
+
+        with mock.patch.object(paths.sys, "frozen", True, create=True), \
+                mock.patch.object(paths.sys, "_MEIPASS", r"C:\fake\unpacked", create=True):
+            root = paths.project_root()
+        self.assertEqual(root, Path(r"C:\fake\unpacked"))
+        self.assertEqual(root / "data", Path(r"C:\fake\unpacked") / "data")
+
+    def test_源码运行时根目录是仓库根(self):
+        import data.paths as paths
+
+        self.assertEqual(paths.project_root(), ROOT)
+        self.assertEqual(paths.DATA, ROOT / "data")
+        # ⚠️ 这里断言"挂在仓库根下"而不是拼那个目录名：本文件同时被"资源路径只有一处"
+        #    那条静态扫描盯着（见 `Test数据路径只有一处`），写字面量会被它自己抓出来。
+        self.assertEqual(paths.RES.parent, ROOT)
+        self.assertEqual(paths.SCENARIOS.parent, ROOT)
 
 
 if __name__ == "__main__":

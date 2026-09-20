@@ -25,6 +25,13 @@ resources/                  ← **仓库根的项目级数据**：样例、字�
 **生成器只写 `data/`**（`skills_data.py` / `operator_names.py`）；
 `resources/` 里的 `skill_verify_report.md` 是唯一的例外（报告是给人看的产物）。
 
+## 打包成 exe 之后（`scripts/build_exe.py`）
+
+`ROOT` 换成 PyInstaller 的**解包目录**（见 `project_root()`）；
+只带 `data/operators.txt` 这一个运行时读的文本文件，`resources/` **整目录不带** ——
+所以 exe 里所有 `RES/...` 路径都 `exists() == False`，取用处必须容错
+（界面冷启动不自动载入示例排班，就是靠 `ui/app.py` 里的 `if SAMPLE.exists()`）。
+
 ## 改数据怎么做
 
 ```bash
@@ -37,16 +44,36 @@ python scripts/verify_skills.py --check                       # 全量核对（�
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
-#: 仓库根目录（`data/paths.py` 的上两级）——一切相对路径的锚点。
-ROOT: Path = Path(__file__).resolve().parent.parent
 
-#: 数据表包目录（`data/`，本文件所在处）：Python 能直接 import 的技能/干员表。
-DATA: Path = Path(__file__).resolve().parent
+def project_root() -> Path:
+    """项目根目录 —— 一切相对路径的锚点。
+
+    - **源码运行**：`data/paths.py` 的上两级（＝仓库根）；
+    - **打包成 exe（PyInstaller）**：`sys._MEIPASS` ＝ **解包目录**
+      （onedir 是 `<dist>/RhodesMoodSOC/_internal`、onefile 是临时目录）——
+      `scripts/build_exe.py` 用 `--add-data` 把 `data/operators.txt` 放到那儿。
+
+    ⚠️ 冻结时**不能**再拿 `__file__` 的上两级去猜：那属于 PyInstaller 的实现细节
+    （6.14 前后连"`__file__` 用 .py 还是 .pyc"都变过），`_MEIPASS` 才是官方口径。
+    """
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return Path(__file__).resolve().parent.parent
+
+
+#: 项目根目录（见 `project_root()`）。
+ROOT: Path = project_root()
+
+#: 数据表包目录（`data/`）：Python 能直接 import 的技能/干员表 + 运行时读的 CSV。
+DATA: Path = ROOT / "data"
 
 #: 仓库根的**项目级数据目录**（`resources/`）：样例 JSON、数据字典、核对报告、需求文档。
 #: 名字保留 `RES`，历史 import（`from data.paths import RES`）继续可用。
+#: ⚠️ 打包成 exe 时**整个目录都不打进去**（用户口径"exe 里不保留测试数据"）⇒
+#: 它下面的路径在 exe 里一律 `exists() == False`，取用处都必须容错。
 RES: Path = ROOT / "resources"
 
 
@@ -92,7 +119,7 @@ SCENARIOS = ROOT / "scenarios"
 
 
 __all__ = [
-    "ROOT", "DATA", "RES", "SCENARIOS",
+    "ROOT", "DATA", "RES", "SCENARIOS", "project_root",
     "SKILLS_TXT", "REGISTRY_TXT", "OPERATORS_TXT", "FACTIONS_TXT",
     "FACTIONS_SUPPLEMENT_TXT", "VARIABLE_PRODUCERS_TXT",
     "SKILLS_DATA", "OPERATOR_NAMES_DATA",

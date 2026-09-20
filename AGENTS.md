@@ -109,7 +109,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 478 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 481 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
@@ -187,7 +187,11 @@ documents/
     `rules.FACTION_WORK_TYPES`，门 `rules._faction_protected` / `rules._is_pendant`，
     见 `documents/04-特殊机制.md` 第 30 条。
 18. **分层别搞反**：`data/`（数据）← `mood_soc/`（纯计算）← `store/`（状态与 IO）← `ui/` `api/`。
-    ① 资源路径一律 `from data.paths import X`（**别自己拼 `resources/…`**，有测试扫源码）；
+    ① 资源路径一律 `from data.paths import X`（**别自己拼 `resources/…`**，有测试扫源码）。
+    ⚠️ **打包成 exe 之后 `resources/` 整目录不存在**（exe 里只带 `data/operators.txt`）：
+    `data/paths.py: project_root()` 冻结时指向 `sys._MEIPASS`（回归 `Test打包路径`），
+    所以**凡是读 `RES/…` 的代码都要容错"文件不存在"**（现有唯一一处＝界面冷启动的
+    `if SAMPLE.exists()`）。构建见 `scripts/build_exe.py` 与 09-开发指南 §9.6；
     ② 给界面加**状态或重算**要改 `store/session.py`，别把业务状态写回 `ui/app.py`；
     ③ 加程序接口能力 = 在 `api/ops.py` 加一个 op（步骤见 `documents/11-程序接口.md` §8）；
     ④ 老路径 `mood_soc.importer/output/scenario/maa`、`ui.schedule` 是**兼容转发壳**，别往里加逻辑。
@@ -290,7 +294,7 @@ documents/
     **快照与 `world` 的成员+心情绑定** ⇒ 只在"同一个世界快照、连续算一批人"时共享，
     世界一变（换人/改心情）必须重收（`_all_rates` 那张表靠 `memo.clear()` 失效，同理）。
     回归：`test_equivalence.Test变量快照共享`（① 共享快照 vs 逐人自收的速率逐位相同；
-    ② 把引擎猴子补丁回"每人各收一份"后**整条轨迹逐位相同**）＋ 全量 478 绿。
+    ② 把引擎猴子补丁回"每人各收一份"后**整条轨迹逐位相同**）＋ 全量 481 绿。
     渲染层不用管：`idle_groups` 6.8ms、`_build_shift_buttons` 5.4ms、`world_at` 0ms —— **瓶颈只在引擎**。
     详见 `documents/09-开发指南.md` 的性能基线表与 `documents/07-设计史.md` P9。
 24. **编辑走「异步重算」，而 `decimal` 上下文是线程局部的 —— 两者是一套，别拆开看**（2026-09，P5）：
@@ -331,6 +335,12 @@ python main.py --mode base --demo --period 12          # 先推进 12h 再评估
 # 图形界面（纯标准库 tkinter；导入多班排班 / 时间滑动 / 对点曲线 / 一个「设置」中心）
 .venv/Scripts/python.exe -m ui                          # 见 documents/10-图形界面.md
 .venv/Scripts/python.exe ui/__main__.py                 # 等价；IDE 里直接 Run 也行
+.venv/Scripts/python.exe -m ui --smoke                   # 建窗口转一圈就退（打包自检，退出码 0＝好）
+
+# 打包成 exe（PyInstaller onedir；**不带任何测试数据**，见 09-开发指南 §9.6）
+.venv/Scripts/python.exe -m pip install pyinstaller       # 构建期工具，只需一次
+.venv/Scripts/python.exe scripts/build_exe.py             # → dist/RhodesMoodSOC/RhodesMoodSOC.exe
+dist/RhodesMoodSOC/RhodesMoodSOC.exe --smoke               # 自检：退出码 0 ＝ 窗口建得起来
 
 # 程序接口（给 Rust 调用；见 documents/11-程序接口.md、documents/12-v3接入.md）
 .venv/Scripts/python.exe -m api.server                   # 常驻 NDJSON（推荐）

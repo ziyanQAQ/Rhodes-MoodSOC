@@ -1628,8 +1628,23 @@ class MoodSocApp(tk.Tk):
         super().destroy()
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    """图形界面入口（`python -m ui` / 打包后的 exe）。
+
+    `--smoke`：**建好窗口、跑几轮事件循环就退出**（退出码 0 ＝ 一切正常）。
+    它是给"打包成 exe 之后自检"用的 —— `--windowed` 的 exe 没有控制台、
+    看不到 stdout，只能靠退出码判断"界面到底建没建起来"：
+        dist/RhodesMoodSOC/RhodesMoodSOC.exe --smoke
+    顺带也能当"这台机器能不能开界面"的探针（无图形环境会抛异常 ⇒ 非 0 退出）。
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
     app = MoodSocApp()
+    if "--smoke" in args:
+        app.update_idletasks()
+        app.update()                      # 先把控件真正布出来（这一步最容易出问题）
+        app.after(200, app.destroy)       # 再让事件循环自转一小会儿
+        app.mainloop()
+        return 0
     app.mainloop()
     return 0
 

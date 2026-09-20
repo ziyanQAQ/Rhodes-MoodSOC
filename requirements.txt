@@ -1,2 +1,6 @@
-# 本项目仅使用 Python 标准库，无需安装任何第三方依赖。
-# 直接运行即可（Python 3.9+）。
+# 本项目**运行时**仅使用 Python 标准库，无需安装任何第三方依赖。
+# 直接运行即可（Python 3.9+；本项目 venv 里是 3.14）。
+#
+# ⚠️ 只有"打包成 exe"才需要一个**构建期**工具（不进运行时依赖，所以不列在这里）：
+#     .venv/Scripts/python.exe -m pip install pyinstaller    # 用本项目的 venv（3.14）装最新版即可
+#     .venv/Scripts/python.exe scripts/build_exe.py          # → dist/RhodesMoodSOC/RhodesMoodSOC.exe
