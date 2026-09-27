@@ -32,3 +32,9 @@ Thumbs.db
 /scenarios/
 /_scratch/
 /_*.py
+
+# 本机 AI 技能（**不入库、不推送**）：技能本体与来源清单都只在本机
+# （`.agents/skills/` 由 skills-lock.json 锁定，两者一起忽略；见 AGENTS.md 维护约定 5）
+/.agents/
+/skills-lock.json
+
