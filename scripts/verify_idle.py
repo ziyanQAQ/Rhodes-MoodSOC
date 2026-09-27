@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import inspect
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -27,12 +28,15 @@ try:                                  # Windows 控制台默认 GBK，打不出�
 except Exception:                     # noqa: BLE001 —— 老解释器/被重定向时忽略
     pass
 
-from mood_soc.config import MOOD_MAX, FacilityType          # noqa: E402
-from mood_soc.models import build_idle_to_dorm_config       # noqa: E402
-from mood_soc.rules import (DEFAULT_PROTECTED_SLOTS, MIN_SHIFTS_FOR_IDLE,  # noqa: E402
+from mood_soc import rules as rules_mod                      # noqa: E402
+from mood_soc.battery import to_decimal                      # noqa: E402
+from mood_soc.config import MOOD_MAX, FacilityType           # noqa: E402
+from mood_soc.models import build_idle_to_dorm_config        # noqa: E402
+from mood_soc.rules import (DEFAULT_PROTECTED_SLOTS,         # noqa: E402
                             apply_idle_to_dorm, dorm_state)
-from store.layout import build_base_layout                  # noqa: E402
-from store.schedule import MoodSetEvent, Schedule, Shift, simulate_schedule  # noqa: E402
+from store.layout import build_base_layout                   # noqa: E402
+from store.schedule import (MoodSetEvent, Schedule, Shift,   # noqa: E402
+                            execution_offsets, execution_points, simulate_schedule)
 
 PASS = 0
 FAIL = 0
@@ -86,8 +90,8 @@ def mood_of(world, name):
     return None if op is None else op.mood
 
 
-def run(world, idle, *, shift_count=3, trace=None, scope=None, swap_with=None):
-    return apply_idle_to_dorm(world, shift_count, enabled=True, idle=dict(idle),
+def run(world, idle, *, trace=None, scope=None, swap_with=None):
+    return apply_idle_to_dorm(world, enabled=True, idle=dict(idle),
                               trace=trace, scope=scope, swap_with=swap_with)
 
 
@@ -96,27 +100,46 @@ def groups_of(events):
 
 
 # ============================================================================
-# §2 生效门槛
+# §2 适用条件：不设班次数量门槛 + 长班内部换班执行点
 # ============================================================================
-def test_gate():
-    print("§2 生效门槛（不同班次数 >= 3 才执行）")
-    for count in (0, 1, 2):
-        world = make_layout([[("甲", 5)]], capacity=2, dorm_count=1)
-        events = run(world, {"乙": 5}, shift_count=count)
-        check(f"shift_count={count} ⇒ 完全不执行（布局一个字节都不改）",
-              events == [] and dorm_names(world) == [["甲"]],
-              f"events={len(events)} dorms={dorm_names(world)}")
-
+def test_no_gate_and_offsets():
+    print("§2 适用条件（任何班次数都执行；长班按 12h 整数倍加内部换班点）")
+    # 引擎不再看"排班里有几个班次"：1 个班次照样执行
     world = make_layout([[("甲", 5)]], capacity=2, dorm_count=1)
-    events = run(world, {"乙": 5}, shift_count=MIN_SHIFTS_FOR_IDLE)
-    check(f"shift_count={MIN_SHIFTS_FOR_IDLE} ⇒ 执行（乙住进空位）",
-          dorm_names(world) == [["甲", "乙"]] and any(g == "idle_to_dorm" for g in groups_of(events)),
+    events = run(world, {"乙": 5})
+    check("不设门槛：单班排班也执行（乙住进空位）",
+          dorm_names(world) == [["甲", "乙"]]
+          and any(g == "idle_to_dorm" for g in groups_of(events)),
           f"dorms={dorm_names(world)}")
 
-    # 班次数只看"排班里有几个班"，与周期数无关：1 班 × 3 周期 = shift_count 1 ⇒ 不执行
-    world = make_layout([[("甲", 5)]], capacity=2, dorm_count=1)
-    check("1 个班次 × 3 个周期 = 不执行（门槛只看班次数）",
-          run(world, {"乙": 5}, shift_count=1) == [] and dorm_names(world) == [["甲"]])
+    check("引擎签名里不再有 shift_count / MIN_SHIFTS_FOR_IDLE",
+          "shift_count" not in inspect.signature(apply_idle_to_dorm).parameters
+          and not hasattr(rules_mod, "MIN_SHIFTS_FOR_IDLE"))
+
+    # execution_offsets：文档 §2 的五个例子
+    table = {"12": ["0"], "18": ["0", "12"], "24": ["0", "12"],
+             "25": ["0", "12", "24"], "36": ["0", "12", "24"]}
+    for hours, want in table.items():
+        got = [str(o) for o in execution_offsets(hours)]
+        check(f"{hours}h 班次的执行点偏移 = {want}", got == want, str(got))
+
+    check("班末不重复：24h 只有 [0,12]（第 24h 是班末）",
+          [str(o) for o in execution_offsets("24")] == ["0", "12"])
+    check("12h 及以内没有内部换班点",
+          all([str(o) for o in execution_offsets(h)] == ["0"] for h in ("1", "6", "8", "12")))
+
+
+def test_execution_points():
+    print("§2/§3 执行点切分（不增加班次数、不改班次编号）")
+    sch = _schedule_one_shift("24")
+    pts = execution_points(sch, 2)
+    check("24h 单班 × 2 周期 ⇒ 4 个执行点（每周期 0h 与 12h）",
+          [str(p[0]) for p in pts] == ["0", "12", "24", "36"], str([str(p[0]) for p in pts]))
+    check("执行点仍指向同一个真实班次（下标 0）⇒ 不增加班次数",
+          {p[2] for p in pts} == {0} and len(sch.shifts) == 1)
+    check("周期序号按真实周期走（1,1,2,2）", [p[3] for p in pts] == [1, 1, 2, 2])
+    check("班内偏移正确（0,12,0,12）", [str(p[4]) for p in pts] == ["0", "12", "0", "12"])
+    check("shift_index 不受内部换班影响（12h 仍属第 1 班）", sch.index_at(Decimal(12)) == 0)
 
 
 # ============================================================================
@@ -527,7 +550,7 @@ def test_config():
 
 
 # ============================================================================
-# §2/§3 班次层（多班排班跑起来）
+# §2/§3 班次层（多班排班 + 长班内部换班执行点）
 # ============================================================================
 def _fac(dorm_people, capacity=5, extra=()):
     facs = [{"type": "宿舍", "level": 1, "slots": capacity,
@@ -536,18 +559,29 @@ def _fac(dorm_people, capacity=5, extra=()):
     return facs
 
 
-#: 班次层用的排班：**班 1 只有宿舍（丙在里面）**，班 2/3 让甲去上班 ——
-#: 于是"班 1 里的甲"正好是"这一班完全没出现在任何设施里"的候选（文档 §7 第 4 条）。
+#: 班次层用的排班：**班 1 只有宿舍（丙在里面）**，其余班次让甲去上班 ——
+#: 于是"班 1 里的甲"正好是"这一班完全没出现在任何设施里"的候选（文档 §7 第 3 条）。
 _WORK = [{"type": "制造站", "level": 1, "operators": [{"name": "甲", "mood": "5"}]}]
 
 
-def _schedule(n_shifts, hours=8, dorm_people=(("丙", 24),), capacity=1):
-    """`n_shifts` 个班次的排班：第 1 班是宿舍（+候选），其余班次是制造站。"""
+def _schedule(n_shifts, hours=8, dorm_people=(("丙", 24),), capacity=1, detached=()):
+    """`n_shifts` 个班次的排班：第 1 班是宿舍（+候选），其余班次是制造站。
+
+    ⚠️ 单班排班时"甲"没法靠"别的班有活"进入 `operator_names()` ⇒ 要用 `detached` 把她算进
+    这份排班（她仍然"完全没出现在任何设施里"，照旧是候选）。
+    """
     shifts = []
     for i in range(n_shifts):
         facs = _fac(list(dorm_people), capacity) if i == 0 else _fac([], capacity, _WORK)
         shifts.append(Shift(label=f"班{i + 1}", hours=hours, facilities=facs))
-    return Schedule(shifts=shifts, cycle_hours=hours * n_shifts)
+    return Schedule(shifts=shifts, cycle_hours=hours * n_shifts, detached=list(detached))
+
+
+def _schedule_one_shift(hours, dorm_people=(("丙", 20),), capacity=1, detached=("甲", "乙")):
+    """**单个长班**的排班：`detached` 里的人不在任何设施里 ⇒ 每个执行点都是闲置候选。"""
+    return Schedule(shifts=[Shift(label="班1", hours=hours,
+                                  facilities=_fac(list(dorm_people), capacity))],
+                    cycle_hours=to_decimal(hours), detached=list(detached))
 
 
 def _dorm_at(traj, t):
@@ -558,19 +592,22 @@ def _dorm_at(traj, t):
             if f.ftype == FacilityType.DORMITORY and f.enabled for o in f.operators]
 
 
+def _internal_marks(traj):
+    return [m for m in traj.marks if m.kind == "internal"]
+
+
 def test_schedule_layer():
-    print("§2/§3 班次层：门槛、位置每班重建、锚点排在入宿之后")
-    # 2 班 ⇒ 不生效
+    print("§2/§3 班次层：无门槛、位置每个执行点重建、锚点排在入宿之后")
+    # 单班 / 2 班：都执行（门槛已取消）
+    traj1 = simulate_schedule(_schedule(1, detached=("甲",)), cycles=1,
+                              initial_moods={"甲": 5, "丙": 24},
+                              idle_to_dorm=True, idle_protected_slots=0)
+    check("§16.8 单班排班也执行闲置入宿（甲换出丙）",
+          _dorm_at(traj1, 0) == ["甲"], str(_dorm_at(traj1, 0)))
     traj2 = simulate_schedule(_schedule(2), cycles=1, initial_moods={"甲": 5, "丙": 24},
                               idle_to_dorm=True, idle_protected_slots=0)
-    check("2 个班次的排班：闲置入宿完全不生效（甲没进宿舍）",
-          _dorm_at(traj2, 0) == ["丙"], str(_dorm_at(traj2, 0)))
-
-    # 3 班 ⇒ 生效（甲换出满 24 的丙）
-    traj3 = simulate_schedule(_schedule(3), cycles=1, initial_moods={"甲": 5, "丙": 24},
-                              idle_to_dorm=True, idle_protected_slots=0)
-    check("3 个班次的排班：闲置入宿生效（甲换出丙、住进宿舍）",
-          _dorm_at(traj3, 0) == ["甲"], str(_dorm_at(traj3, 0)))
+    check("2 班排班也执行（第一班里甲换出丙）",
+          _dorm_at(traj2, 0) == ["甲"], str(_dorm_at(traj2, 0)))
 
     # 每个周期、每个班次都**重新判定**（位置每班从原始排班重建）
     traj_cycle = simulate_schedule(_schedule(3), cycles=2, initial_moods={"甲": 5, "丙": 24},
@@ -592,17 +629,127 @@ def test_schedule_layer():
           and traj_anchor.mood_at("甲", Decimal(0)) == MOOD_MAX,
           f"dorms={_dorm_at(traj_anchor, 0)} mood={traj_anchor.mood_at('甲', Decimal(0))}")
 
+    # 12h 及以内的班次没有内部换班点（示例排班 12/6/6 数值不变）
+    check("12h 班次不产生内部换班标记", _internal_marks(traj_cycle) == [],
+          str([str(m.t) for m in _internal_marks(traj_cycle)]))
+
+
+def test_internal_swap_points():
+    print("§2/§3/§16.9~16.11 长班内部换班执行点（24h 班：班初 + 12h）")
+    # 24h 单班：宿舍原始是 [丙 20]；甲(5)/乙(6) 不在任何设施里 ⇒ 都是候选
+    #   0h ：甲(5) 换出丙(20)  → 宿舍 [甲]（甲在宿舍里回满到 24）
+    #   12h：位置**重建**回 [丙 20]；甲已满不是候选；乙(6) 换出丙(20) → 宿舍 [乙]
+    # （若不在内部换班点重建位置，12h 时宿舍还是 [甲]、乙根本没有机会 —— 这一步就是判据）
+    sch = _schedule_one_shift("24")
+    traj = simulate_schedule(sch, cycles=1, initial_moods={"甲": 5, "乙": 6, "丙": 20},
+                             idle_to_dorm=True, idle_protected_slots=0)
+    check("班初（0h）执行闲置入宿：甲换出丙", _dorm_at(traj, 0) == ["甲"], str(_dorm_at(traj, 0)))
+    check("12h 内部换班点**重建原始布局**并重新判定：乙换出丙",
+          _dorm_at(traj, Decimal(12)) == ["乙"], str(_dorm_at(traj, Decimal(12))))
+    check("12h 那一刻的逐位宿舍态被记下（引擎确实在那里跑了一遍闲置入宿）",
+          "乙" in traj.idle_states.get(Decimal(12), {}),
+          str(traj.idle_states.get(Decimal(12))))
+    ms = _internal_marks(traj)
+    check("§16.9 内部换班留下可见标记（标签＝第 1 班 · 12h 内部换班）",
+          [m.label for m in ms] == ["第 1 班 · 12h 内部换班"] and ms[0].t == Decimal(12),
+          str([(str(m.t), m.label) for m in ms]))
+    check("§16.10 班末（24h）**不**再产生内部换班标记",
+          [str(m.t) for m in ms] == ["12"], str([str(m.t) for m in ms]))
+    check("不变式 4：内部换班不增加班次数、不改班次编号",
+          len(sch.shifts) == 1 and sch.index_at(Decimal(12)) == 0 and sch.index_at(Decimal(23)) == 0)
+
+    # 24h × 2 周期：每个周期各自生成一次内部换班点
+    traj2 = simulate_schedule(sch, cycles=2, initial_moods={"甲": 5, "乙": 6, "丙": 20},
+                              idle_to_dorm=True, idle_protected_slots=0)
+    check("每个周期都重新生成内部换班点（12h 与 36h 各一次）",
+          [str(m.t) for m in _internal_marks(traj2)] == ["12", "36"],
+          str([str(m.t) for m in _internal_marks(traj2)]))
+
+    # §16.11 内部换班没有候选：仍重建布局、仍显示标记、闲置入宿不产生动作
+    sch_none = _schedule_one_shift("24", dorm_people=(("丙", 24),), detached=("甲",))
+    traj_none = simulate_schedule(sch_none, cycles=1, initial_moods={"甲": 5, "丙": 24},
+                                  idle_to_dorm=True, idle_protected_slots=0)
+    check("§16.11 内部换班无候选：宿舍被重建回原始布局（[丙]），标记仍在",
+          _dorm_at(traj_none, 0) == ["甲"] and _dorm_at(traj_none, Decimal(12)) == ["丙"]
+          and [m.label for m in _internal_marks(traj_none)] == ["第 1 班 · 12h 内部换班"],
+          f"0h={_dorm_at(traj_none, 0)} 12h={_dorm_at(traj_none, Decimal(12))}")
+    check("§16.11 那一刻的逐位宿舍态是空的（跑了，但没有候选）",
+          traj_none.idle_states.get(Decimal(12)) == {},
+          str(traj_none.idle_states.get(Decimal(12))))
+
+    # 不变式 6：查询恰好位于执行点时返回**换班后**的状态
+    check("不变式 6：world_at(12) 是换班后的布局（不是班初那份）",
+          _dorm_at(traj, Decimal(12)) != _dorm_at(traj, 0))
+
+    # 不变式 9：同周期同班次的所有执行点**共用**一份逐人配置
+    from mood_soc.models import IdleToDormEntry
+    traj_off = simulate_schedule(sch, cycles=1, initial_moods={"甲": 5, "乙": 6, "丙": 20},
+                                 idle_to_dorm=True, idle_protected_slots=0,
+                                 idle_entries=[IdleToDormEntry(name="乙", enabled=False)])
+    check("不变式 9：逐人设置（乙不参与）在内部换班点同样生效 ⇒ 12h 不再换人",
+          _dorm_at(traj_off, Decimal(12)) == ["丙"], str(_dorm_at(traj_off, Decimal(12))))
+
+    # §3：恰好位于内部换班点的心情锚点同样**排在闲置入宿之后**
+    traj_anchor = simulate_schedule(
+        sch, cycles=1, initial_moods={"甲": 5, "乙": 6, "丙": 20}, idle_to_dorm=True,
+        idle_protected_slots=0,
+        mood_events=[MoodSetEvent(name="乙", t=Decimal(12), mood=Decimal(24), cycle=1)])
+    check("内部换班点上的心情锚点排在闲置入宿之后（乙先按 6 换进宿舍，再被置成 24）",
+          _dorm_at(traj_anchor, Decimal(12)) == ["乙"]
+          and traj_anchor.mood_at("乙", Decimal(12)) == MOOD_MAX,
+          f"dorms={_dorm_at(traj_anchor, Decimal(12))} "
+          f"mood={traj_anchor.mood_at('乙', Decimal(12))}")
+
+    # 闲置入宿关闭时，内部换班点照旧存在（重建 + 标记），只是不做入宿
+    traj_off2 = simulate_schedule(sch, cycles=1, initial_moods={"甲": 5, "乙": 6, "丙": 20},
+                                  idle_to_dorm=False)
+    check("闲置入宿关闭时内部换班标记照旧出现（不变式 10 与开关无关）",
+          [m.label for m in _internal_marks(traj_off2)] == ["第 1 班 · 12h 内部换班"]
+          and _dorm_at(traj_off2, Decimal(12)) == ["丙"],
+          str([m.label for m in _internal_marks(traj_off2)]))
+
+
+def test_idle_groups_per_point():
+    print("界面/程序接口的逐次表：一个换班执行点一组（同班共用一份设置）")
+    from store.session import Session
+    sch = _schedule_one_shift("24")
+    session = Session()
+    session.schedule = sch
+    session.idle_to_dorm = True
+    session.idle_protected_slots = 0
+    # ⚠️ `Session.detached` 是**权威名单**（`recompute_inputs` 会拿它写回 `Schedule`）——
+    #    这里必须一起设，否则"不在基建"的甲/乙会被从排班里挤掉、连候选都不是。
+    session.detached = ["甲", "乙"]
+    session.initial_moods = {"甲": Decimal(5), "乙": Decimal(6), "丙": Decimal(20)}
+    session.recompute()
+    groups = session.idle_groups()
+    titles = [g[0] for g in groups]
+    check("逐次表按执行点分组（班初一组 + 12h 内部换班一组）",
+          titles == ["第 1 周期 · 第 1 班", "第 1 周期 · 第 1 班（12h 内部换班）"], str(titles))
+    check("组里带上起止时刻（供界面渲染时钟区间）",
+          [(str(g[3]), str(g[4])) for g in groups] == [("0", "12"), ("12", "24")],
+          str([(str(g[3]), str(g[4])) for g in groups]))
+    keys0 = {(groups[0][1][0], groups[0][1][1], r[0]) for r in groups[0][2]}
+    keys1 = {(groups[1][1][0], groups[1][1][1], r[0]) for r in groups[1][2]}
+    check("同班各执行点的设置键**相同**（改一组同步影响同班其他组）",
+          {k[:2] for k in keys0} == {k[:2] for k in keys1} and groups[0][1] == groups[1][1],
+          f"{groups[0][1]} vs {groups[1][1]}")
+    check("两组的候选不同（12h 时甲已在宿舍回满、只剩乙是候选）",
+          [r[0] for r in groups[0][2]] == ["甲", "乙"] and [r[0] for r in groups[1][2]] == ["乙"],
+          f"{[r[0] for r in groups[0][2]]} / {[r[0] for r in groups[1][2]]}")
+
 
 # ============================================================================
 # 入口
 # ============================================================================
 def main() -> int:
-    print(f"闲置入宿自检 —— 口径＝《闲置入宿完整逻辑》"
-          f"（门槛 {MIN_SHIFTS_FOR_IDLE} 班、默认锁定 {DEFAULT_PROTECTED_SLOTS} 位）\n")
-    for test in (test_gate, test_vertical_order, test_vertical_reverse_tiebreak,
-                 test_protected_slots, test_blacklist, test_candidates, test_queue,
-                 test_manual_position, test_named_swap, test_auto, test_config,
-                 test_schedule_layer):
+    print(f"闲置入宿自检 —— 口径＝《闲置入宿完整逻辑》（第二版：不设班次门槛 + 长班内部换班点；"
+          f"默认锁定 {DEFAULT_PROTECTED_SLOTS} 位）\n")
+    for test in (test_no_gate_and_offsets, test_execution_points, test_vertical_order,
+                 test_vertical_reverse_tiebreak, test_protected_slots, test_blacklist,
+                 test_candidates, test_queue, test_manual_position, test_named_swap,
+                 test_auto, test_config, test_schedule_layer, test_internal_swap_points,
+                 test_idle_groups_per_point):
         test()
     print(f"\n通过 {PASS} 条，失败 {FAIL} 条。")
     return 1 if FAIL else 0
