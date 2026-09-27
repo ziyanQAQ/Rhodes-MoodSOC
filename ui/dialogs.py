@@ -16,6 +16,7 @@ from typing import List, Optional, Sequence
 
 from mood_soc import entry_target_kind
 from mood_soc.models import normalize_entry_when
+from mood_soc.rules import MIN_SHIFTS_FOR_IDLE
 
 from . import theme
 from .scroll import VScroll
@@ -619,53 +620,56 @@ def ask_level(parent, name: str, current: int, max_level: int, slots_of) -> Opti
 
 
 class IdleToDormMixin:
-    """**闲置入宿**设置 —— 一个总开关 + 一张"候选人一行"的表。
+    """**闲置入宿**设置 —— 总开关 + 全局口径（锁定位置数 / 黑名单）+ 一张"候选一行"的逐次表。
 
-    面板的**主要职责**：给每一次进驻（周期 × 班次）设置**第④级的兜底**——
-    自动四级规则都挑不到人时，**要不要再换**（取消勾选＝不参与 / 留「自动」＝按规则走 / 点名＝主动换）
-    以及**换谁**。
+    引擎规则（`mood_soc/rules.apply_idle_to_dorm`，口径＝用户文档《闲置入宿完整逻辑》）：
 
-    引擎规则（`mood_soc/rules.apply_idle_to_dorm`，框内也写给用户看）：
-
-    | 级 | 条件 | 动作 |
+    | 序 | 条件 | 动作 |
     |---|---|---|
-    | ① | 任一间宿舍还有空位 | 直接住进去（宿舍顺序 `#4→#3→#2→#1`，优先 4 最后 1） |
-    | ② | 宿舍全满 | 换「宿舍 `#4~#2` 的第 2~5 位」里**实时满 24** 的那位 |
-    | ③ | ②找不到 | 只在**白板**里挑满 24 的（**满 24 的菲亚梅塔也算**） |
-    | ④ | ②③ 都找不到 | **点名了**就先与那位互换（**主动换**：不要求满 24）；**没点名**则与宿舍里**心情最高的白板**互换（**不限 24**）；连白板都没有才"这一班不动" |
+    | 候选 | 该班**完全没出现在任何设施**、心情 < 24、不在黑名单 | 按 (心情↑, 名字↑) **依次**处理 |
+    | ① | 竖向正序里有"下一个连续位" | 直接住进去（**可以用锁定区里的空位**） |
+    | ② | 所有可用宿舍全满 | 换**锁定区之外、心情最高**的那位（同心情取竖向最靠后）；**严格大于你**才换 |
+    | ③ | 被换出的那位 | 心情 < 24 且不在黑名单且队列里没有同名 ⇒ **追加队尾**，可能再被处理一次 |
+    | 手动 | 「宿舍NN」/「宿舍NN·第M位」/ 点名某人 | **手动高于自动**：位置会留空洞就整位跳过；互换仍要过"严格心情闸" |
 
-    ②③④ 的**自动**换人还都跳过"**挂件**"（`rules._is_pendant`：她一走别人就要吃亏 ——
-    有阵营效果，或她在不在宿舍会影响别人的技能）；**点名不受限**。
+    ⚠️ 旧口径（四级优先级 / 挂件门 / 阵营门 / "优先 4 最后 1" / "必须满 24" / 菲亚梅塔例外）
+    已按文档**全部取消**。
+    ⚠️ **不同班次数 < 3 时闲置入宿不生效**（开关与全部设置照旧保留）。
 
     | 控件 | 落到引擎 |
     |---|---|
     | ① 启用闲置入宿 | `IdleToDormConfig.enabled` |
+    | ② 锁定位置数 | `IdleToDormConfig.protected_slots`（按竖向正序锁前 N 个位置） |
+    | ② 黑名单 | `IdleToDormConfig.blacklist`（永远不能**通过闲置入宿进宿舍**的人） |
     | 每行的「参与」 | `per_operator[(周期,班次,干员)].enabled` |
-    | 每行的「换谁」 | `per_operator[(周期,班次,干员)].swap_with`（「自动」= `None`）；「宿舍NN」→ `.dorm` |
+    | 每行的「位置 / 换谁」 | `.dorm`（+`.slot`）/ `.swap_with`；「自动」= 两个都空 |
 
-    **表格按时间排**（第 1 周期第 1 班 → … → 第 N 周期最后一班），每个"周期 × 班次"一组、
-    组内只放那一刻**真的有候选**的人；「换谁」下拉列出那一刻**宿舍里的所有人**（带心情数字，
-    因为④是主动换、可以选没满的）与**有空位的宿舍**（`宿舍NN`）。
+    **逐次表**按时间排（第 1 周期第 1 班 → …），每个"周期 × 班次"一组、组内只放那一刻
+    **真的有候选**的人；「位置 / 换谁」下拉列出那一刻**所有可用宿舍的位置**（`宿舍NN` 与
+    `宿舍NN·第M位`）与**宿舍里的所有人**（带心情数字）。
 
-    ⚠️ 改动会**实时生效**：每次勾选 / 改目标都会回调 `on_change(状态)` ——
-    调用方（`ui.app`）把它套进模拟重算并返回**新的分组表**，本面板据此重建表格
-    （因为改动会影响后面每一次的候选）。取消时由调用方回滚。
+    ⚠️ 改动会**实时生效**：每次改动 / 改锁定数 / 改黑名单都会回调 `on_change(状态)` ——
+    调用方（`ui.app`）把它套进模拟重算并返回**新的分组表**，本面板据此重建表格。
 
-    ⚠️ 本类**只建控件、只收状态**，自己不是窗口：宿主是 `IdleToDormDialog`（独立对话框）
-    或 `ui.settings` 的设置中心分区（Frame）。
+    ⚠️ 本类**只建控件、只收状态**，自己不是窗口：宿主是设置中心的「闲置入宿」分区（Frame）。
     """
 
     TITLE = "闲置入宿设置（未满的闲置干员进宿舍）"
-    AUTO = "自动（按四级规则挑人）"
+    AUTO = "自动（按规则挑人）"
     REBUILD_MS = 250              # 改动后的防抖：连续点几下只重算一次
 
     def _init_idle_body(self, parent, enabled: bool, groups: Sequence,
                         on_change=None, note: str = "", table_height="auto",
-                        page_height: int = 0, groups_provider=None):
+                        page_height: int = 0, groups_provider=None,
+                        protected_slots: int = 5, blacklist: Sequence = (),
+                        all_names: Sequence = (), shift_count: Optional[int] = None):
         """把状态收好并建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
 
         `groups_provider`：无参可调用，返回**当前**分组表（设置中心传 `app.idle_groups`）。
         异步重算落地后由 `refresh_from_provider()` 用它取新表 —— 见那个方法。
+        `protected_slots` / `blacklist`：全局口径的初值（来自 `Session`）。
+        `all_names`：可以加入黑名单的干员名（下拉的候选池）。
+        `shift_count`：当前排班的**不同班次数** —— < 3 时在顶部给出"不生效"提示（文档 §2）。
         """
         self.result = None
         # 表格高度：显式数字（独立对话框）或 "auto"（设置中心：吃内容区剩余高度）
@@ -680,44 +684,92 @@ class IdleToDormMixin:
         self._widgets: list = []       # ① 关掉时要置灰的控件
         self._job = None
         self._busy = False
+        self._all_names = [str(n) for n in all_names]
+        self.blacklist: List[str] = [str(n) for n in blacklist]
+        self._shift_count = None if shift_count is None else int(shift_count)
+        self._protected_cache = max(0, int(protected_slots))
         pad = dict(padx=theme.PAD)
 
-        tk.Label(self, text="闲置入宿 = 把没在上班、也不在宿舍、心情还没满的干员安排进宿舍恢复。",
+        tk.Label(self, text="闲置入宿 = 每班开始时，把【这一班完全没出现在任何设施里、心情还没满】"
+                            "的干员安排进宿舍恢复。",
                  bg=theme.BG, fg=theme.TEXT, justify="left", wraplength=600,
                  font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(anchor="w", **pad,
                                                                pady=(theme.PAD, 2))
         tk.Label(self,
-                 text="规则（四级优先级）：① 任一间宿舍还有空位 → 直接住进去（宿舍顺序 "
-                      "#4→#3→#2→#1，先 4 最后 1）；\n"
-                      "② 宿舍全满 → 换「宿舍 #4~#2 的第 2~5 位」里【心情已满 24】的那位；\n"
-                      "③ 还找不到 → 只在【吃不到阵营联动的人】里挑满 24 的：白板，或阵营在"
-                      "【工作区】（中枢/制造/贸易/发电/会客/办公）里没有同伴的人"
-                      "（满 24 的菲亚梅塔也算）；\n"
-                      "④ ②③ 都挑不到 → 没点名就与宿舍里【心情最高的同类人】互换"
-                      "（【不限 24】：最高只有 21 就跟 21 那位换）；\n"
-                      "　　点名了就先跟你点名的那位换（【主动换】：不要求他满 24）。\n"
-                      "两道门（只约束自动挑人；② 只看位次与满 24、不看阵营门）："
-                      "【阵营门】= 她的阵营在工作区里还有同伴吗（有 ⇒ 不换；白板 / 孤家寡人的阵营 ⇒ 可换；"
-                      "在宿舍里休息的同伴不算）；"
-                      "不换【挂件】（她一走别人就要吃亏 —— 有阵营效果，或她在不在宿舍会影响别人的技能）。\n"
-                      "⚠️ 「自回型不被换出」那道门已取消（2026-09 用户裁决：在宿舍的自回型不进行门保护）。\n"
-                      "心情闸（含点名）：【目标的实时心情必须严格大于你】才换 —— 否则"
-                      "等于把更需要恢复的人挤出去，这一班就不动。\n"
-                      "候选＝没在上班、也不在宿舍、心情还没满的人：挂件位（加工站/训练室）、"
-                      "本班未排班的人，以及「不在基建」名单上的人。",
+                 text="规则：候选（该班未出现在任何设施 + 心情未满 + 不在黑名单）按【心情从低到高】"
+                      "依次处理：① 竖向正序里有空位（宿舍1位1 → 宿舍2位1 → …）就直接住进去；\n"
+                      "② 所有可用宿舍都满了 → 换出【锁定位置之外、心情最高】的那位"
+                      "（心情相同取竖向最靠后的）；③ 每次互换都要求【对方心情严格大于你】，"
+                      "相等也不换；被换出的人（心情 < 24、不在黑名单）会排到队尾、可能再被安排一次。\n"
+                      "手动高于自动：指定「宿舍NN·第M位」＝精确位次（那里空着就入住、有人就互换；"
+                      "若它前面还有空位会留下空洞 ⇒ 这一班直接跳过）；指定「宿舍NN」＝放进那间的"
+                      "下一个连续位；点名某人＝与那一刻在宿舍里的她互换。\n"
+                      "⚠️ 加工站 / 训练室的人、副手、所有上班与在宿舍的人**都不是候选**。",
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=600,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
                                                                 pady=(0, theme.GAP))
+
+        if self._shift_count is not None and self._shift_count < MIN_SHIFTS_FOR_IDLE:
+            tk.Label(self,
+                     text=f"⚠️ 当前排班只有 {self._shift_count} 个班次（少于 "
+                          f"{MIN_SHIFTS_FOR_IDLE} 个）→ 闲置入宿**不生效**（下面的设置照旧保留，"
+                          f"排班改成 ≥{MIN_SHIFTS_FOR_IDLE} 班就自动生效）。",
+                     bg=theme.BG, fg=theme.DANGER, justify="left", wraplength=640,
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad)
 
         self.enabled = tk.BooleanVar(value=bool(enabled))
         ttk.Checkbutton(self, text="① 启用闲置入宿（每班开始时结算一次）",
                         variable=self.enabled, command=self._on_toggle).pack(anchor="w", **pad)
 
-        tk.Label(self, text="② 逐次设置（从早到晚）：**「换谁」＝第④级的兜底** —— "
-                            "上面 ①②③ 都挑不到人时，就换你点名的这位"
-                            "（比④的默认兜底更优先；**主动换**：他心情没满也照换）。\n"
-                            "选「宿舍NN」＝不看别的规则，直接放进那间宿舍的空位（不动任何人）；"
-                            "留「自动」＝完全按四级规则走；取消勾选＝这一位完全不参与。改动立即生效。",
+        # ---- ② 全局口径：锁定位置数 + 黑名单 ----
+        lock_row = tk.Frame(self, bg=theme.BG)
+        lock_row.pack(fill="x", **pad)
+        tk.Label(lock_row, text="② 锁定位置数", bg=theme.BG, fg=theme.TEXT,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+        self.protected = tk.StringVar(value=str(self._protected_cache))
+        spin = tk.Spinbox(lock_row, from_=0, to=999, width=5, textvariable=self.protected,
+                          command=self._schedule_rebuild)
+        spin.pack(side="left", padx=(4, 6))
+        spin.bind("<KeyRelease>", lambda _e: self._schedule_rebuild())
+        self._widgets.append(spin)
+        tk.Label(lock_row,
+                 text="（按竖向正序锁前 N 个位置：宿舍1位1 → 宿舍2位1 → … → 宿舍1位2 → …；"
+                      "锁定区里的人**自动**不换，锁定区的空位照样能入住）",
+                 bg=theme.BG, fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
+                 ).pack(side="left")
+
+        black_row = tk.Frame(self, bg=theme.BG)
+        black_row.pack(fill="x", **pad)
+        tk.Label(black_row, text="黑名单", bg=theme.BG, fg=theme.TEXT,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+        self.black_pick = tk.StringVar()
+        self.black_combo = ttk.Combobox(black_row, textvariable=self.black_pick,
+                                        state="readonly", width=14,
+                                        values=list(self._all_names))
+        self.black_combo.pack(side="left", padx=(6, 4))
+        add_btn = ttk.Button(black_row, text="＋ 加入", width=8, command=self._add_blacklist)
+        add_btn.pack(side="left")
+        del_btn = ttk.Button(black_row, text="移除选中", width=10, command=self._remove_blacklist)
+        del_btn.pack(side="left", padx=(4, 6))
+        self._widgets.extend([self.black_combo, add_btn, del_btn])
+        tk.Label(black_row, text="（永远不能**通过闲置入宿进宿舍**；排班自带的她照旧可以被换出、"
+                                 "也可以被别人点名换出）",
+                 bg=theme.BG, fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
+                 ).pack(side="left")
+        self.black_list = tk.Listbox(self, height=4, activestyle="none",
+                                     bg=theme.PANEL, fg=theme.TEXT, highlightthickness=1,
+                                     highlightbackground=theme.BORDER, exportselection=False,
+                                     font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        self.black_list.pack(fill="x", **pad)
+        self._widgets.append(self.black_list)
+        self._refresh_blacklist()
+
+        tk.Label(self, text="③ 逐次设置（从早到晚）：「位置 / 换谁」＝这一位的**手动设置**，"
+                            "优先级高于上面两条自动规则。\n"
+                            "选「宿舍NN」＝放进那间的下一个连续位（不动任何人）；"
+                            "选「宿舍NN·第M位」＝精确位次（空着就入住、有人就过心情闸互换）；"
+                            "选人名＝点名与那一刻在宿舍的她互换（主动换，心情没满也照换）；"
+                            "留「自动」＝完全按规则走；取消勾选＝这一位完全不参与。改动立即生效。",
                  bg=theme.BG, fg=theme.TEXT, padx=theme.PAD, justify="left",
                  wraplength=640, anchor="w").pack(anchor="w", pady=(theme.GAP, 2))
         self.table_height = self._resolve_table_height()
@@ -761,10 +813,11 @@ class IdleToDormMixin:
         self.vs = VScroll(self.canvas, self.scroll, self.inner, win=self._win)
         self._fill_table()
         self.vs.refresh()          # 行建完 → 立刻重算滚动区间（别等几何事件）
-        tk.Label(self, text="「宿舍01」＝第 1 间宿舍（放进它最靠前的空位，不动任何人；这条优先于换人）。"
-                            "选一个人名（后面带的是他那一刻的心情）＝第④级兜底时与他互换："
-                            "**主动换，心情没满也照换**，换出来的那位既不工作也不在宿舍。"
-                            "他那一刻不在宿舍里 → 这一班不换。",
+        tk.Label(self, text="「宿舍NN·第M位」＝精确位次：那里空着就入住、有人就与她互换（也是唯一"
+                            "能进锁定区的路）；「宿舍NN」＝放进那间的下一个连续位。"
+                            "选一个人名（后面带的是她那一刻的心情）＝点名互换：**主动换，心情没满也照换**，"
+                            "换出来的那位既不工作也不在宿舍。位置会留空洞 / 点名对象那一刻不在宿舍"
+                            "→ 这一班不安排她。",
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=640, anchor="w",
                  padx=theme.PAD).pack(anchor="w", pady=(2, 0))
 
@@ -818,6 +871,45 @@ class IdleToDormMixin:
         self.canvas.yview_moveto(0)
 
     # ------------------------------------------------------------ 交互
+    def _protected_value(self) -> int:
+        """读「锁定位置数」：非法输入就恢复上一次有效值（并回写输入框）。"""
+        text = str(self.protected.get()).strip()
+        try:
+            value = max(0, int(text))
+        except (TypeError, ValueError):
+            value = self._protected_cache
+        self._protected_cache = value
+        if text != str(value):
+            self.protected.set(str(value))
+        return value
+
+    def _refresh_blacklist(self) -> None:
+        """把 `self.blacklist` 刷到列表框里（加/删都走它）。"""
+        if not hasattr(self, "black_list"):
+            return
+        self.black_list.delete(0, "end")
+        for name in self.blacklist:
+            self.black_list.insert("end", name)
+
+    def _add_blacklist(self) -> None:
+        """把下拉里选中的干员加入黑名单（已在名单里就不动），然后实时重算。"""
+        name = str(self.black_pick.get() or "").strip()
+        if not name or name in self.blacklist:
+            return
+        self.blacklist.append(name)
+        self._refresh_blacklist()
+        self._schedule_rebuild()
+
+    def _remove_blacklist(self) -> None:
+        """把列表框里选中的干员移出黑名单，然后实时重算。"""
+        picked = list(self.black_list.curselection())
+        if not picked:
+            return
+        for idx in reversed(picked):
+            del self.blacklist[idx]
+        self._refresh_blacklist()
+        self._schedule_rebuild()
+
     def _collect(self) -> None:
         """把控件里的当前值收回 `self.state`。"""
         for key, use, who, _c, _b in self._rows:
@@ -860,7 +952,8 @@ class IdleToDormMixin:
         """
         self._collect()
         if self._on_change is not None:
-            groups = self._on_change(bool(self.enabled.get()), dict(self.state))
+            groups = self._on_change(bool(self.enabled.get()), dict(self.state),
+                                     self._protected_value(), list(self.blacklist))
             if groups is not None:
                 self._groups = list(groups)
         if self.winfo_exists():
@@ -905,9 +998,10 @@ class IdleToDormMixin:
             self._job = None
 
     def value(self):
-        """收成 `(enabled, {(周期, 班次, 干员): (参与, 换谁)})`。"""
+        """收成 `(enabled, {(周期, 班次, 干员): (参与, 目标)}, 锁定位置数, 黑名单)`。"""
         self._collect()
-        return (bool(self.enabled.get()), dict(self.state))
+        return (bool(self.enabled.get()), dict(self.state),
+                self._protected_value(), list(self.blacklist))
 
 
 class IdleToDormPanel(tk.Frame, IdleToDormMixin):
@@ -919,11 +1013,15 @@ class IdleToDormPanel(tk.Frame, IdleToDormMixin):
 
     def __init__(self, master, enabled: bool, groups: Sequence,
                  on_change=None, note: str = "", table_height="auto",
-                 page_height: int = 0, groups_provider=None):
+                 page_height: int = 0, groups_provider=None,
+                 protected_slots: int = 5, blacklist: Sequence = (),
+                 all_names: Sequence = (), shift_count: Optional[int] = None):
         super().__init__(master, bg=theme.BG)
         self._init_idle_body(master, enabled, groups, on_change=on_change, note=note,
                              table_height=table_height, page_height=page_height,
-                             groups_provider=groups_provider)
+                             groups_provider=groups_provider,
+                             protected_slots=protected_slots, blacklist=blacklist,
+                             all_names=all_names, shift_count=shift_count)
 
     def destroy(self) -> None:
         """销毁时取消还没跑的重建任务（否则会对着已销毁的控件报 invalid command name）。"""

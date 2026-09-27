@@ -25,7 +25,7 @@ import weakref
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Optional
+from typing import Optional, Sequence
 
 # 允许**直接运行本文件**（`python ui/app.py` / IDE 的 Run）：直接跑时 `ui` 不是包，
 # 相对导入会失败；把仓库根目录放进 sys.path 后用绝对导入，与 `python -m ui` 等价。
@@ -46,6 +46,7 @@ from mood_soc import entry_target_kind  # noqa: E402
 from mood_soc.battery import to_decimal  # noqa: E402
 from mood_soc.config import MOOD_MAX, facility_max_level, facility_slots  # noqa: E402
 from mood_soc.models import normalize_entry_when  # noqa: E402
+from mood_soc.rules import MIN_SHIFTS_FOR_IDLE  # noqa: E402
 from data.paths import MAA_SAMPLE, RES as DATA_RES  # noqa: E402
 
 SAMPLE = MAA_SAMPLE          # 冷启动自载的示例排班（`resources/…`，见 data/paths.py）
@@ -223,6 +224,25 @@ class MoodSocApp(tk.Tk):
     @idle_globals.setter
     def idle_globals(self, value):
         self.session.idle_globals = dict(value)
+
+    # —— 闲置入宿的**全局口径**（锁定位置数 / 黑名单）与面板要用的辅助读法 ——
+    def idle_protected_slots(self) -> int:
+        """**锁定位置数**（文档 §5）：按竖向正序锁前 N 个位置（默认 5）。"""
+        return int(self.session.idle_protected_slots)
+
+    def idle_blacklist(self) -> list:
+        """**黑名单**（文档 §6）：永远不能通过闲置入宿进宿舍的人。"""
+        return list(self.session.idle_blacklist)
+
+    def idle_name_pool(self) -> list:
+        """「黑名单」下拉的候选池＝这份排班里出现过的所有干员名。"""
+        if self.schedule is None:
+            return []
+        return list(self.schedule.operator_names())
+
+    def shift_count(self) -> int:
+        """排班的**不同班次数**（文档 §2 的生效门槛要看它：< 3 ⇒ 闲置入宿不生效）。"""
+        return len(self.schedule.shifts) if self.schedule is not None else 0
 
     # —— 「不在基建」名单（既不在工作设施、也不在宿舍的人）：住在 Session 上 ——
     @property
@@ -1120,35 +1140,52 @@ class MoodSocApp(tk.Tk):
         return self.session.idle_count()
 
     def _sync_idle_label(self):
-        """工具栏右侧的当前状态：`未开启` / `已开启 · 6 次（自动）`。"""
+        """工具栏右侧的当前状态：`未开启` / `已开启 · 6 次（含指定）` / `已开启 · 班次不足 3，不生效`。"""
         if not self.idle_to_dorm.get():
             self.idle_detail.configure(text="未开启", fg=theme.MUTED)
+            return
+        if self.shift_count() < MIN_SHIFTS_FOR_IDLE:
+            self.idle_detail.configure(
+                text=f"已开启 · 班次不足 {MIN_SHIFTS_FOR_IDLE}，不生效", fg=theme.MUTED)
             return
         self.idle_detail.configure(fg=theme.TEXT)
         has_target = any(t for _u, t in self.idle_entries.values())
         self.idle_detail.configure(
             text=f"已开启 · {self._idle_count()} 次"
-                 + ("（含指定）" if has_target else "（自动）"))
+                 + ("（含手动设置）" if has_target else "（自动）"))
 
     def _idle_status(self) -> str:
         """状态栏那一句口径。"""
         if not self.idle_to_dorm.get():
             return "闲置入宿：未开启"
-        return (f"闲置入宿：已开启（每班开始时把未满的闲置干员安排进宿舍："
-                f"{self._idle_count()} 次入宿；空位优先，"
-                f"没空位就与宿舍里心情满的那位互换）")
+        if self.shift_count() < MIN_SHIFTS_FOR_IDLE:
+            return (f"闲置入宿：已开启但**不生效** —— 当前排班只有 {self.shift_count()} 个班次"
+                    f"（少于 {MIN_SHIFTS_FOR_IDLE} 个；设置保留）")
+        return (f"闲置入宿：已开启（每班开始时把该班没出现在任何设施、心情未满的干员安排进宿舍："
+                f"{self._idle_count()} 次；空位优先，全满则换出锁定区外心情最高的人；"
+                f"锁定 {self.idle_protected_slots()} 个位置"
+                + (f"、黑名单 {len(self.idle_blacklist())} 人" if self.idle_blacklist() else "")
+                + "）")
 
     def edit_idle_to_dorm(self):
         """（旧入口，现等价于）打开设置中心的「闲置入宿」分区。"""
         return self.open_settings("idle")
 
-    def apply_idle_to_dorm(self, enabled: bool, entries: dict):
+    def apply_idle_to_dorm(self, enabled: bool, entries: dict,
+                           protected_slots: Optional[int] = None,
+                           blacklist: Optional[Sequence[str]] = None):
         """「闲置入宿」设置落地（设置中心里**每次改动**都会调它）。
 
+        参数：总开关 / 逐次设置 `{(周期, 班次, 干员): (参与, 目标标签)}` /
+        **锁定位置数**（文档 §5）/ **黑名单**（文档 §6；`None` = 不动）。
         返回**新的分组表**：改动会影响后面每一次的候选，所以面板要按新表重建。
         """
         self.session.idle_to_dorm = bool(enabled)
         self.session.idle_entries = dict(entries)
+        if protected_slots is not None:
+            self.session.idle_protected_slots = max(0, int(protected_slots))
+        if blacklist is not None:
+            self.session.idle_blacklist = [str(n) for n in blacklist]
         # ⚠️ 异步重算（P5）：`recompute_async` 立即返回，返回的 `groups` 还是**改动前**那份；
         #    落地后由 `_settle_recalc` 通知监听者（设置中心注册了自己）按新表重建 ——
         #    见 `ui/settings.py` 里 `add_recalc_listener` 那处。
