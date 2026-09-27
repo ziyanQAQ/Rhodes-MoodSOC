@@ -28,7 +28,6 @@ v3 把求解结果内联喂进来（`load_json`），配好「换干员 / 闲置
 .venv/Scripts/python.exe main.py --mode base --demo                # base：整个布局还能撑多久
 .venv/Scripts/python.exe -m ui                                     # 图形界面：看整周期
 .venv/Scripts/python.exe -m api.cli --op capabilities              # 程序接口：一次性调用
-.venv/Scripts/python.exe -m unittest discover -s tests             # 全量测试（本机 466 个）
 ```
 
 `--demo --target 泡泡 --period 8` 的真实输出（**stdout 永远是纯 JSON**，错误与解释走 stderr）：
@@ -150,7 +149,7 @@ $ python main.py --demo --target 泡泡 --period 8 --explain
 dist/RhodesMoodSOC/RhodesMoodSOC.exe --smoke          # 自检：退出码 0 ＝ 窗口建得起来
 ```
 
-**exe 里不带任何测试数据**：`tests/`、`scripts/`、`documents/`、`scenarios/` 与 `resources/` 整目录
+**exe 里不带任何附加数据**：`scripts/`、`documents/` 与 `resources/` 整目录
 都不打进去（只带 Python 运行时 + tkinter + 项目代码 + `data/operators.txt`）⇒ 双击后是**空界面**，
 用「导入排班…」载入你自己的文件。见 `documents/09-开发指南.md` §9.6。
 
@@ -180,22 +179,6 @@ print(b.layout_sustain_hours, b.bottleneck)
 
 ---
 
-## 测试与数据核对
-
-```bash
-.venv/Scripts/python.exe -m unittest discover -s tests       # 全量：本机 466 个用例
-.venv/Scripts/python.exe -m unittest tests.test_layers -v     # 只跑某个模块
-.venv/Scripts/python.exe scripts/verify_skills.py --check     # 技能四层核对（退出码 0 = 通过）
-```
-
-测试是**黑盒**的：只通过命令行、公开 API 与"图形界面的计算核心"断言「输入 → 输出」，
-不碰任何内部结构；`test_layers.py` 额外做**结构回归**（分层方向、兼容转发壳、资源路径只有一处、
-打包路径）。技能侧另有一道**四层核对**：L1 模板自洽 / L2 250 条 clause 逐条造场景 /
-L3 上游 755 条台账与描述数字对照 / L4 178 名干员真名生效 + 48 条组合技能双向对照。
-清单一节与自查清单见 `documents/09-开发指南.md`，L4 的口径见 `documents/05-技能分类大纲.md` §5.11。
-
----
-
 ## 目录结构（一屏）
 
 ```
@@ -203,8 +186,8 @@ data/        要 import 的表（技能库 / 台账 / 阵营 / 生成物）+ 路
 mood_soc/    纯计算：心情电池、技能规则、流水账、变量账本
 store/       状态与 IO：排班 / 轨迹 / 解析 / 序列化 / 会话（Session，界面与 api 共用）
 ui/          tkinter 图形界面           api/  程序接口（NDJSON，JSON 进 JSON 出）
-resources/   仓库级数据：样例 JSON、数据字典、需求 docx（exe 不带）
-documents/   文档（见下表）             tests/ 黑盒测试        scripts/ 数据管道与打包
+resources/   仓库级数据：样例 JSON、数据字典、核对报告（exe 不带）
+documents/   文档（见下表）             scripts/ 数据管道与打包
 ```
 
 分层**严格单向**：`data/` ← `mood_soc/` ← `store/` ← `ui/` `api/`（`ui/` 与 `api/` 互不 import）。
@@ -221,7 +204,7 @@ documents/   文档（见下表）             tests/ 黑盒测试        script
 | **35 条特殊情况 + 12 条建模假设**（改代码前必读） | `04-特殊机制.md` |
 | 数据从哪来（强制查上游）、上游缺哪些字段 | `06-数据来源.md` |
 | 架构 / 目录 / 数据流 / **公共 API 速查（含 `FacilityType` 全表）** | `01-架构.md` |
-| 怎么跑、怎么测、性能基线、打包 exe、改完自查清单 | `09-开发指南.md` |
+| 怎么跑、性能基线、打包 exe、改完自查清单 | `09-开发指南.md` |
 | 图形界面：看板 / 曲线 / 设置中心 / 逐次表 | `10-图形界面.md` |
 | 程序接口：36 个 op、字段表、错误形状、加 op 步骤 | `11-程序接口.md` |
 | **v3（Rust）接入**：调用序列、三组口径、踩坑 | `12-v3接入.md` |
