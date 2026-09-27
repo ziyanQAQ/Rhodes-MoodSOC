@@ -25,3 +25,11 @@ results/
 # 系统
 .DS_Store
 Thumbs.db
+
+# 测试 / 临时产物（**不入库、不推送**；见 AGENTS.md 维护约定 5）
+# 测试排班、临时探查脚本、回归样本、一次性生成物都只放本地。
+/_scratch/
+/_*.py
+/scenarios/test-*.json
+/scenarios/*-test.json
+/scenarios/maa-2x24h-full.json
