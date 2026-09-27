@@ -75,8 +75,8 @@ documents/
 `data/paths.py` 是**资源路径的唯一出口**；`data/` 与 `mood_soc/` 不许 import 上层；
 `ui/` 与 `api/` 互不 import；`api/` `store/` `data/` 的代码里不许出现 `tkinter`。
 **数据分两条线**：`data/` = 要 import 的表（技能库 / 台账 / 阵营 / 生成物）；
-`resources/` = 仓库根的项目级数据（样例 JSON、数据字典说明、核对报告、需求文档 docx）。
-`documents/` = **文档**；`scenarios/` = 场景目录（**本地、不入库**）。
+`resources/` = 仓库根的项目级数据（样例 JSON、数据字典说明、核对报告；**需求文档 docx 不入库**、只在本地与历史里）。
+`documents/` = **文档**；`scenarios/` = 场景目录（**本地、不入库**）；`.agents/` 与 `skills-lock.json` = 本机 AI 技能（**不入库**）。
 
 > **§编号约定**：`§4.16` / `§8.5` / `§11` 之类引用沿用原 `AGENTS.md` 的**稳定章节号**，
 > 换算表见 `documents/README.md`。代码注释里也会出现这些引用。

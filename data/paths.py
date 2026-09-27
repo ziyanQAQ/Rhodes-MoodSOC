@@ -14,7 +14,7 @@ data/                       ← **代码化的数据表**（Python 能直接 imp
 
 resources/                  ← **仓库根的项目级数据**：样例、字典与工具产物 +
                               需求文档 docx（不是 Python 数据表，代码只按路径读）
-├── 心情消耗回复和工休时间.docx            需求文档（规则来源）
+├── 心情消耗回复和工休时间.docx            需求文档（规则来源；**本地、不入库**）
 ├── arknights-infra-schedule-maa.json      MAA 排班样例（界面冷启动自载）
 ├── import_v3_out_*.json / import_v4_input.json   4 种导入格式的样例
 ├── 输出JSON结构说明.md / plan_compute_example_v4_annotated.md   数据字典与契约
@@ -102,6 +102,8 @@ OPERATOR_NAMES_DATA = DATA / "operator_names.py"    # ← scripts/generate_opera
 # 与 `data/` 的分工见模块 docstring。
 # ---------------------------------------------------------------------------
 REQUIREMENTS_DOCX = RES / "心情消耗回复和工休时间.docx"      # 需求文档（规则来源）
+#: ⚠️ 需求文档 `.docx` **不入库**（2026-09 从仓库撤下，只留在提交历史里）⇒ 它在本机**可能不存在**：
+#: 取用处一律按"可选资源"处理（与打包成 exe 后整个 `resources/` 不在时同一条纪律，见 AGENTS.md 坑 18①）。
 SKILL_VERIFY_REPORT = RES / "skill_verify_report.md"        # ← scripts/verify_skills.py --report
 OUTPUT_CONTRACT_MD = RES / "输出JSON结构说明.md"             # v3 输出契约（上游文档）
 V4_EXAMPLE_MD = RES / "plan_compute_example_v4_annotated.md"  # v4 蓝图样例与注释
