@@ -28,7 +28,7 @@ v3 把求解结果内联喂进来（`load_json`），配好「换干员 / 闲置
 .venv/Scripts/python.exe main.py --mode base --demo                # base：整个布局还能撑多久
 .venv/Scripts/python.exe -m ui                                     # 图形界面：看整周期
 .venv/Scripts/python.exe -m api.cli --op capabilities              # 程序接口：一次性调用
-.venv/Scripts/python.exe -m unittest discover -s tests             # 全量测试（481 个）
+.venv/Scripts/python.exe -m unittest discover -s tests             # 全量测试（本机 466 个）
 ```
 
 `--demo --target 泡泡 --period 8` 的真实输出（**stdout 永远是纯 JSON**，错误与解释走 stderr）：
@@ -183,7 +183,7 @@ print(b.layout_sustain_hours, b.bottleneck)
 ## 测试与数据核对
 
 ```bash
-.venv/Scripts/python.exe -m unittest discover -s tests       # 全量：481 个用例
+.venv/Scripts/python.exe -m unittest discover -s tests       # 全量：本机 466 个用例
 .venv/Scripts/python.exe -m unittest tests.test_layers -v     # 只跑某个模块
 .venv/Scripts/python.exe scripts/verify_skills.py --check     # 技能四层核对（退出码 0 = 通过）
 ```
