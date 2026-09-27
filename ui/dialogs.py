@@ -16,7 +16,6 @@ from typing import List, Optional, Sequence
 
 from mood_soc import entry_target_kind
 from mood_soc.models import normalize_entry_when
-from mood_soc.rules import MIN_SHIFTS_FOR_IDLE
 
 from . import theme
 from .scroll import VScroll
@@ -634,7 +633,7 @@ class IdleToDormMixin:
 
     ⚠️ 旧口径（四级优先级 / 挂件门 / 阵营门 / "优先 4 最后 1" / "必须满 24" / 菲亚梅塔例外）
     已按文档**全部取消**。
-    ⚠️ **不同班次数 < 3 时闲置入宿不生效**（开关与全部设置照旧保留）。
+    ⚠️ **不设班次数量门槛**（文档 §2 第二版）：1 个班次的排班照样执行。
 
     | 控件 | 落到引擎 |
     |---|---|
@@ -644,9 +643,13 @@ class IdleToDormMixin:
     | 每行的「参与」 | `per_operator[(周期,班次,干员)].enabled` |
     | 每行的「位置 / 换谁」 | `.dorm`（+`.slot`）/ `.swap_with`；「自动」= 两个都空 |
 
-    **逐次表**按时间排（第 1 周期第 1 班 → …），每个"周期 × 班次"一组、组内只放那一刻
+    **逐次表**按时间排（第 1 周期第 1 班 → …），**一个换班执行点一组**：真实班初一组，
+    长班（> 12h）的每个**内部换班点**各一组（标题带 `（12h 内部换班）`）；组内只放那一刻
     **真的有候选**的人；「位置 / 换谁」下拉列出那一刻**所有可用宿舍的位置**（`宿舍NN` 与
     `宿舍NN·第M位`）与**宿舍里的所有人**（带心情数字）。
+    ⚠️ **同班各执行点共用同一份逐人设置**（文档 §8/§14）：组里的 `(周期, 班次, 干员)` 键相同 ⇒
+    改任一组会同步影响同班其他执行点。所以收状态时**以"用户刚改过的那一行"为准**
+    （同一键出现在多组里，不能让后一组把前一组刚改的值盖回去）。
 
     ⚠️ 改动会**实时生效**：每次改动 / 改锁定数 / 改黑名单都会回调 `on_change(状态)` ——
     调用方（`ui.app`）把它套进模拟重算并返回**新的分组表**，本面板据此重建表格。
@@ -662,14 +665,13 @@ class IdleToDormMixin:
                         on_change=None, note: str = "", table_height="auto",
                         page_height: int = 0, groups_provider=None,
                         protected_slots: int = 5, blacklist: Sequence = (),
-                        all_names: Sequence = (), shift_count: Optional[int] = None):
+                        all_names: Sequence = ()):
         """把状态收好并建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
 
         `groups_provider`：无参可调用，返回**当前**分组表（设置中心传 `app.idle_groups`）。
         异步重算落地后由 `refresh_from_provider()` 用它取新表 —— 见那个方法。
         `protected_slots` / `blacklist`：全局口径的初值（来自 `Session`）。
         `all_names`：可以加入黑名单的干员名（下拉的候选池）。
-        `shift_count`：当前排班的**不同班次数** —— < 3 时在顶部给出"不生效"提示（文档 §2）。
         """
         self.result = None
         # 表格高度：显式数字（独立对话框）或 "auto"（设置中心：吃内容区剩余高度）
@@ -680,13 +682,15 @@ class IdleToDormMixin:
         self._groups = list(groups)
         self._on_change = on_change
         self._groups_provider = groups_provider
-        self._rows: list = []          # [(周期, 班次, 干员, 参与 BooleanVar, 换谁 StringVar)]
+        # [(周期, 班次, 干员, 参与 BooleanVar, 换谁 StringVar, [用户改过?])] ——
+        # ⚠️ 最后那个是**单元素列表**（可变标记）：同班的多个执行点共用同一个键，
+        #    收状态时必须优先采用"用户刚动过"的那一行，否则会被同键的其它行盖回去。
+        self._rows: list = []
         self._widgets: list = []       # ① 关掉时要置灰的控件
         self._job = None
         self._busy = False
         self._all_names = [str(n) for n in all_names]
         self.blacklist: List[str] = [str(n) for n in blacklist]
-        self._shift_count = None if shift_count is None else int(shift_count)
         self._protected_cache = max(0, int(protected_slots))
         pad = dict(padx=theme.PAD)
 
@@ -708,14 +712,6 @@ class IdleToDormMixin:
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=600,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
                                                                 pady=(0, theme.GAP))
-
-        if self._shift_count is not None and self._shift_count < MIN_SHIFTS_FOR_IDLE:
-            tk.Label(self,
-                     text=f"⚠️ 当前排班只有 {self._shift_count} 个班次（少于 "
-                          f"{MIN_SHIFTS_FOR_IDLE} 个）→ 闲置入宿**不生效**（下面的设置照旧保留，"
-                          f"排班改成 ≥{MIN_SHIFTS_FOR_IDLE} 班就自动生效）。",
-                     bg=theme.BG, fg=theme.DANGER, justify="left", wraplength=640,
-                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad)
 
         self.enabled = tk.BooleanVar(value=bool(enabled))
         ttk.Checkbutton(self, text="① 启用闲置入宿（每班开始时结算一次）",
@@ -831,7 +827,7 @@ class IdleToDormMixin:
                      fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
                      ).pack(anchor="w", padx=6, pady=6)
             return
-        for title, scope, rows in self._groups:
+        for title, scope, rows, _t0, _t1 in self._groups:
             head = tk.Frame(self.inner, bg=theme.PANEL_ALT)
             head.pack(fill="x", pady=(2, 0))
             self.vs.join(head)
@@ -856,16 +852,19 @@ class IdleToDormMixin:
                 key = (scope[0], scope[1], name)
                 use_d, target_d = self.state.get(key, (True, None))
                 use = tk.BooleanVar(value=bool(use_d))
+                dirty = [False]         # 用户动过这一行没有（同键多行时用它决定谁说了算）
                 chk = tk.Checkbutton(row, text="", variable=use, bg=bg,
                                      activebackground=bg, highlightthickness=0,
-                                     command=self._schedule_rebuild)
+                                     command=lambda d=dirty: (d.__setitem__(0, True),
+                                                              self._schedule_rebuild()))
                 chk.pack(side="left", padx=(6, 0))
                 who = tk.StringVar(value=(target_d or self.AUTO))
                 cb = ttk.Combobox(row, textvariable=who, state="readonly", width=20,
                                   values=[self.AUTO] + list(targets))
                 cb.pack(side="left", padx=(4, 0))
-                cb.bind("<<ComboboxSelected>>", lambda _e: self._schedule_rebuild())
-                self._rows.append((key, use, who, chk, cb))
+                cb.bind("<<ComboboxSelected>>",
+                        lambda _e, d=dirty: (d.__setitem__(0, True), self._schedule_rebuild()))
+                self._rows.append((key, use, who, chk, cb, dirty))
                 self._widgets.extend([chk, cb])
         self._sync()
         self.canvas.yview_moveto(0)
@@ -911,11 +910,24 @@ class IdleToDormMixin:
         self._schedule_rebuild()
 
     def _collect(self) -> None:
-        """把控件里的当前值收回 `self.state`。"""
-        for key, use, who, _c, _b in self._rows:
+        """把控件里的当前值收回 `self.state`。
+
+        ⚠️ **同一个键可能出现在多组里**（长班的内部换班点与班初共用一份逐人设置）⇒
+        不能让"后遍历到的那一行"把用户刚改的那一行盖回去：**用户动过的行优先**，
+        都没动过时才按行序取值（此时各行本来就一致）。收完把"动过"标记清掉。
+        """
+        dirty: dict = {}
+        clean: dict = {}
+        for key, use, who, _c, _b, flag in self._rows:
             target = who.get().strip()
-            self.state[key] = (bool(use.get()),
-                               None if target in ("", self.AUTO) else target)
+            value = (bool(use.get()), None if target in ("", self.AUTO) else target)
+            if flag[0]:
+                dirty.setdefault(key, value)
+            else:
+                clean.setdefault(key, value)
+            flag[0] = False
+        self.state.update(clean)
+        self.state.update(dirty)
 
     def _on_toggle(self) -> None:
         """① 总开关：置灰整张表并实时重算。"""
@@ -923,10 +935,15 @@ class IdleToDormMixin:
         self._schedule_rebuild()
 
     def _set_group(self, scope, value: bool) -> None:
-        """某一组（某次进驻）的全选 / 全不选。"""
-        for key, use, _w, _c, _b in self._rows:
+        """某一组（某次换班执行点）的全选 / 全不选。
+
+        ⚠️ 组键是 `(周期, 班次)`：同班的班初与内部换班点共用一份设置 ⇒ 勾"全选"会把
+        这一班**所有执行点**的行一起勾上（这正是文档 §8/§14 的口径）。
+        """
+        for key, use, _w, _c, _b, flag in self._rows:
             if key[:2] == tuple(scope):
                 use.set(bool(value))
+                flag[0] = True
         self._schedule_rebuild()
 
     def _schedule_rebuild(self) -> None:
@@ -1015,13 +1032,13 @@ class IdleToDormPanel(tk.Frame, IdleToDormMixin):
                  on_change=None, note: str = "", table_height="auto",
                  page_height: int = 0, groups_provider=None,
                  protected_slots: int = 5, blacklist: Sequence = (),
-                 all_names: Sequence = (), shift_count: Optional[int] = None):
+                 all_names: Sequence = ()):
         super().__init__(master, bg=theme.BG)
         self._init_idle_body(master, enabled, groups, on_change=on_change, note=note,
                              table_height=table_height, page_height=page_height,
                              groups_provider=groups_provider,
                              protected_slots=protected_slots, blacklist=blacklist,
-                             all_names=all_names, shift_count=shift_count)
+                             all_names=all_names)
 
     def destroy(self) -> None:
         """销毁时取消还没跑的重建任务（否则会对着已销毁的控件报 invalid command name）。"""

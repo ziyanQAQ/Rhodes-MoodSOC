@@ -46,7 +46,6 @@ from mood_soc import entry_target_kind  # noqa: E402
 from mood_soc.battery import to_decimal  # noqa: E402
 from mood_soc.config import MOOD_MAX, facility_max_level, facility_slots  # noqa: E402
 from mood_soc.models import normalize_entry_when  # noqa: E402
-from mood_soc.rules import MIN_SHIFTS_FOR_IDLE  # noqa: E402
 from data.paths import MAA_SAMPLE, RES as DATA_RES  # noqa: E402
 
 SAMPLE = MAA_SAMPLE          # 冷启动自载的示例排班（`resources/…`，见 data/paths.py）
@@ -239,10 +238,6 @@ class MoodSocApp(tk.Tk):
         if self.schedule is None:
             return []
         return list(self.schedule.operator_names())
-
-    def shift_count(self) -> int:
-        """排班的**不同班次数**（文档 §2 的生效门槛要看它：< 3 ⇒ 闲置入宿不生效）。"""
-        return len(self.schedule.shifts) if self.schedule is not None else 0
 
     # —— 「不在基建」名单（既不在工作设施、也不在宿舍的人）：住在 Session 上 ——
     @property
@@ -1116,37 +1111,31 @@ class MoodSocApp(tk.Tk):
                      traj=None):
         """给设置框算**按时间排序的逐次表** → `[group, ...]`。
 
-        `group = (标题, [(干员, 心情, 位置, 参与, 换谁, [(可选目标…)]), ...])`。
+        `group = (标题, (周期, 班次), [(干员, 心情, 位置, 参与, 换谁, [可选目标…]), ...], 起, 止)`。
 
-        为什么按"周期 → 班次"展开：心情跨班跨周期连续，所以**每次**"谁没满、谁在宿舍且满"
-        都不一样 —— 候选与「换谁」的可选项都得按那一刻算（实测 3 个周期的事件分别落在
-        12/18h、24/42h、66h）。只列出**真的有候选**的那几次。
+        为什么按"**换班执行点** → 周期"展开：心情跨班、跨内部换班、跨周期连续，所以**每一次**
+        "谁没满、谁在宿舍"都不一样 —— 候选与「换谁」的可选项都得按那一刻算。
+        长班（> 12h）的内部换班点在标题里带 `（12h 内部换班）`，与班初各占一组，
+        但**共用同一份逐人设置**（改任一组会同步影响同班其他执行点）。只列**真的有候选**的那几次。
         """
         # 候选与可选目标全在 `Session.idle_groups()`（**与程序接口同一份**）；
         # 界面只做两件"视图的事"：把心情值格式化、把组头时刻按初始时间点渲染。
         out = []
-        for title, scope, rows in self.session.idle_groups(cycles=cycles, entries=entries):
-            k, i = scope
-            t0 = self.schedule.cycle_hours * (k - 1) + self.schedule.starts[i - 1]
-            end = t0 + self.schedule.shifts[i - 1].hours
+        for title, scope, rows, t0, t1 in self.session.idle_groups(cycles=cycles, entries=entries):
             shown = [(n, theme.fmt_mood(m), where, use, target, options)
                      for n, m, where, use, target, options in rows]
-            out.append((f"{title}（{self.clock_text(t0)}–{self.clock_text(end)}）",
-                        scope, shown))
+            out.append((f"{title}（{self.clock_text(t0)}–{self.clock_text(t1)}）",
+                        scope, shown, t0, t1))
         return out
 
     def _idle_count(self) -> int:
-        """当前设置下会有多少次"有人入宿"、共涉及多少人。"""
+        """当前设置下会有多少次"有人入宿"、共涉及多少人（按换班执行点计）。"""
         return self.session.idle_count()
 
     def _sync_idle_label(self):
-        """工具栏右侧的当前状态：`未开启` / `已开启 · 6 次（含指定）` / `已开启 · 班次不足 3，不生效`。"""
+        """工具栏右侧的当前状态：`未开启` / `已开启 · 6 次（自动）`。"""
         if not self.idle_to_dorm.get():
             self.idle_detail.configure(text="未开启", fg=theme.MUTED)
-            return
-        if self.shift_count() < MIN_SHIFTS_FOR_IDLE:
-            self.idle_detail.configure(
-                text=f"已开启 · 班次不足 {MIN_SHIFTS_FOR_IDLE}，不生效", fg=theme.MUTED)
             return
         self.idle_detail.configure(fg=theme.TEXT)
         has_target = any(t for _u, t in self.idle_entries.values())
@@ -1158,11 +1147,8 @@ class MoodSocApp(tk.Tk):
         """状态栏那一句口径。"""
         if not self.idle_to_dorm.get():
             return "闲置入宿：未开启"
-        if self.shift_count() < MIN_SHIFTS_FOR_IDLE:
-            return (f"闲置入宿：已开启但**不生效** —— 当前排班只有 {self.shift_count()} 个班次"
-                    f"（少于 {MIN_SHIFTS_FOR_IDLE} 个；设置保留）")
-        return (f"闲置入宿：已开启（每班开始时把该班没出现在任何设施、心情未满的干员安排进宿舍："
-                f"{self._idle_count()} 次；空位优先，全满则换出锁定区外心情最高的人；"
+        return (f"闲置入宿：已开启（每个换班执行点把该班没出现在任何设施、心情未满的干员"
+                f"安排进宿舍：{self._idle_count()} 次；空位优先，全满则换出锁定区外心情最高的人；"
                 f"锁定 {self.idle_protected_slots()} 个位置"
                 + (f"、黑名单 {len(self.idle_blacklist())} 人" if self.idle_blacklist() else "")
                 + "）")

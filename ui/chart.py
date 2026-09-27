@@ -227,6 +227,17 @@ class MoodChart(tk.Canvas):
             self.create_text(x, y1 - 20, text="✎", fill=theme.MUTED,
                              font=(theme.FONT_FAMILY, theme.FS_SMALL))
 
+        # —— 长班的内部换班执行点（>12h 的班内 12h 整数倍）：整幅虚线 + 换 ——
+        # ⚠️ 它是**口径的一部分**（文档 §3/不变式 10）：每个内部换班都显示标记，
+        #    哪怕那一次没有换人、心情也没变（所以这里**不过滤**"未执行"）。
+        for mark in traj.marks:
+            if mark.kind != "internal":
+                continue
+            x = self._tx(mark.t, x0, x1, total)
+            self.create_line(x, y0, x, y1, fill=theme.BORDER, width=1, dash=(3, 3))
+            self.create_text(x, y0 + 4, text="换", fill=theme.MUTED, anchor="n",
+                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
+
         self._draw_cursor()
 
     def _time_step(self, total: Decimal, span: float) -> Decimal:

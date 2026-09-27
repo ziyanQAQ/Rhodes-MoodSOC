@@ -398,8 +398,7 @@ class SettingsDialog(tk.Toplevel):
                                 groups_provider=app.idle_groups,
                                 protected_slots=app.idle_protected_slots(),
                                 blacklist=app.idle_blacklist(),
-                                all_names=app.idle_name_pool(),
-                                shift_count=app.shift_count())
+                                all_names=app.idle_name_pool())
         # ⚠️ 重算是**异步**的（`app.recompute_async`）：面板拿到的那份 `groups` 是改动前的，
         #    真正的新表要等结果落地 —— 注册一个落地回调按新轨迹重建（弱引用，面板销毁即失效）。
         app.add_recalc_listener(panel.refresh_from_provider)
