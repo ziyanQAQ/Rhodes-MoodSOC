@@ -230,14 +230,15 @@ class IdleToDormEntry:
     写了就只在对应的那几次生效（更具体的优先，见 `IdleToDormConfig.entry_for`）。
 
     - `enabled`：这一位参不参与（`False` = 永远不动他）。
-    - `swap_with`：宿舍满了时**与谁互换**（必须是那一刻宿舍里心情满的那位）。
-      `None`/`""` = **自动**（挑一个满心情的宿舍干员）。
-    - `dorm` / `slot`：**指定放进哪一间宿舍的空位**（与 `swap_with` 互斥，写了 `dorm` 就按它）。
-      `dorm` 是 1 基的**宿舍序号**（第 1 间 = `1`，界面写作「宿舍01」）；
-      `slot` 是 1 基位次（`None` = 那间最靠前的空位）。
-      ⚠️ 宿舍位次在模型里**没有机制差异**（回复只看宿舍等级/氛围/人数），而且 `operators` 是紧凑列表、
-      不表示"洞"，所以引擎总是放进**最靠前的空位**；`slot` 与它不一致时会在说明里注明。
-      指定的那间**没有空位**了 → **跳过这一位**（严格按指定，与"指定的人不在宿舍"同一套规矩）。
+    - `swap_with`：**手动点名**要互换的那位（文档 §11：对象必须那一刻真的在某间**可用宿舍**里，
+      可以在锁定位置、也可以是黑名单干员；不看满心情 / 挂件 / 阵营；只有"她心情**严格大于**
+      候选"才换）。
+    - `dorm` / `slot`：**手动指定位置**（文档 §10，优先于 `swap_with`）。`dorm` 是 1 基的
+      **宿舍序号**（第 1 间 = `1`，界面写作「宿舍01」）；`slot` 是 1 基**位次**
+      （`None` = 那间宿舍的"下一个连续位"）。
+      ⚠️ 位次语义是**精确**的：正好是下一个连续位 → 直接入住（**可进锁定区**）；
+      在它**之后** → 跳过这一位（会留空洞，**不回退**自动）；那个位置有人 → 过"严格心情闸"
+      后与她互换（**可进锁定区**）；位次越界 / 宿舍不存在 / 宿舍被禁用 → 跳过并记原因。
     - `cycle` / `shift`：**1 基**的周期序号 / 班次序号（`None` = 不限）。
       为什么要有这两维：心情跨班跨周期连续，所以"这一刻谁没满、谁在宿舍且满了"**每次都不同**，
       候选与可交换对象都不一样（实测示例排班 3 个周期的闲置入宿事件分别落在 12/18h、24/42h、66h）。
@@ -277,6 +278,8 @@ class IdleToDormConfig:
     ```json
     {
       "idle_to_dorm": {"enabled": true,
+                       "protected_slots": 5,
+                       "blacklist": ["干员甲"],
                        "per_operator": [{"name": "虎狼丸", "swap_with": "甲"},
                                         {"name": "跃跃", "enabled": false}]},
       "facilities": [ ... ]
@@ -284,17 +287,28 @@ class IdleToDormConfig:
     ```
 
     它是一类**班次开始时的布局事件**（与 `entry_events` 同层，不改"每小时速率"公式）：
-    把"不在工作、也不在宿舍、心情还没满"的干员安排进宿舍恢复心情——
-    先看宿舍有没有**空位**，没有空位才**与宿舍里心情已满的那位互换**。
+    把"这一班完全没有出现在任何设施里、心情还没满"的干员安排进宿舍 ——
+    有连续空位就直接住进去，全满了才与宿舍里心情更高的人互换。
+
+    口径＝用户文档《闲置入宿完整逻辑》（见 `rules.apply_idle_to_dorm` 的说明）：
 
     - `enabled`：**默认 `True`＝默认就结算**（用户口径："闲置入宿默认是开启的"）。
       没写这个键 ⇒ 开；**显式写 `false` ⇒ 关**（显式配置永远优先）。
       调用方显式开关（CLI / 界面勾选 / `apply_idle_to_dorm(enabled=...)`）同样优先于它。
-      三态里**不再有"没配置＝不结算"**：`None` 现在也按默认（开）处理，见 `apply_idle_to_dorm`。
-    - `per_operator`：逐个干员的参与与交换对象（见 `IdleToDormEntry`）。
+    - `protected_slots`：**锁定位置数**（文档 §5），默认 `5`。按**竖向正序**（位次优先、
+      宿舍序号其次）锁前 N 个位置：自动交换不换锁定区里的人，锁定区的**空位**照样能入住。
+      运行时钳位到 `[0, 当前可用宿舍的总位置数]`（超了按总数生效、不报错）。
+    - `blacklist`：**黑名单**（文档 §6）：永远不能**通过闲置入宿进宿舍**的干员 ——
+      不进初始队列、不进队尾、不出现在手动设置列表里、手动指定位置/点名也不执行；
+      **但**排班自带的她照旧在宿舍里、照旧能被换出、能被别人点名换出（这不是"保护位次"）。
+    - `per_operator`：逐个干员的参与 / 手动位置 / 手动点名（见 `IdleToDormEntry`）。
+    - ⚠️ **生效门槛**（文档 §2）：排班里**不同班次的数量 < 3** 时，以上设置**全部保留但不生效**
+      （引擎直接返回、布局一个字节都不改），排班变成 ≥3 班时自动生效。
     """
 
     enabled: bool = True
+    protected_slots: int = 5
+    blacklist: List[str] = field(default_factory=list)
     per_operator: List["IdleToDormEntry"] = field(default_factory=list)
 
     def entry_for(self, name: str, cycle: Optional[int] = None,
@@ -319,13 +333,20 @@ def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
 
     ```json
     "idle_to_dorm": true
-    "idle_to_dorm": {"enabled": true, "per_operator": {"虎狼丸": "甲", "跃跃": false}}
+    "idle_to_dorm": {"enabled": true, "protected_slots": 5, "blacklist": ["某人"],
+                     "per_operator": {"虎狼丸": "甲", "跃跃": false}}
     "idle_to_dorm": {"per_operator": [{"name": "虎狼丸", "swap_with": "甲"}]}
+    "idle_to_dorm": {"per_operator": [{"name": "虎狼丸", "dorm": 1, "slot": 3}]}
     ```
 
     `per_operator` 支持三种写法：`{"名字": "交换对象"}`、`{"名字": false}`（不参与）、
-    或数组 `[{"name": ..., "enabled": ..., "swap_with": ..., "cycle": 2, "shift": 3}]`。
-    数组写法里可以带 `cycle` / `shift`**限定只在哪几次生效**（1 基序号；不写 = 不限）。
+    或数组 `[{"name": ..., "enabled": ..., "swap_with": ..., "cycle": 2, "shift": 3,
+    "dorm": 1, "slot": 3}]`。数组写法里可以带 `cycle` / `shift`**限定只在哪几次生效**
+    （1 基序号；不写 = 不限）、`dorm` / `slot`**手动指定位置**（1 基；见 `IdleToDormEntry`）。
+
+    顶层还有两个全局字段（文档 §5/§6，都可省）：
+    `protected_slots`（锁定位置数，默认 `5`）、`blacklist`（黑名单，默认空）。
+    字段名同时接受下划线与小驼峰（`protectedSlots` / `black_list` / `blackList`）。
     """
     if raw is None:
         return IdleToDormConfig()
@@ -333,6 +354,21 @@ def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
         return IdleToDormConfig(enabled=raw)
     if not isinstance(raw, dict):
         raise ValueError(f"idle_to_dorm 应当是 true/false 或对象，收到 {raw!r}")
+
+    protected = raw.get("protected_slots", raw.get("protectedSlots"))
+    if protected is not None:
+        protected = int(protected)
+        if protected < 0:
+            raise ValueError(f"idle_to_dorm.protected_slots 不能为负，收到 {protected!r}")
+    black_raw = raw.get("blacklist", raw.get("blackList", raw.get("black_list")))
+    if black_raw is None:
+        blacklist: List[str] = []
+    elif isinstance(black_raw, (list, tuple, set)):
+        blacklist = [str(n).strip() for n in black_raw if str(n).strip()]
+    elif isinstance(black_raw, str):
+        blacklist = [n.strip() for n in black_raw.replace("，", ",").split(",") if n.strip()]
+    else:
+        raise ValueError(f"idle_to_dorm.blacklist 应当是数组，收到 {black_raw!r}")
 
     per_raw = raw.get("per_operator", raw.get("perOperator"))
     items: List[tuple] = []
@@ -375,6 +411,8 @@ def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
             slot=(int(slot) if slot is not None else None)))
     return IdleToDormConfig(
         enabled=(None if raw.get("enabled") is None else bool(raw["enabled"])),
+        protected_slots=(5 if protected is None else protected),
+        blacklist=blacklist,
         per_operator=entries)
 
 
