@@ -21,8 +21,8 @@
 > 5. **测试相关的产物一律不入库、不推送**（用户口径，2026-09）：`tests/`（测试代码）与
 >    `scenarios/`（测试排班）两个目录**整目录已在 `.gitignore` 里**，临时探查脚本 / 回归样本 /
 >    一次性生成物放 `_scratch/` 或根目录 `_*.py`（同样已忽略）—— **不要 `git add` / commit / push**。
->    仓库里只保留正式代码与文档。（⚠️ 历史上已被跟踪的 `scenarios/demo.json` 等文件不受
->    `.gitignore` 影响，要撤出仓库得显式 `git rm --cached`。）
+>    仓库里只保留正式代码与文档。（2026-09 已把历史遗留的 `scenarios/demo.json` 等 4 个文件
+>    `git rm --cached` 撤出仓库、本地保留；文档里依赖它们的示例已改成内置 `--demo`。）
 >
 > **本入口只讲"是什么 + 去哪儿看"。详细规则一律在 `documents/`。**
 
@@ -76,7 +76,7 @@ documents/
 `ui/` 与 `api/` 互不 import；`api/` `store/` `data/` 的代码里不许出现 `tkinter`。
 **数据分两条线**：`data/` = 要 import 的表（技能库 / 台账 / 阵营 / 生成物）；
 `resources/` = 仓库根的项目级数据（样例 JSON、数据字典说明、核对报告、需求文档 docx）。
-`documents/` = **文档**；`scenarios/` = 示例场景。
+`documents/` = **文档**；`scenarios/` = 场景目录（**本地、不入库**）。
 
 > **§编号约定**：`§4.16` / `§8.5` / `§11` 之类引用沿用原 `AGENTS.md` 的**稳定章节号**，
 > 换算表见 `documents/README.md`。代码注释里也会出现这些引用。
@@ -322,7 +322,7 @@ documents/
 # 测算（single 模式必须给 --target；--period 缺省 0）
 python main.py --demo --target 泡泡                    # 内置演示，目标泡泡
 python main.py --demo --target 泡泡 --period 8         # 推进 8 小时
-python main.py --scenario-file scenarios/demo.json --target 泡泡 --period 8
+python main.py --scenario-file <你的场景.json> --target 泡泡 --period 8   # 场景文件自备（scenarios/ 不入库）
 python main.py --demo --target 泡泡 --explain           # 打印心情流水账（为什么是这个速率）
 python main.py --demo --target 菲亚梅塔 --entry-events  # 先结算进驻事件（M15a 心情互换）
 python main.py --mode base --demo                      # 整个布局还能维持多久

@@ -5,7 +5,7 @@
 用法：
     .venv/Scripts/python.exe scripts/maa_to_scenario.py [源文件] [输出目录]
 
-默认读取 `resources/arknights-infra-schedule-maa.json`，输出到 `scenarios/`，
+默认读取 `resources/arknights-infra-schedule-maa.json`，输出到 `scenarios/`（**本地目录、不入库**），
 为每个排班（Shift）生成一个 `maa_shift{N}.json`。
 
 MAA 的 rooms 键名 ↔ 本工具设施：

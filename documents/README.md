@@ -10,9 +10,9 @@
 | `store/` | **数据管理层** | 排班与整周期轨迹、4 种输入解析、结果序列化、**会话状态** |
 | `api/` | **程序接口** | JSON 进 / JSON 出（常驻 NDJSON + 一次性 CLI），供 Rust 调用 |
 | `ui/` | **图形界面** | tkinter 视图（状态在 `store.Session` 上） |
-| `scripts/` `tests/` `main.py` | **代码**（工具与测试） | 纯标准库 Python |
+| `scripts/` `tests/` `main.py` | **代码**（工具与测试） | 纯标准库 Python；`tests/` **不入库** |
 | `documents/` | **文档**（本目录） | 你现在读的这些 `.md` |
-| `scenarios/` | 示例场景 | MAA 排班转换产物 |
+| `scenarios/` | **本地目录、不入库** | 测试用场景 JSON（`maa_to_scenario.py` 的默认输出处） |
 | 根目录 | 入口 | `AGENTS.md`（AI 入口）/ `README.md`（人类入口） |
 
 > 根目录的 `AGENTS.md` 是**精简入口**——DSH 只从项目根沿 cwd 链自动加载它，

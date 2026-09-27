@@ -114,7 +114,8 @@ V4_SAMPLE = RES / "import_v4_input.json"
 #: 样例文件全集（测试与文档用一次列全，免得各写一份）。
 SAMPLES = (MAA_SAMPLE, V3_SAMPLE_3SHIFTS, V3_SAMPLE_NO_MAA, V3_SAMPLE_36H, V4_SAMPLE)
 
-#: 示例场景目录（`scenarios/`：demo.json + maa_shift1/2/3.json）。
+#: 场景目录（`scenarios/`：**本地目录、不入库** —— 测试用场景 JSON 与
+#: `scripts/maa_to_scenario.py` 的默认输出都落在这里）。
 SCENARIOS = ROOT / "scenarios"
 
 
