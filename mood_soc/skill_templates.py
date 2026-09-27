@@ -261,7 +261,10 @@ X_TEMPLATES: Tuple[Template, ...] = (
        params=("variable",), notes="技能间的中间货币，见 VARIABLES"),
     _t("X10", ModelTier.A4_NONE, "跨设施/设施计数条件", Domain.CROSS_FACILITY, Target.BASE_WIDE,
        Effect.FACILITY_COUNT, ValueShape.PER_FACILITY_COUNT, Stacking.SUM, modeled=False,
-       params=("facility",)),
+       params=("facility",),
+       notes="**「仅影响设施数量」类效果的家**：森蚺「我寻思能行」+2 / 承曦格雷伊「晨曦」+1 "
+             "登记在 `data/facility_count.py`，由 `mood_soc/facility_count.py` 计入 "
+             "`power_count`（唯一消费方＝流明「柔和微光」）"),
     _t("X11", ModelTier.A4_NONE, "特殊订单", Domain.SELF_FACILITY, Target.SAME_ALL,
        Effect.SPECIAL_ORDER, ValueShape.SCALAR, Stacking.ZERO_PRIORITY, modeled=False, params=()),
 )

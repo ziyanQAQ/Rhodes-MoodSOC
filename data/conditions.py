@@ -208,6 +208,41 @@ def _factions_of(who):
     return tuple(facs)
 
 
+# ----------------------------------------------------------------------------
+# 「设施数量修正」的两个条件（见 data/facility_count.py）
+#
+# 这两条**不是心情子句**的条件，而是"改设施数量"的效果条件；唯一消费方是
+# `power_count` 计数基准（流明「柔和微光」的第二分句）。写法仍遵守本模块的
+# 鸭子类型契约（只读 ctx.world / ctx.owner / ctx.facility）。
+# ----------------------------------------------------------------------------
+def _cond_lancet2_in_power(ctx) -> bool:
+    """森蚺「我寻思能行」：**Lancet-2 进驻在发电站**。
+
+    ⚠️ 条件是**Lancet-2 在发电站**（不是"森蚺在发电站"）—— 森蚺自己的位置由
+    `FacilityCountMod.facility` 判定（必须进驻控制中枢），两者缺一不可。
+    """
+    for f in ctx.world.facilities:
+        if f.ftype is FacilityType.POWER and any(o.name == "Lancet-2" for o in f.operators):
+            return True
+    return False
+
+
+def _cond_no_platform_in_other_power(ctx) -> bool:
+    """承曦格雷伊「晨曦」：**其他**发电站内没有进驻「作业平台」（`cc.tag.op`）。
+
+    上游原文「如果其他发电站内没有进驻作业平台」——"其他"＝除她自己所在那间以外的
+    所有发电站；作业平台＝1★ 机器人那一类标签（Lancet-2 / Castle-3 / THRM-EX /
+    正义骑士号 / Friston-3 / PhonoR-0 / CONFESS-47 / GALLUS²，见 `data/factions.txt`）。
+    """
+    for f in ctx.world.facilities:
+        if f.ftype is not FacilityType.POWER or f is ctx.facility:
+            continue
+        for o in f.operators:
+            if "作业平台" in _factions_of(o):
+                return False
+    return True
+
+
 #: 生成器按名字挂条件时用的名单（`scripts/generate_skills_data.py` 的 `CLAUSE_COND`/`COOP_COND`）。
 CONDITION_NAMES = (
     "_cond_mood_below_18",
@@ -241,4 +276,6 @@ __all__ = [
     "_cond_target_in_faction",
     "_cond_target_is",
     "_cond_self_full_mood",
+    "_cond_lancet2_in_power",
+    "_cond_no_platform_in_other_power",
 ]

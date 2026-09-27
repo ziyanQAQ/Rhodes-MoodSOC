@@ -58,7 +58,7 @@ BASIS_DOC = {
     "recruit_slot": "每个招募位（= 人力办公室等级）",
     "sui_non_dorm": "每个进驻在宿舍/活动室以外设施的「岁」干员（上限 5）",
     # —— 以下用于**心情子句**的"可数条件"（P4a）——
-    "power_count": "每有 1 间发电站",
+    "power_count": "每有 1 间发电站（**有效间数**：含森蚺「我寻思能行」+2 / 承曦格雷伊「晨曦」+1）",
     "dorm_level": "当前宿舍每级",
     "dorm_unfull": "该宿舍每有 1 名心情未满干员",
     "dorm_others": "该宿舍内每有 1 名其他干员",
@@ -164,7 +164,9 @@ def basis_count(world, basis: str, facility=None, op=None) -> Decimal:
         return Decimal(_count_in_facilities(world, "深海猎人"))
     # —— 以下需要目标设施 / 目标干员 ——
     if basis == "power_count":
-        return Decimal(world.count_of_type(FacilityType.POWER))
+        # 「仅影响设施数量」类效果（森蚺 +2 / 晨曦 +1）在这里生效，见 mood_soc/facility_count.py
+        from .facility_count import effective_count
+        return effective_count(world, FacilityType.POWER)
     if basis == "dorm_level":
         return Decimal(facility.level if facility is not None else 0)
     if basis == "dorm_unfull":

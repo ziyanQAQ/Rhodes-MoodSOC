@@ -85,6 +85,10 @@ def _scaled_amount(skill, variables=None, world=None, facility=None, op=None):
         n = basis_count(world, basis, facility, op)
         value = value * n
         detail += f"（{BASIS_DOC.get(basis, basis)} × {n}）"
+        if basis == "power_count":
+            # 「仅影响设施数量」的两条修正（森蚺 / 晨曦）：让人一眼看出 4 间是怎么来的
+            from .facility_count import explain as _explain_power
+            detail += _explain_power(world, FacilityType.POWER)
     return ok, value, detail
 
 

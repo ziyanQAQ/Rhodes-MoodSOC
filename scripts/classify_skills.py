@@ -85,6 +85,14 @@ NO_HOURLY_MOOD_REASON = {
     "PRIVATE": "活动室不纳入基建心情模型（上游：不视作入住在基建内）",
 }
 
+#: 「**仅影响设施数量**」类 buff —— 它们没有心情子句，所以不进 `moods_skills.txt`；
+#: 但**已经建模**了：改的是计数基准 `power_count` 数出来的间数（见 `data/facility_count.py`
+#: 与 `mood_soc/facility_count.py`）。台账里必须写清，别让它落回"非心情，登记不建模"。
+FACILITY_COUNT_MOD_NOTES = {
+    "control_pow_bot": "设施数量修正：发电站 +2（森蚺「我寻思能行」；条件 Lancet-2 进驻在发电站）",
+    "power_count": "设施数量修正：发电站 +1（承曦格雷伊「晨曦」；条件其他发电站内没有进驻作业平台）",
+}
+
 # ---------------------------------------------------------------------------
 # 口径修正：用户已拍板的判定，作用在**源数据**上（可复现、可审计）
 # ---------------------------------------------------------------------------
@@ -307,7 +315,9 @@ def build_registry(buffs: dict, owners: dict, modeled_ids: dict[str, str]) -> li
                            f"clause 级已建模；持有 {len(owners.get(bid, []))} 人"])
         else:
             tpl, tier = classify_buff(desc, room)
-            if tpl == "M17":
+            if nid in FACILITY_COUNT_MOD_NOTES:
+                note = FACILITY_COUNT_MOD_NOTES[nid] + "；只影响计数基准 power_count"
+            elif tpl == "M17":
                 note = "元修正技能（改他人的恢复效果），需专门机制，登记不建模"
             elif room in NO_HOURLY_MOOD_REASON:
                 note = NO_HOURLY_MOOD_REASON[room]

@@ -64,7 +64,7 @@ control_mp_cost_reset[000],互为半身,CONTROL,A2,M13,yes,clause 级已建模�
 control_mp_expand_double[000],巴别塔之帜,CONTROL,A1,M02b,yes,clause 级已建模；持有 1 人
 control_mp_lonely[000],公事公办,CONTROL,A1,M02c,yes,clause 级已建模；持有 1 人
 control_mp_psk[000],红松的骑士,CONTROL,A4,X01,no,非心情，登记不建模
-control_pow_bot[000],我寻思能行,CONTROL,A4,X10,no,非心情，登记不建模
+control_pow_bot[000],我寻思能行,CONTROL,A4,X10,no,设施数量修正：发电站 +2（森蚺「我寻思能行」；条件 Lancet-2 进驻在发电站）；只影响计数基准 power_count
 control_prod_bd_spd[000],丰富工作经验,CONTROL,A4,X09,no,非心情，登记不建模
 control_prod_bd_spd[010],丰富工作经验,CONTROL,A4,X09,no,非心情，登记不建模
 control_prod_fraction[000],烛骑士微光,CONTROL,A4,X01,no,非心情，登记不建模
@@ -406,7 +406,7 @@ meet_team[020],皇家探员（自称）,MEETING,A4,X05,no,非心情，登记不�
 meet_team[050],秘密搜查,MEETING,A4,X05,no,非心情，登记不建模
 meet_team[060],通讯员,MEETING,A4,X05,no,非心情，登记不建模
 meet_team[070],风声,MEETING,A4,X05,no,非心情，登记不建模
-power_count[000],晨曦,POWER,A4,X04,no,非心情，登记不建模
+power_count[000],晨曦,POWER,A4,X04,no,设施数量修正：发电站 +1（承曦格雷伊「晨曦」；条件其他发电站内没有进驻作业平台）；只影响计数基准 power_count
 power_prod_spd_P[000],“滴滴，启动！”,POWER,A4,X04,no,非心情，登记不建模
 power_rec_drone[000],巡线框架,POWER,A4,X04,no,非心情，登记不建模
 power_rec_rhine[000],生态科主任,POWER,A4,X04,no,非心情，登记不建模
