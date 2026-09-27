@@ -69,6 +69,10 @@ PLAY_SPEED_HINTS = {
 }
 PLAY_TICK_MS = 60
 
+#: 关窗口时等待"在算的重算工作线程"的上限（秒）。见 `MoodSocApp.destroy()`：
+#: 有界 join 是为了让线程不可能在本窗口销毁之后还把 Tk 对象在非主线程里回收。
+RECALC_JOIN_TIMEOUT = 5.0
+
 
 class _ViewVar:
     """**ViewVar** —— 长得像 `tk.BooleanVar` 的轻量视图（没有 .get(_var) 的重载）。"""
@@ -131,6 +135,7 @@ class MoodSocApp(tk.Tk):
         self._recalc_gen = 0              # 请求代数：只有"最新那一代"的结果会被采用
         self._recalc_done_gen = 0         # 已经落地的最新一代
         self._recalc_thread = None
+        self._recalc_threads: list = []    # 还活着的工作线程（`destroy()` 会逐个有界 join）
         self._recalc_q: "queue.Queue" = queue.Queue()
         self._recalc_fit = False          # 这一轮要不要把滑块拉回起点
         self._recalc_ready = None         # 算好但还没落地的结果（等面板防抖窗口过去）
@@ -667,6 +672,11 @@ class MoodSocApp(tk.Tk):
         self._recalc_fit = False
         self.status.configure(text=f"计算中…（周期数 {self.cycles}）")
         self.update_idletasks()
+        # ⚠️ 所有跨线程要用的东西都在**启动前**取成局部量：工作线程里**一次都不碰 `self`**
+        #    （`self` 是 Tk 控件）。线程里哪怕只是"读一下 app 的属性"，都可能让 Tk 对象
+        #    在错误线程里被回收 —— 那是 `Tcl_AsyncDelete: async handler deleted by the
+        #    wrong thread` 那个**直接崩进程**的病根之一（见 `destroy()` 的注释）。
+        queue_ = self._recalc_q
 
         def _work():
             # ⚠️ 工作线程里**临时关掉 gc**：Tk 的 `Variable.__del__` 只能在主线程跑，
@@ -682,10 +692,15 @@ class MoodSocApp(tk.Tk):
             finally:
                 if gc_was:
                     gc.enable()
-            self._recalc_q.put((gen, fit, sigs, traj))
+            queue_.put((gen, fit, sigs, traj))
 
-        self._recalc_thread = threading.Thread(target=_work, name="dsh-recalc", daemon=True)
-        self._recalc_thread.start()
+        thread = threading.Thread(target=_work, name="dsh-recalc", daemon=True)
+        self._recalc_thread = thread
+        # 登记所有"还活着的工作线程"：`load_paths` 会摘掉 `_recalc_thread`（好让下一次编辑
+        # 起新线程），但**旧的还在跑** —— 关窗口时必须把它们一起收干净，见 `destroy()`。
+        self._recalc_threads = [t for t in self._recalc_threads if t.is_alive()]
+        self._recalc_threads.append(thread)
+        thread.start()
         if self._recalc_poll_job is None:
             self._recalc_poll_job = self.after(30, self._poll_recalc)
 
@@ -1655,6 +1670,20 @@ class MoodSocApp(tk.Tk):
         # 在算的那次异步重算：把代数推高 ⇒ 结果回来时会被判为过期、不碰已销毁的控件
         self._recalc_gen += 1
         self._recalc_thread = None
+        # ⚠️ **还要把工作线程 join 干净**（有界等待）：`_work()` 里虽然已不碰 `self`，但只要
+        #    还有线程活着，它的分配就可能触发 GC、在**非主线程**里回收已销毁窗口的 Tk 对象
+        #    ⇒ `Variable.__del__` 报 "main thread is not in main loop"，严重时 Tcl 的 async
+        #    handler 被错误线程删掉，直接 `Tcl_AsyncDelete` **崩掉进程**（实测：全量测试合并跑
+        #    三次崩两次，把 Tk 用例单独跑就稳；真实场景＝"重算过程中关窗口"）。
+        #    窗口正在销毁，这里等一会儿是值得的；超时也不阻塞太久（线程是 daemon）。
+        threads, self._recalc_threads = self._recalc_threads, []
+        for thread in threads:
+            if not thread.is_alive():
+                continue
+            try:
+                thread.join(timeout=RECALC_JOIN_TIMEOUT)
+            except Exception:                  # noqa: BLE001 —— 收尾阶段不许再抛
+                pass
         super().destroy()
 
 
