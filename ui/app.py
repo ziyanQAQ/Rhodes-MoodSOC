@@ -585,6 +585,13 @@ class MoodSocApp(tk.Tk):
             except tk.TclError:
                 pass
             self._recalc_poll_job = None
+        # ⚠️ 还要**摘掉旧工作线程的引用**：`recompute_async` 是看"线程还活着"决定要不要起新的
+        #    （"算完自己接着跑最新一代"由**轮询任务**负责），而轮询上面刚被取消 —— 两者一起看就
+        #    会出现死结：换排班时旧线程还没算完 ⇒ 紧跟的那次编辑只会把代数推高、**不起新线程**，
+        #    而唯一会接着跑新一代的轮询已经不在了 ⇒ 那一代**永远不落地**（表现：界面卡在
+        #    「计算中…」、曲线还是换排班前那条；实测 `wait_recalc` 只能靠 120s 超时放过）。
+        #    摘掉引用后新旧线程互不干扰：旧线程的结果本来就会因**代数过期**被丢弃。
+        self._recalc_thread = None
         # 装配（解析 → 排班 → 池/变量初始值/导入报告 → 同步 JSON 里的设置）**全在 Session 里**：
         # `load_paths` 读完文件会顺手把 `entry_events` / `idle_to_dorm` / `initial_global`
         # 同步成会话设置，界面只负责把它们画出来。

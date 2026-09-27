@@ -116,7 +116,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（当前 481 个全绿），
+11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（本机当前 466 个全绿），
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /
@@ -290,7 +290,7 @@ documents/
     **快照与 `world` 的成员+心情绑定** ⇒ 只在"同一个世界快照、连续算一批人"时共享，
     世界一变（换人/改心情）必须重收。
     回归：`test_equivalence.Test变量快照共享`（① 共享快照 vs 逐人自收的速率逐位相同；
-    ② 把引擎猴子补丁回"每人各收一份"后**整条轨迹逐位相同**）＋ 全量 481 绿。
+    ② 把引擎猴子补丁回"每人各收一份"后**整条轨迹逐位相同**）＋ 全量 466 绿。
     渲染层不用管：`idle_groups` 6.8ms、`_build_shift_buttons` 5.4ms、`world_at` 0ms —— **瓶颈只在引擎**。
     详见 `documents/09-开发指南.md` 的性能基线表与 `documents/07-设计史.md` P9。
 24. **编辑走「异步重算」，而 `decimal` 上下文是线程局部的 —— 两者是一套，别拆开看**（2026-09，P5）：
@@ -313,6 +313,12 @@ documents/
     ⑤ `apply_batch` / `apply_entry_event` / 改房间等级这类"落地后要写状态栏"的，文案放
     `app._status_after_recalc`（由 `_settle_recalc` 盖上）；面板要按新轨迹重建的就用
     `app.add_recalc_listener(绑定方法)`（`weakref.WeakMethod`，**不能传 lambda**）。
+    ⑥ ⚠️ **换排班时必须连"旧工作线程的引用"一起摘掉**（`load_paths` 里 `self._recalc_thread = None`）：
+    `recompute_async` 靠"线程还活着"决定**起不起新线程**，而"算完接着跑最新一代"**只由轮询任务**负责 ——
+    换排班刚把轮询 `after_cancel` 掉，若旧线程还没算完，紧跟的那次编辑只会把代数推高、
+    **既不新起线程也没人轮询** ⇒ 那一代**永远不落地**（界面卡在「计算中…」、曲线还是换排班前那条；
+    实测 `wait_recalc` 只能靠 120s 超时放过，`Test界面冒烟` 里那条"换排班时旧线程不会卡住新结果"就是它）。
+    旧线程的结果本来就会因**代数过期**被丢弃，所以摘引用不丢任何正确结果。
 
 ---
 
