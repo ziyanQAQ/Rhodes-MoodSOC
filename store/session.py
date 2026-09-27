@@ -37,11 +37,11 @@ from data.skills_data import DEFAULT_OPERATORS
 from mood_soc.battery import to_decimal
 from mood_soc.config import MOOD_MAX, FacilityType
 from mood_soc.models import IdleToDormEntry, normalize_entry_when
-from mood_soc.rules import MIN_SHIFTS_FOR_IDLE, dorm_state, mood_skill_summary
+from mood_soc.rules import dorm_state, mood_skill_summary
 
 from .layout import build_base_layout
 from .schedule import (MoodSetEvent, LoadedSchedule, Schedule, Shift, Trajectory,
-                       default_initial_moods, load_schedule_ex,
+                       default_initial_moods, execution_points, load_schedule_ex,
                        load_schedule_from_imports, simulate_schedule)
 
 ZERO = Decimal("0")
@@ -285,10 +285,13 @@ class Session:
     def _segment_signatures(self, cycles: int) -> list:
         """**逐段输入指纹**（P6b）：只要前 k 段的指纹与上一份轨迹一致，那 k 段就能复用。
 
-        "一段的输入"＝ 全局设置 ＋ 这一班的布局/按班覆盖 ＋ 落在这一段里的心情锚点
-        ＋ 这一格（周期×班次）的闲置入宿逐次设置。改哪一类，切点就落在第一个受影响段：
+        "一段"＝一个**换班执行点**（班初或长班的内部换班点，见 `schedule.execution_points`）。
+        "一段的输入"＝ 全局设置 ＋ 这一班的布局/按班覆盖 ＋ **这一格（周期×班次）**的闲置入宿
+        逐次设置 ＋ 落在这一段里的心情锚点。改哪一类，切点就落在第一个受影响段：
         布局/练度/房间等级 ⇒ 那一班在**第 1 周期**的出现处；末周期的锚点/逐次设置 ⇒ 那一段；
         全局设置（初始心情/总开关/名单/时间轴）⇒ 第 0 段（整条重算）。
+        ⚠️ 同一班的多个执行点共用同一份逐人设置（文档 §8/§14）⇒ 指纹里的 `cells` 那项**相同**，
+        只有心情锚点按各自时刻归属。
         """
         sch = self.schedule
         n = len(sch.shifts)
@@ -314,20 +317,25 @@ class Session:
         cells: Dict[tuple, list] = {}
         for (cyc, shf, name), val in self.idle_entries.items():
             cells.setdefault((cyc, shf), []).append((name, repr(val)))
+        points = execution_points(sch, cycles)
+        # 心情锚点落到**它所在的那个执行点段**上（按绝对时刻二分，不做下标算术 ——
+        # 执行点的个数随班长/周期数变化，算术很容易错位）。
         ev_by_seg: Dict[int, list] = {}
         for ev in self.mood_events:
             cyc = int(getattr(ev, "cycle", 1) or 1)
             if cyc < 1 or cyc > cycles:
                 continue
             at = to_decimal(ev.t) + sch.cycle_hours * (cyc - 1)
-            seg = int(at // sch.cycle_hours) * n + sch.index_at(at)
-            ev_by_seg.setdefault(seg, []).append(repr(ev))
+            idx = next((j for j, (t0, seg_end, *_rest) in enumerate(points)
+                        if t0 <= at < seg_end), None)
+            if idx is None:
+                continue
+            ev_by_seg.setdefault(idx, []).append(repr(ev))
         sigs = []
-        for k in range(cycles):
-            for i in range(n):
-                sigs.append((glob, per_shift[i],
-                             tuple(sorted(cells.get((k + 1, i + 1), ()))),
-                             tuple(sorted(ev_by_seg.get(k * n + i, ())))))
+        for j, (_t0, _seg_end, i, cyc, _offset) in enumerate(points):
+            sigs.append((glob, per_shift[i],
+                         tuple(sorted(cells.get((cyc, i + 1), ()))),
+                         tuple(sorted(ev_by_seg.get(j, ())))))
         return sigs
 
     def recompute_inputs(self) -> Optional[dict]:
@@ -1042,16 +1050,21 @@ class Session:
 
     def idle_groups(self, cycles: Optional[int] = None,
                     entries: Optional[dict] = None) -> List[tuple]:
-        """按时间排序的**逐次入宿表** → `[(标题, (周期, 班次), [行, ...]), ...]`。
+        """按时间排序的**逐次入宿表** → `[(标题, (周期, 班次), [行, ...], 起点, 终点), ...]`。
 
         `行 = (干员, 心情显示值, 位置, 参与, 目标, [可选目标…])`。
         只列出**真的有候选**的那几次（心情跨班跨周期连续 ⇒ 每次谁没满都不一样）。
         `cycles` 同样夹到 `1 ~ MAX_CYCLES`（与 `set_cycles` 一个口径）。
 
+        **一个换班执行点一组**（文档 §3/§14）：真实班初一组，长班的每个内部换班点各一组
+        （标题写成 `第 1 周期 · 第 2 班（12h 内部换班）`）；`起点`/`终点` 是绝对小时，
+        界面据它渲染时钟区间。⚠️ **同班各执行点共用同一份逐人设置** —— 组里的
+        `(周期, 班次, 干员)` 键是同一个，所以面板改任一组会同步影响同班其他执行点。
+
         **候选口径与引擎同一份**（文档 §7，`rules.apply_idle_to_dorm`）：该班
         **完全没有出现在任何设施**里、心情 < 24、且不在**黑名单**里的人；
         行序＝(心情↑, 名字↑) —— 候选是**依次**处理的，所以表里的行序就是引擎的安排顺序。
-        ⚠️ 班初在加工站 / 训练室的人、副手、所有上班与在宿舍的人**都不是候选**（不变式 6），
+        ⚠️ 班初在加工站 / 训练室的人、副手、所有上班与在宿舍的人**都不是候选**，
         所以表里不再出现"挂件位"那些行。
 
         ⚠️ **「谁在宿舍 / 哪间有空位」按引擎那一刻的那份世界算**（AGENTS 坑 20）：
@@ -1060,54 +1073,56 @@ class Session:
         再退回排班快照。**不能**直接拿 `shift.world` 快照当"她那一刻的世界" ——
         候选是依次处理的，排前面的人会把宿舍里的人换出去，而快照里那位看着还在宿舍
         （用户报过"面板里列着清流、那一刻宿舍里并没有清流"）。
-
-        ⚠️ **不同班次数 < 3 时返回空表**（文档 §2：闲置入宿不生效，配置保留）。
         """
         cycles = min(MAX_CYCLES, max(1, int(cycles if cycles is not None else self.cycles)))
         entries = self.idle_entries if entries is None else entries
         traj = self.traj
         if self.schedule is None or traj is None:
             return []
-        if len(self.schedule.shifts) < MIN_SHIFTS_FOR_IDLE:
-            return []                            # 文档 §2：班次数不足 ⇒ 不生效
+        total = self.schedule.cycle_hours * cycles
         bench = set(self.bench_names())          # 「不在基建」的人（含名单点名的）
         blocked = set(self.idle_blacklist)       # 黑名单：不进候选、也不出现在这张表里
         groups = []
-        for k in range(max(1, cycles)):
-            for i, shift in enumerate(self.schedule.shifts):
-                t0 = self.schedule.cycle_hours * k + self.schedule.starts[i]
-                mood_of = traj.moods_at(t0)
-                # 兜底那份宿舍态：整份段世界（引擎那份）→ 排班快照
-                base_state = dorm_state(traj.world_at(t0) or shift.world)
-                cands = []                       # [(心情, 名字, 位置)]
-                for name in traj.names:
-                    if name in blocked:
-                        continue                 # 黑名单：不进初始候选
-                    if shift.world.facility_of(name) is not None:
-                        continue                 # 该班出现在任何设施里 ⇒ 不是候选（文档 §7-4）
-                    mood = mood_of[name]
-                    if mood >= MOOD_MAX:
-                        continue                 # 心情满 24，不需要恢复
-                    where = "不在基建" if name in bench else "未排班"
-                    cands.append((mood, name, where))
-                if not cands:
-                    continue
-                # 与引擎同一口径：① 心情从低到高 ② 名字（排序稳定）。候选依次处理 ⇒ 行序＝安排顺序。
-                cands.sort(key=lambda row: (row[0], row[1]))
-                rows = []
-                for mood, name, where in cands:
-                    # 这一行的可选目标＝**轮到她的那一刻**宿舍里的人和空位（引擎那份世界）
-                    state = traj.idle_state_at(t0, name) or base_state
-                    opts = self._idle_options(state, name, mood_of, traj, t0)
-                    use, target = entries.get((k + 1, i + 1, name)) \
-                        or self.idle_globals.get(name) or (True, None)
-                    rows.append((name, mood, where, use, target, opts))
-                groups.append((f"第 {k + 1} 周期 · 第 {i + 1} 班", (k + 1, i + 1), rows))
+        for (t0, seg_end, i, cyc, offset) in execution_points(self.schedule, cycles):
+            if t0 >= total:
+                break
+            shift = self.schedule.shifts[i]
+            end = min(seg_end, total)
+            mood_of = traj.moods_at(t0)
+            # 兜底那份宿舍态：整份段世界（引擎那份）→ 排班快照
+            base_state = dorm_state(traj.world_at(t0) or shift.world)
+            cands = []                       # [(心情, 名字, 位置)]
+            for name in traj.names:
+                if name in blocked:
+                    continue                 # 黑名单：不进初始候选
+                if shift.world.facility_of(name) is not None:
+                    continue                 # 该班出现在任何设施里 ⇒ 不是候选（文档 §7-3）
+                mood = mood_of[name]
+                if mood >= MOOD_MAX:
+                    continue                 # 心情满 24，不需要恢复
+                where = "不在基建" if name in bench else "未排班"
+                cands.append((mood, name, where))
+            if not cands:
+                continue
+            # 与引擎同一口径：① 心情从低到高 ② 名字（排序稳定）。候选依次处理 ⇒ 行序＝安排顺序。
+            cands.sort(key=lambda row: (row[0], row[1]))
+            rows = []
+            for mood, name, where in cands:
+                # 这一行的可选目标＝**轮到她的那一刻**宿舍里的人和空位（引擎那份世界）
+                state = traj.idle_state_at(t0, name) or base_state
+                opts = self._idle_options(state, name, mood_of, traj, t0)
+                use, target = entries.get((cyc, i + 1, name)) \
+                    or self.idle_globals.get(name) or (True, None)
+                rows.append((name, mood, where, use, target, opts))
+            title = f"第 {cyc} 周期 · 第 {i + 1} 班"
+            if offset > 0:
+                title += f"（{format(offset.normalize(), 'f')}h 内部换班）"
+            groups.append((title, (cyc, i + 1), rows, t0, end))
         return groups
 
     def idle_count(self) -> int:
-        """当前设置下会有多少次"有人入宿"、共涉及多少人。"""
-        return sum(len([r for r in rows if r[3]]) for _t, _s, rows in self.idle_groups())
+        """当前设置下会有多少次"有人入宿"、共涉及多少人（**按换班执行点**计）。"""
+        return sum(len([r for r in group[2] if r[3]]) for group in self.idle_groups())
 
     def entry_candidates(self) -> Tuple[List[str], List[str]]:
         """返回 `(触发者名单, 可交换对象名单)`。

@@ -20,7 +20,6 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from mood_soc.battery import to_decimal
 from mood_soc.models import normalize_entry_when
-from mood_soc.rules import MIN_SHIFTS_FOR_IDLE
 
 from store import serialize
 from store.session import Session
@@ -454,7 +453,7 @@ def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
 
     口径＝用户文档《闲置入宿完整逻辑》（见 `mood_soc.rules.apply_idle_to_dorm`）：
     有连续空位就直接住进去，全满了才换出**锁定区之外心情最高**的那位（要求严格大于候选）；
-    ⚠️ **不同班次数 < 3 时完全不生效**（设置照旧保留）。
+    ⚠️ **不设班次数量门槛**（第二版 §2：1 个班次也执行）。
 
     - `enabled`：总开关；
     - `protected_slots`：**锁定位置数**（文档 §5，默认 5）：按竖向正序（位次优先、宿舍序号其次）
@@ -513,33 +512,41 @@ def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
             "blacklist": list(session.idle_blacklist),
             "effective": _idle_effective(session),
             "count": session.idle_count() if session.idle_to_dorm else 0,
-            "groups": [{"title": title, "scope": list(scope),
-                        "rows": [{"name": n, "mood": _num(m), "where": w,
-                                  "use": u, "target": tg, "options": opts}
-                                 for n, m, w, u, tg, opts in rows]}
-                       for title, scope, rows in session.idle_groups()]}
+            "groups": [_idle_group_dict(g) for g in session.idle_groups()]}
 
 
 def _idle_effective(session: Session) -> bool:
-    """闲置入宿此刻**真的会不会生效**（文档 §2：不同班次数 ≥ 3 才会生效）。"""
-    if not session.idle_to_dorm or session.schedule is None:
-        return False
-    return len(session.schedule.shifts) >= MIN_SHIFTS_FOR_IDLE
+    """闲置入宿此刻**真的会不会生效**。
+
+    ⚠️ 文档《闲置入宿完整逻辑》第二版**取消了"至少 3 个班次"的门槛**（1 个班次也执行），
+    所以现在它就等于总开关；保留这个字段只是让调用方少判一次 `enabled`。
+    """
+    return bool(session.idle_to_dorm and session.schedule is not None)
+
+
+def _idle_group_dict(group: tuple) -> dict:
+    """一组逐次表 → API 的 JSON（含**换班执行点**的标题/起止时刻，供调用方渲染）。"""
+    title, scope, rows, t0, t1 = group
+    return {"title": title, "scope": list(scope),
+            "start": _num(t0), "end": _num(t1),
+            "rows": [{"name": n, "mood": _num(m), "where": w,
+                      "use": u, "target": tg, "options": opts}
+                     for n, m, w, u, tg, opts in rows]}
 
 
 def op_idle_to_dorm_groups(session: Session, args: dict) -> dict:
-    """只读：当前设置下的逐次入宿表（带候选与可选目标），供调用方做交互。"""
+    """只读：当前设置下的逐次入宿表（带候选与可选目标），供调用方做交互。
+
+    ⚠️ **一个换班执行点一组**（班初 + 长班的每个内部换班点）；同班各执行点**共用一份**
+    逐人设置（组里的 `scope` 相同 = `[周期, 班次]`），所以改一组会影响同班其他组。
+    """
     _require_session(session)
     groups = session.idle_groups(cycles=args.get("cycles"))
     return {"enabled": session.idle_to_dorm,
             "protected_slots": int(session.idle_protected_slots),
             "blacklist": list(session.idle_blacklist),
             "effective": _idle_effective(session),
-            "groups": [{"title": title, "scope": list(scope),
-                        "rows": [{"name": n, "mood": _num(m), "where": w,
-                                  "use": u, "target": tg, "options": opts}
-                                 for n, m, w, u, tg, opts in rows]}
-                       for title, scope, rows in groups]}
+            "groups": [_idle_group_dict(g) for g in groups]}
 
 
 def op_entry_candidates(session: Session, args: dict) -> dict:

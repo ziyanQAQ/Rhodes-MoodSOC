@@ -871,9 +871,10 @@ def reset_entry_events(world: BaseLayout) -> int:
 # ----------------------------------------------------------------------------
 # 「闲置入宿」（按用户文档《闲置入宿完整逻辑》重写，2026-09）
 #
-# 一句话：**每班开始时**，把"这一班完全没有出现在任何设施里、心情还没满"的干员安排进宿舍；
-# 有连续空位就直接住进去，全满了就与宿舍里心情更高的人互换。位置每班从**原始排班**重建，
-# 心情跨班、跨周期连续。
+# 一句话：**每个换班执行点**（每个真实班次的班初 ＋ 长班的内部换班点，见
+# `store.schedule.execution_points`），把"这一班完全没有出现在任何设施里、心情还没满"的干员
+# 安排进宿舍；有连续空位就直接住进去，全满了就与宿舍里心情更高的人互换。
+# 位置每个执行点都从**原始排班**重建，心情跨执行点、跨班、跨周期连续。
 #
 # 处理顺序（文档 §9）：手动指定位置 → 手动点名交换 → 竖向正序找空位 → 自动最高心情交换。
 #
@@ -891,9 +892,9 @@ def reset_entry_events(world: BaseLayout) -> int:
 # ⚠️ 第一版里的"四级优先级 / 挂件门 `_is_pendant` / 阵营门 `_faction_protected` /
 #    "优先 4 最后 1" / "只看第 2~5 位" / "必须满 24" / 菲亚梅塔例外 / 自回型门"
 #    已按文档**全部取消**：自动交换只看"锁定区之外、心情最高、且严格大于候选"。
+# ⚠️ **不设班次数量门槛**（文档 §2 第二版）：1 个班次的排班照样执行
+#    （第一版那套"少于 3 班不执行"已取消）。
 # ----------------------------------------------------------------------------
-#: 生效门槛（文档 §2）：排班里**不同的班次数**少于这个数 ⇒ 完全不执行（配置全部保留）。
-MIN_SHIFTS_FOR_IDLE = 3
 #: 锁定位置数默认值（文档 §5）。
 DEFAULT_PROTECTED_SLOTS = 5
 
@@ -1018,19 +1019,18 @@ def _named_target(world: BaseLayout, name: str):
     return None, None, None
 
 
-def apply_idle_to_dorm(world: BaseLayout, shift_count: int, *, enabled=None,
+def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
                        idle=None, only=None, swap_with=None, scope=None,
                        trace: Optional[dict] = None) -> List[Contribution]:
-    """**把"未满心情的闲置干员"安排进宿舍**（班次开始时的布局事件；就地修改 `world`）。
+    """**把"未满心情的闲置干员"安排进宿舍**（换班执行点上的布局事件；就地修改 `world`）。
 
     口径＝用户文档《闲置入宿完整逻辑》。与 `apply_entry_events` 同一层：它改的是**布局**
     （谁在哪个房间），不是每小时速率，所以同样不进 `consume_ledger` / `recovery_ledger`，
-    由调用方在"班次开始"显式结算（`store.schedule.simulate_schedule` / 界面开关 / CLI）。
+    由调用方在**每个换班执行点**显式结算 —— `store.schedule.simulate_schedule` 会为
+    「每个真实班次的班初 ＋ 长班的每个内部换班点」（`store.schedule.execution_points`）各调一次；
+    界面开关 / CLI 同样走这条。
 
-    ⚠️ **`shift_count` 必给**（"引擎强制"，文档 §2）：排班里**不同班次的数量** <
-    `MIN_SHIFTS_FOR_IDLE`(3) ⇒ **直接返回、一个字节都不改**（总开关 / 锁定位置数 / 黑名单 /
-    逐人设置全部保留，等排班变成 ≥3 班时自动生效）。调用方：
-    `store.schedule.simulate_schedule` 传 `len(schedule.shifts)`；单布局 CLI 传 1（＝不执行）。
+    ⚠️ **不设班次数量门槛**（文档 §2 第二版）：1 个班次的排班照样执行。
 
     每名候选出队后的处理顺序（文档 §9；**手动永远高于自动**）：
 
@@ -1048,14 +1048,16 @@ def apply_idle_to_dorm(world: BaseLayout, shift_count: int, *, enabled=None,
     - **初始候选**（文档 §7/§8）：`idle` 传进来的"这一班**完全没有出现在任何设施**里的人"
       （未排班 /「不在基建」名单），心情 < 24，不在黑名单。排序键＝(心情↑, 名字↑)，
       **先进先出**依次处理 ⇒ 排前面的先拿到空位、先挑换人对象。
-      ⚠️ 因此**加工站 / 训练室的入驻者、副手、所有上班与在宿舍的人都不是候选**（不变式 6）。
+      ⚠️ 因此**加工站 / 训练室的入驻者、副手、所有上班与在宿舍的人都不是候选**。
     - **终止性**（文档 §8.1）：每次成功交换都用**更低心情者替换更高心情者** ⇒ 宿舍内心情
       总和严格下降；再加上"同名不重复入队 / 失败不入队 / 位置与人有限"，处理必然结束。
+    - **同一周期、同一班次的所有执行点共用一份逐人配置**（文档 §8/§14）：配置按
+      `(周期, 班次)` 取，内部换班点**不带**自己的序号 —— 所以调用方给同一个 `scope` 即可
+      （`store.schedule` 就是这么做的）。
     - ⚠️ **旧口径已取消**：挂件判据、阵营门、"优先 4 最后 1"、"只看第 2~5 位"、"必须满 24"、
       菲亚梅塔例外、自回型门、`swapped_out` 永久排除都没了；被换出者可以**再次**被处理。
 
     参数：
-        shift_count  排班的**班次数**（文档 §2 的门槛；< 3 ⇒ 不执行）
         enabled      三态；`None` = 用 `world.idle_to_dorm.enabled`（**没配置也按开**），
                      显式 `False` 才不结算
         idle         本班**没排进布局**的干员 → 心情：`{名字: 心情}`；给了才把他们当候选
@@ -1075,8 +1077,6 @@ def apply_idle_to_dorm(world: BaseLayout, shift_count: int, *, enabled=None,
         enabled = True if configured is None else bool(configured)
     if not enabled:
         return []
-    if int(shift_count) < MIN_SHIFTS_FOR_IDLE:
-        return []                          # 文档 §2：班次数不足 ⇒ 完全不执行
 
     from .scenario import build_operator      # 局部导入：避免模块级循环依赖
 

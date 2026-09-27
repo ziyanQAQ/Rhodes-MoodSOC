@@ -889,6 +889,61 @@ def _fmt_value(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
+# ============================================================================
+# 换班执行点（文档《闲置入宿完整逻辑》§2/§3）
+#
+# 一个**真实班次**不止"班初"一个执行点：班长 > 12h 时，班内每个**严格小于班末**的 12h
+# 整数倍都是一个**内部换班执行点**（那里的位置从该班原始布局重建、进驻事件与闲置入宿重跑）。
+# 口径只有这一处，`simulate_schedule` 切段、`Session` 的逐段指纹与「闲置入宿」逐次表都读它。
+# ============================================================================
+#: 内部换班的间隔（小时）—— 文档 §2 写死 12h。
+INTERNAL_SWAP_HOURS = Decimal("12")
+
+
+def execution_offsets(shift_hours) -> List[Decimal]:
+    """一个班次的**换班执行点**相对班初的偏移（小时）→ `[0, 12, 24, …]`（文档 §2）。
+
+    ```
+    12h 班次：[0]               （12 不严格小于 12 ⇒ 没有内部换班）
+    18h 班次：[0, 12]
+    24h 班次：[0, 12]           （第 24h 是班末，不重复执行）
+    25h 班次：[0, 12, 24]
+    36h 班次：[0, 12, 24]       （第 36h 是班末）
+    ```
+
+    每个周期再次运行同一个长班时，都**重新按该班时长**生成（纯函数，无需缓存）。
+    """
+    hours = to_decimal(shift_hours)
+    out: List[Decimal] = [ZERO]
+    offset = INTERNAL_SWAP_HOURS
+    while offset < hours:
+        out.append(offset)
+        offset = offset + INTERNAL_SWAP_HOURS
+    return out
+
+
+def execution_points(schedule: Schedule, cycles: int = 1) -> List[Tuple[Decimal, Decimal, int, int, Decimal]]:
+    """整条时间轴的**换班执行点** → `[(起点, 段止, 班次下标 0 基, 周期序号 1 基, 班内偏移), …]`。
+
+    - `起点`/`段止` 是**绝对小时**（段止 = 下一个执行点，或周期末尾由调用方截断）；
+    - **内部换班不增加班次数**：`班次下标`/`周期序号` 与"真实班次"完全一致（文档不变式 4），
+      所以逐人配置（按 `(周期, 班次)` 取）在同班的各执行点之间**天然共用**（不变式 9）；
+    - 最后一个执行点的 `段止` 允许越过 `cycles × cycle_hours`（截断由调用方做）。
+    """
+    if cycles < 1:
+        raise ValueError("cycles 至少为 1")
+    points: List[Tuple[Decimal, Decimal, int, int, Decimal]] = []
+    for k in range(int(cycles)):
+        base = schedule.cycle_hours * k
+        for i, s in enumerate(schedule.shifts):
+            offsets = execution_offsets(s.hours)
+            for j, offset in enumerate(offsets):
+                t0 = base + schedule.starts[i] + offset
+                nxt = offsets[j + 1] if j + 1 < len(offsets) else s.hours
+                points.append((t0, base + schedule.starts[i] + nxt, i, k + 1, offset))
+    return points
+
+
 def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       initial_moods: Optional[Dict[str, Decimal]] = None,
                       entry_events: bool = False,
@@ -926,14 +981,14 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         entry_per_shift  **按班次覆盖**（`[EntryShiftOverride, ...]`）——
                        3 班排班就可以"第 1 班换给巫恋、第 2 班自动挑最累的、第 3 班不用"；
                        `None` = 用场景 JSON 里的 `per_shift`
-        idle_to_dorm  **闲置入宿**：每班开始时把"这一班完全没有出现在任何设施里、心情还没满"
-                       的干员安排进宿舍（有连续空位就直接住进去，全满了才与宿舍里心情更高的
-                       那位互换）。口径＝用户文档《闲置入宿完整逻辑》，见
+        idle_to_dorm  **闲置入宿**：每个**换班执行点**（每个真实班次的班初 ＋ 长班的每个内部
+                       换班点）把"这一班完全没有出现在任何设施里、心情还没满"的干员安排进宿舍
+                       （有连续空位就直接住进去，全满了才与宿舍里心情更高的那位互换）。
+                       口径＝用户文档《闲置入宿完整逻辑》，见
                        `mood_soc.rules.apply_idle_to_dorm`。
                        ⚠️ **默认 `True`（开）**（用户口径"闲置入宿默认是开启的"）；
                        要"完全不动布局"的旧口径就显式传 `False`。
-                       ⚠️ **文档 §2 的生效门槛**：排班的**不同班次数 < 3** ⇒ 引擎直接返回、
-                       布局一个字节都不改（设置全部保留）。
+                       ⚠️ **不设班次数量门槛**（第二版 §2）：单班排班照样执行。
         idle_entries  界面的逐人设置（`[IdleToDormEntry, ...]`，**只列改过默认的**：
                        不参与的人、手动指定位置的人、或点名了交换对象的人）。给了它就**盖过**
                        JSON 里的 `idle_to_dorm.per_operator`（界面口径优先）；`None` = 用 JSON。
@@ -957,13 +1012,17 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     另外他们**不参与任何技能计数**（计数读的是 `world.facilities` 里的进驻者），
     这条有测试钉死（`tests/test_equivalence.py::Test不在基建`）。
 
-    实现说明：**每一段（含每个周期的每一班）都从一份"未动过的计划副本"重建**当前布局
-    （`pristine` —— 见段循环里的说明）——这样 `entry_restore_back=False`（位置也互换）与
-    闲置入宿的换人**只在这一次生效**，既不污染排班本身、也不会跨周期继承；
-    同时把"这一班的有效配置"挂到副本上，`apply_entry_events` 直接读它。
+    实现说明：**每个换班执行点（每个真实班次的班初 ＋ 长班的每个内部换班点）都从一份
+    "未动过的计划副本"重建**当前布局（`pristine` —— 见段循环里的说明）——这样
+    `entry_restore_back=False`（位置也互换）与闲置入宿的换人**只在这一次生效**，
+    既不污染排班本身、也不会跨执行点/跨周期继承；同时把"这一班的有效配置"挂到副本上，
+    `apply_entry_events` 直接读它。
+    ⚠️ **长班的内部换班点**（`execution_offsets`：班内每个**严格小于班末**的 12h 整数倍）也算执行点：
+    那里照旧重建位置、重跑进驻事件与闲置入宿，并记一条 `internal` 标记（文档 §3/不变式 10）；
+    **它不增加班次数、不改 `shift_index`、也不给逐人配置新的序号**（同班各执行点共用一份）。
     ```
     ⚠️ **`continue_from`（P6a/P6b 增量）**：`(上一份轨迹, 它已经算完的**段数**)` —— 只算尾部。
-    段＝一个班次（`segments` 里的第几段，0 基），段边界就是班次边界（也是周期边界）。
+    段＝一个**换班执行点**（`segments` 里的第几段，0 基）；段边界是班初、内部换班点与周期边界。
       · 段数 < 总段数 ⇒ 从第 `已算完段数` 段继续算（前面全部复用）；
       · 段数 ≥ 总段数 ⇒ 等于"只截断"（一段都不算），用于"周期数调小"。
     调用方（`store.session.Session.recompute_inputs`）负责判断"能不能复用、从哪一段起"：
@@ -1045,16 +1104,14 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         mood_at_time.setdefault(at, {})[ev.name] = _clamp_mood(to_decimal(ev.mood))
     mood_times: List[Decimal] = sorted(mood_at_time)
 
-    # 覆盖 [0, total] 的班次段（跨周期重复）
-    segments: List[Tuple[Decimal, Decimal, int]] = []
-    t = ZERO
-    while t < total:
-        for i, s in enumerate(schedule.shifts):
-            if t >= total:
-                break
-            end = min(t + s.hours, total)
-            segments.append((t, end, i))
-            t = end
+    # 覆盖 [0, total] 的**换班执行点**段：每个真实班次的班初 + 长班的每个内部换班点（文档 §2）。
+    # 段元组＝(起点, 段止, 班次下标, 周期序号 1 基, 班内偏移)。内部换班**不增加班次数**，
+    # 班次下标与周期序号照旧指向那个真实班次 ⇒ 逐人配置在同班各执行点之间共用（不变式 4/9）。
+    segments: List[Tuple[Decimal, Decimal, int, int, Decimal]] = []
+    for (t0, nxt, idx, cyc, offset) in execution_points(schedule, cycles):
+        if t0 >= total:
+            break
+        segments.append((t0, min(nxt, total), idx, cyc, offset))
 
     # —— P6a/P6b：从"上一个轨迹的某一**段边界**"续算（累加器用前缀预填）——
     start_seg = 0
@@ -1090,9 +1147,13 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     marks = [Mark(schedule.starts[i], "shift", s.label)
              for i, s in enumerate(schedule.shifts)] + marks
 
-    for seg_i, (t0, seg_end, idx) in enumerate(segments):
+    for seg_i, (t0, seg_end, idx, cycle_no, offset) in enumerate(segments):
         if seg_i < start_seg:
             continue                        # P6a：这一段（含它的产物）由 `continue_from` 的前缀带着
+        # —— 内部换班标记（文档 §3/不变式 10）：**每个内部换班都显示**，哪怕这一次没有换人、
+        #    心情也没变（"可见事件标记"是口径的一部分，别只在有事发生时才记）。
+        if offset > 0:
+            marks.append(Mark(t0, "internal", f"第 {idx + 1} 班 · {_fmt_value(offset)}h 内部换班"))
         # ⚠️ **每段（含每个周期）都从"未动过的计划副本"重建**：布局改动只有两处 ——
         #    进驻事件的「位置也一起互换」（`restore_back=False`）与**闲置入宿的换人** ——
         #    它们都**就地改**这份副本；而同一个班次会被**跨班次、跨周期复用**，
@@ -1132,18 +1193,17 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         # —— 闲置入宿（可选）：把"这一班完全没出现在任何设施里、心情还没满"的干员安排进宿舍 ——
         # 顺序上**排在进驻事件之后**：换心情是"进驻那一刻"的游戏事件，闲置入宿是人工调度。
         # ⚠️ 本班未排班的干员不在 `world` 里（心情在 `moods` 字典里），所以要把他们的心情传进去。
-        # ⚠️ `shift_count` **必给**（"引擎强制"，文档 §2）：不同班次数 < 3 时引擎自己直接返回。
+        # ⚠️ **不设班次数量门槛**（文档 §2 第二版）：单班排班照样执行。
+        # ⚠️ `scope` 用**真实班次**的 (周期, 班次)，不是"第几段"——内部换班点与班初共用一份
+        #    逐人配置（文档 §8/§14、不变式 9）。
         if idle_to_dorm:
             _sync_moods(world, moods)
             idle_moods = {n: moods[n] for n in names if world.get_operator(n) is None}
-            # 这一刻是"第几周期的第几班"：逐人设置按它取最具体的那一条
-            # （心情跨班跨周期连续 ⇒ 每次的候选与可交换对象都不一样）
-            scope = (seg_i // len(schedule.shifts) + 1, idx + 1)
             # 逐位候选各留一份"轮到她的那一刻"的宿舍态 → 界面逐次表逐行取用
             # （面板不能拿班末那份 `world_at` 或排班快照当"她那一刻的世界"）。
             per_cand: Dict[str, dict] = {}
-            for ev in apply_idle_to_dorm(world, len(schedule.shifts), enabled=True,
-                                         idle=idle_moods, scope=scope, trace=per_cand):
+            for ev in apply_idle_to_dorm(world, enabled=True, idle=idle_moods,
+                                         scope=(cycle_no, idx + 1), trace=per_cand):
                 marks.append(Mark(t0, "idle", ev.detail))
             idle_states[t0] = per_cand
         # 本段**实际生效**的那份布局 → `Trajectory.world_at(t)`（界面看板 / API `layout_at` 都读它）。
@@ -1215,7 +1275,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                 series[n].append(moods[n])
             # —— entry_force：有人刚回到满心情 → 立刻换 ——
             # 只尝试一次（pending 清空）：否则"两人都满、换不动"时会每个 tick 反复触发。
-            if pending and any(moods.get(h, ZERO) >= MOOD_MAX for h in pending):
+            # ⚠️ **不在换班执行点那一刻抢跑**（文档 §3 第 1 步 + 不变式 8）：`t >= seg_end` 说明
+            #    这一刻正是下一个换班执行点（内部换班或真实班初），那一段会**丢弃**这段的等待状态、
+            #    从原始布局重建，再按重建后的布局重新判断。所以这里只处理"段内"到点的情况。
+            if pending and t < seg_end and any(moods.get(h, ZERO) >= MOOD_MAX for h in pending):
                 pending = []
                 _sync_moods(world, moods)
                 events = apply_entry_events(world, enabled=True)
@@ -1233,7 +1296,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     # 红脸区间记成标记（画图时画阴影）
     traj = Trajectory(names=names, times=times, moods=series, schedule=schedule,
                       cycles=cycles, marks=marks,
-                      segments=[(a, b, w) for (a, b, _i), w in zip(segments, seg_worlds)],
+                      segments=[(a, b, w) for (a, b, *_rest), w in zip(segments, seg_worlds)],
                       idle_states=idle_states)
     for n in names:
         for a, b in traj.red_face_spans(n):
@@ -1270,10 +1333,12 @@ def all_operator_names(extra: Iterable[str] = ()) -> List[str]:
 
 __all__ = [
     "DEFAULT_CYCLE_HOURS", "EVENT_THRESHOLDS", "MAX_SEGMENT_HOURS", "MIN_EVENT_GAP",
+    "INTERNAL_SWAP_HOURS",
     "Shift", "Schedule", "Trajectory", "Mark", "LoadedSchedule", "MoodSetEvent",
     "shift_from_facilities", "shifts_from_maa_file", "shifts_from_scenario_file",
     "shifts_from_import", "shift_file_kind", "load_schedule", "load_schedule_ex",
     "load_schedule_from_imports",
     "simulate_schedule", "compute_rates",
+    "execution_offsets", "execution_points",
     "rates_in_world", "default_initial_moods", "all_operator_names",
 ]

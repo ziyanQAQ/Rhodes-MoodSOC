@@ -89,9 +89,9 @@ def main() -> int:
                              "\"swap_with\": \"某人\"} 来开启并指定与谁互换")
     parser.add_argument("--idle-to-dorm", action="store_true", default=False,
                         help="显式声明要结算闲置入宿（本开关只用于**压过场景 JSON 里显式写的 false**）。"
-                             "⚠️ 按《闲置入宿完整逻辑》文档 §2：闲置入宿**只对包含 ≥3 个不同班次"
-                             "的排班生效**；本命令用的是**单份布局**（视为 1 个班次）"
-                             "⇒ 不会产生任何布局变化（界面 / 程序接口的多班排班才生效）。")
+                             "结算内容：把「这一班完全没出现在任何设施里、心情还没满」的干员"
+                             "安排进宿舍（有连续空位就直接住进去，全满了才换出锁定区之外"
+                             "心情最高的那位；要求严格大于候选）。")
     parser.add_argument("--no-idle-to-dorm", action="store_true", default=False,
                         help="关掉闲置入宿（即使场景 JSON 里没写 false、或写了 true）")
     args = parser.parse_args()
@@ -120,18 +120,14 @@ def main() -> int:
     #      锁定区之外心情最高的那位。口径＝《闲置入宿完整逻辑》文档。
     #      开关来源：`--no-idle-to-dorm`（强制关）> `--idle-to-dorm`（强制开）> JSON 顶层
     #      `"idle_to_dorm": {"enabled": ...}`（没写 = 开）。
-    #      ⚠️ 文档 §2 的**生效门槛**：不同班次数 < 3 时引擎直接返回、布局一个字节都不改。
-    #         这里是**单份布局**（视为 1 个班次）⇒ 一定不生效；多班排班走界面 / 程序接口。
+    #      ⚠️ **不设班次数量门槛**（文档 §2 第二版）：这里是"单份布局"，也照样结算一次。
+    #         多班排班由界面 / 程序接口逐班、逐换班执行点结算（`store.schedule`）。
     idle_on = (False if args.no_idle_to_dorm
                else True if args.idle_to_dorm
                else bool(getattr(world.idle_to_dorm, "enabled", True)))
     if idle_on:
-        # `shift_count=1`＝"这份场景只有 1 个班次"⇒ 引擎按文档 §2 拒绝执行（显式声明这一事实）
-        for ev in apply_idle_to_dorm(world, 1, enabled=True):
+        for ev in apply_idle_to_dorm(world, enabled=True):
             print(f"[闲置入宿] {ev.source()}　{ev.detail}", file=sys.stderr)
-        if args.idle_to_dorm:
-            print("[闲置入宿] 未执行：单份布局视为 1 个班次（< 3）—— 闲置入宿只对 ≥3 班的排班生效",
-                  file=sys.stderr)
 
     # 2) 按模式测算并组装 JSON
     if args.mode == "base":
