@@ -728,9 +728,10 @@ class IdleToDormMixin:
         spin.pack(side="left", padx=(4, 6))
         spin.bind("<KeyRelease>", lambda _e: self._schedule_rebuild())
         self._widgets.append(spin)
-        tk.Label(lock_row,
-                 text="（按竖向正序锁前 N 个位置：宿舍1位1 → 宿舍2位1 → … → 宿舍1位2 → …；"
-                      "锁定区里的人**自动**不换，锁定区的空位照样能入住）",
+        # ⚠️ 这一行里的说明**必须短**：`side="left"` 的标签不给 `wraplength` 时按整句文字要宽度，
+        #    会把整块面板撑过内容区（回归 `test_四个分区都装得进固定内容区`：曾量到 906 > 816）。
+        #    细节写在上面那段规则说明里（它有 `wraplength`）。
+        tk.Label(lock_row, text="（竖向正序前 N 个位置；锁定区里的人自动不换）",
                  bg=theme.BG, fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
                  ).pack(side="left")
 
@@ -740,7 +741,7 @@ class IdleToDormMixin:
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
         self.black_pick = tk.StringVar()
         self.black_combo = ttk.Combobox(black_row, textvariable=self.black_pick,
-                                        state="readonly", width=14,
+                                        state="readonly", width=12,
                                         values=list(self._all_names))
         self.black_combo.pack(side="left", padx=(6, 4))
         add_btn = ttk.Button(black_row, text="＋ 加入", width=8, command=self._add_blacklist)
@@ -748,8 +749,7 @@ class IdleToDormMixin:
         del_btn = ttk.Button(black_row, text="移除选中", width=10, command=self._remove_blacklist)
         del_btn.pack(side="left", padx=(4, 6))
         self._widgets.extend([self.black_combo, add_btn, del_btn])
-        tk.Label(black_row, text="（永远不能**通过闲置入宿进宿舍**；排班自带的她照旧可以被换出、"
-                                 "也可以被别人点名换出）",
+        tk.Label(black_row, text="（不能通过闲置入宿进宿舍）",
                  bg=theme.BG, fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
                  ).pack(side="left")
         self.black_list = tk.Listbox(self, height=4, activestyle="none",
