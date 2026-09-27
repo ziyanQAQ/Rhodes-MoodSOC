@@ -1,0 +1,123 @@
+{
+  "schema_version": 4,
+  "layout": {
+    "template": "default_base",
+    "drone_cap": 135,
+    "rooms": [
+      {"id": "control", "kind": "control_center", "level": 5},
+      {"id": "trade_1", "kind": "trade_post", "level": 4,
+       "product": {"trade": {"order": "gold"}}},
+      {"id": "manu_1", "kind": "factory", "level": 3,
+       "product": {"factory": {"recipe": "battle_record"}}},
+      {"id": "power_1", "kind": "power_plant", "level": 3},
+      {"id": "dorm_1", "kind": "dormitory", "level": 4, "dorm_beds": 5,
+       "dorm_ambience_level": 5},
+      {"id": "hire", "kind": "office", "level": 3},
+      {"id": "meet", "kind": "meeting_room", "level": 3},
+      {"id": "train", "kind": "training_room", "level": 3}
+    ]
+  },
+  "rotation": {
+    "profile": "abc_12_12_12",
+    "shifts": [
+      {
+        "index": 0,
+        "duration_hours": 12.0,
+        "active_teams": ["alpha", "beta"],
+        "resting_team": "gamma",
+        "assignment": {
+          "rooms": [
+            {"room_id": "control", "operators": [{"name": "陈", "elite": 2, "level": 90}]},
+            {"room_id": "trade_1", "operators": [{"name": "巫恋", "elite": 2, "level": 80},
+                                                 {"name": "龙舌兰", "elite": 2, "level": 60}]},
+            {"room_id": "manu_1", "operators": [{"name": "森蚺", "elite": 2, "level": 90},
+                                                {"name": "温蒂", "elite": 2, "level": 60},
+                                                {"name": "清流", "elite": 2, "level": 60}]},
+            {"room_id": "power_1", "operators": [{"name": "雷蛇", "elite": 2, "level": 70}]}
+          ],
+          "training_assist": {"name": "临光", "elite": 2, "level": 90}
+        },
+        "efficiencies": {
+          "room_lines": [
+            {"room_id": "trade_1", "operator_count": 2, "trade_efficiency": 4.0},
+            {"room_id": "manu_1", "operator_count": 3, "manufacture_efficiency": 8.0},
+            {"room_id": "power_1", "operator_count": 1, "power_efficiency": 4.0}
+          ]
+        }
+      },
+      {
+        "index": 1,
+        "duration_hours": 12.0,
+        "active_teams": ["beta", "gamma"],
+        "resting_team": "alpha",
+        "assignment": {
+          "rooms": [
+            {"room_id": "trade_1", "operators": [{"name": "能天使", "elite": 2, "level": 90}]},
+            {"room_id": "dorm_1", "operators": [{"name": "菲亚梅塔", "elite": 2, "level": 90},
+                                                {"name": "缪尔赛思", "elite": 1, "level": 40}]}
+          ]
+        },
+        "efficiencies": {"room_lines": [{"room_id": "trade_1", "operator_count": 1,
+                                         "trade_efficiency": 2.0}]}
+      },
+      {
+        "index": 2,
+        "duration_hours": 12.0,
+        "active_teams": ["gamma", "alpha"],
+        "resting_team": "beta",
+        "assignment": {"rooms": []},
+        "efficiencies": {"room_lines": []}
+      }
+    ]
+  },
+  "maa": {
+    "title": "36h 三班 · 蓝图回显核对",
+    "planTimes": "3班",
+    "plans": [
+      {
+        "name": "Shift 1 · 12h",
+        "Fiammetta": {"enable": true, "target": "巫恋", "order": "pre"},
+        "rooms": {
+          "control": [{"skip": false, "operators": ["陈"], "sort": false, "autofill": false}],
+          "trading": [{"skip": false, "product": "LMD", "operators": ["巫恋", "龙舌兰"],
+                       "sort": false, "autofill": false}],
+          "manufacture": [{"skip": false, "product": "Battle Record",
+                           "operators": ["森蚺", "温蒂", "清流"], "sort": false, "autofill": false}],
+          "power": [{"skip": false, "operators": ["雷蛇"], "sort": false, "autofill": false}],
+          "dormitory": [{"skip": true, "operators": [], "sort": false, "autofill": false}],
+          "hire": [{"skip": false, "operators": [], "sort": false, "autofill": false}],
+          "meeting": [{"skip": false, "operators": [], "sort": false, "autofill": false}]
+        }
+      },
+      {
+        "name": "Shift 2 · 12h",
+        "Fiammetta": {"enable": true, "target": "巫恋", "order": "pre"},
+        "rooms": {
+          "trading": [{"skip": false, "product": "LMD", "operators": ["能天使"],
+                       "sort": false, "autofill": false}],
+          "dormitory": [{"skip": false, "operators": ["菲亚梅塔", "缪尔赛思"],
+                         "sort": false, "autofill": false}],
+          "control": [{"skip": false, "operators": [], "sort": false, "autofill": false}],
+          "manufacture": [{"skip": false, "operators": [], "sort": false, "autofill": false}],
+          "power": [{"skip": false, "operators": [], "sort": false, "autofill": false}],
+          "hire": [{"skip": false, "operators": [], "sort": false, "autofill": false}],
+          "meeting": [{"skip": false, "operators": [], "sort": false, "autofill": false}]
+        }
+      },
+      {
+        "name": "Shift 3 · 12h",
+        "Fiammetta": {"enable": false, "target": "", "order": "pre"},
+        "rooms": {
+          "control": [{"skip": false, "operators": [], "sort": false, "autofill": false}],
+          "trading": [{"skip": false, "product": "LMD", "operators": [],
+                       "sort": false, "autofill": false}],
+          "manufacture": [{"skip": false, "operators": [], "sort": false, "autofill": false}],
+          "power": [{"skip": false, "operators": [], "sort": false, "autofill": false}],
+          "dormitory": [{"skip": true, "operators": [], "sort": false, "autofill": false}],
+          "hire": [{"skip": false, "operators": [], "sort": false, "autofill": false}],
+          "meeting": [{"skip": false, "operators": [], "sort": false, "autofill": false}]
+        }
+      }
+    ]
+  }
+}

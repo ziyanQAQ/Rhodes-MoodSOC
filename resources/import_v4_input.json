@@ -1,0 +1,44 @@
+{
+  "schema_version": 4,
+  "layout": {
+    "template": "default_base",
+    "drone_cap": 150,
+    "scenario": {
+      "elite_facility_count": 2,
+      "sui_facility_count": 1,
+      "dorm_occupant_count": 20,
+      "base_workforce": ["op_001", "op_002"],
+      "initial_global": {
+        "virtual_power": 1000,
+        "matatabi": 5,
+        "human_fireworks": 30,
+        "passion": 40
+      }
+    },
+    "rooms": [
+      {"id": "r1", "kind": "control_center", "level": 5},
+      {"id": "r2", "kind": "factory", "level": 3, "product": {"factory": {"recipe": "all"}}},
+      {"id": "r3", "kind": "trade_post", "level": 4, "product": {"trade": {"order": "gold"}}},
+      {"id": "r4", "kind": "dormitory", "level": 2, "dorm_beds": 10, "dorm_ambience_level": 3}
+    ]
+  },
+  "operbox": [
+    {"id": "op_001", "name": "Amiya", "elite": 2, "level": 90, "own": true, "potential": 6, "rarity": 6},
+    {"id": "op_002", "name": "Exusiai", "elite": 2, "level": 90, "own": true, "potential": 6, "rarity": 6},
+    {"id": "op_003", "name": "Trainee", "elite": 0, "level": 1, "own": false, "potential": 1, "rarity": 1},
+    {"id": "op_004", "name": "巫恋", "elite": 1, "level": 50, "own": true, "potential": 3, "rarity": 5},
+    {"id": "op_005", "name": "char_154_morgan", "elite": 2, "level": 60, "own": true, "potential": 1, "rarity": 5}
+  ],
+  "labels": {
+    "layout": "示例基地",
+    "operbox": "示例干员池"
+  },
+  "options": {
+    "rotation": "fiammetta_8_8_4_4",
+    "top": 20,
+    "system_preferences": {"preferred_operator": "op_001"},
+    "maa_title": null,
+    "fiammetta_enable": true,
+    "assert_invariants": false
+  }
+}
