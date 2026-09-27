@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from data.domain import MOOD_MAX, FacilityType
+from data.domain import MOOD_MAX, MOOD_MIN, FacilityType
 
 
 def _cond_mood_below_18(ctx) -> bool:
@@ -220,6 +220,9 @@ def _cond_lancet2_in_power(ctx) -> bool:
 
     ⚠️ 条件是**Lancet-2 在发电站**（不是"森蚺在发电站"）—— 森蚺自己的位置由
     `FacilityCountMod.facility` 判定（必须进驻控制中枢），两者缺一不可。
+
+    ⚠️ **不看心情**（用户拍板 2026-09，与晨曦**不对称**）：Lancet-2 哪怕红脸，
+    也算"进驻在发电站"⇒ +2 照样成立。别按晨曦那条"红脸不算有效进驻"顺手对齐。
     """
     for f in ctx.world.facilities:
         if f.ftype is FacilityType.POWER and any(o.name == "Lancet-2" for o in f.operators):
@@ -228,17 +231,23 @@ def _cond_lancet2_in_power(ctx) -> bool:
 
 
 def _cond_no_platform_in_other_power(ctx) -> bool:
-    """承曦格雷伊「晨曦」：**其他**发电站内没有进驻「作业平台」（`cc.tag.op`）。
+    """承曦格雷伊「晨曦」：**其他**发电站内没有**有效的**作业平台进驻。
 
     上游原文「如果其他发电站内没有进驻作业平台」——"其他"＝除她自己所在那间以外的
     所有发电站；作业平台＝1★ 机器人那一类标签（Lancet-2 / Castle-3 / THRM-EX /
     正义骑士号 / Friston-3 / PhonoR-0 / CONFESS-47 / GALLUS²，见 `data/factions.txt`）。
+
+    ⚠️ **红脸的作业平台不算"有效进驻"**（用户口径 2026-09）：本项目总口径是
+    「红脸（心情 ≤ 0）⇒ 技能失效」（见 `documents/04-特殊机制.md` 第 2 条），
+    所以一个心情归零的作业平台不再阻断晨曦 ⇒ 发电站**照样 +1**。
+    ⚠️ **不对称（用户拍板）**：森蚺「我寻思能行」只看「Lancet-2 **进驻**在发电站」，
+    Lancet-2 红脸也照样触发 +2 —— 见 `_cond_lancet2_in_power`，别顺手"对齐"。
     """
     for f in ctx.world.facilities:
         if f.ftype is not FacilityType.POWER or f is ctx.facility:
             continue
         for o in f.operators:
-            if "作业平台" in _factions_of(o):
+            if o.mood > MOOD_MIN and "作业平台" in _factions_of(o):
                 return False
     return True
 
