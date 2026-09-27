@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from mood_soc.battery import to_decimal
 from mood_soc.models import normalize_entry_when
+from mood_soc.rules import MIN_SHIFTS_FOR_IDLE
 
 from store import serialize
 from store.session import Session
@@ -449,17 +450,28 @@ def op_set_entry_events(session: Session, args: dict) -> dict:
 
 
 def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
-    """「闲置入宿」：每班开始时把没上班、不在宿舍、心情未满的干员安排进宿舍。
+    """「闲置入宿」：每班开始时把"这一班完全没出现在任何设施、心情未满"的干员安排进宿舍。
+
+    口径＝用户文档《闲置入宿完整逻辑》（见 `mood_soc.rules.apply_idle_to_dorm`）：
+    有连续空位就直接住进去，全满了才换出**锁定区之外心情最高**的那位（要求严格大于候选）；
+    ⚠️ **不同班次数 < 3 时完全不生效**（设置照旧保留）。
 
     - `enabled`：总开关；
-    - `per_operator`：逐人设置，两种写法——
-      `{"虎狼丸": "甲"}`（与甲互换）/ `{"跃跃": false}`（不参与）/
-      `[{"name": "虎狼丸", "target": "宿舍01", "cycle": 2, "shift": 3}]`
-      （目标给 `宿舍01` 这类标签 = 放进那间宿舍的空位；给人名 = 与那位满心情者互换）。
+    - `protected_slots`：**锁定位置数**（文档 §5，默认 5）：按竖向正序（位次优先、宿舍序号其次）
+      锁前 N 个位置，自动交换不换锁定区里的人（锁定区的空位照样能入住）；
+    - `blacklist`：**黑名单**（文档 §6）：永远不能通过闲置入宿进宿舍的人（可被换出、可被点名）；
+    - `per_operator`：逐人设置，几种写法——
+      `{"虎狼丸": "甲"}`（点名与甲互换）/ `{"跃跃": false}`（不参与）/
+      `[{"name": "虎狼丸", "target": "宿舍01"}]`（放进那间的下一个连续位）/
+      `[{"name": "虎狼丸", "dorm": 1, "slot": 3, "cycle": 2, "shift": 3}]`（精确到宿舍+位次）。
     """
     _require_session(session)
     if "enabled" in args:
         session.idle_to_dorm = bool(args["enabled"])
+    if args.get("protected_slots") is not None:
+        session.idle_protected_slots = max(0, int(args["protected_slots"]))
+    if args.get("blacklist") is not None:
+        session.idle_blacklist = [str(n) for n in (args["blacklist"] or [])]
     per = args.get("per_operator")
     if per is not None:
         globals_: Dict[str, Tuple[bool, Optional[str]]] = {}
@@ -486,6 +498,8 @@ def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
                 target = item.get("target") or item.get("swap_with")
                 if item.get("dorm") is not None:
                     target = f"宿舍{int(item['dorm']):02d}"
+                    if item.get("slot") is not None:        # 精确「宿舍NN·第M位」
+                        target += f"·第{int(item['slot'])}位"
                 cyc, shf = item.get("cycle"), item.get("shift")
             if cyc is None and shf is None:
                 globals_[str(name)] = (use, target)
@@ -495,6 +509,9 @@ def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
         session.idle_entries = entries
     session.recompute()
     return {"enabled": session.idle_to_dorm,
+            "protected_slots": int(session.idle_protected_slots),
+            "blacklist": list(session.idle_blacklist),
+            "effective": _idle_effective(session),
             "count": session.idle_count() if session.idle_to_dorm else 0,
             "groups": [{"title": title, "scope": list(scope),
                         "rows": [{"name": n, "mood": _num(m), "where": w,
@@ -503,11 +520,21 @@ def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
                        for title, scope, rows in session.idle_groups()]}
 
 
+def _idle_effective(session: Session) -> bool:
+    """闲置入宿此刻**真的会不会生效**（文档 §2：不同班次数 ≥ 3 才会生效）。"""
+    if not session.idle_to_dorm or session.schedule is None:
+        return False
+    return len(session.schedule.shifts) >= MIN_SHIFTS_FOR_IDLE
+
+
 def op_idle_to_dorm_groups(session: Session, args: dict) -> dict:
     """只读：当前设置下的逐次入宿表（带候选与可选目标），供调用方做交互。"""
     _require_session(session)
     groups = session.idle_groups(cycles=args.get("cycles"))
     return {"enabled": session.idle_to_dorm,
+            "protected_slots": int(session.idle_protected_slots),
+            "blacklist": list(session.idle_blacklist),
+            "effective": _idle_effective(session),
             "groups": [{"title": title, "scope": list(scope),
                         "rows": [{"name": n, "mood": _num(m), "where": w,
                                   "use": u, "target": tg, "options": opts}

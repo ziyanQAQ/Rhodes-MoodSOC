@@ -900,6 +900,8 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       entry_per_shift: Optional[List[EntryShiftOverride]] = None,
                       idle_to_dorm: bool = True,
                       idle_entries: Optional[Sequence["IdleToDormEntry"]] = None,
+                      idle_protected_slots: Optional[int] = None,
+                      idle_blacklist: Optional[Sequence[str]] = None,
                       mood_events: Optional[Sequence[MoodSetEvent]] = None,
                       max_segment: Decimal = MAX_SEGMENT_HOURS,
                       continue_from: Optional[Tuple["Trajectory", int]] = None) -> Trajectory:
@@ -924,13 +926,21 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         entry_per_shift  **按班次覆盖**（`[EntryShiftOverride, ...]`）——
                        3 班排班就可以"第 1 班换给巫恋、第 2 班自动挑最累的、第 3 班不用"；
                        `None` = 用场景 JSON 里的 `per_shift`
-        idle_to_dorm  **闲置入宿**：每班开始时把"没在上班、也不在宿舍、心情还没满"的干员
-                       安排进宿舍（有空位就放进去，没空位就与宿舍里心情已满的那位互换）。
-                       ⚠️ **默认 `True`（开）**（用户口径"闲置入宿默认是开启的"）——
+        idle_to_dorm  **闲置入宿**：每班开始时把"这一班完全没有出现在任何设施里、心情还没满"
+                       的干员安排进宿舍（有连续空位就直接住进去，全满了才与宿舍里心情更高的
+                       那位互换）。口径＝用户文档《闲置入宿完整逻辑》，见
+                       `mood_soc.rules.apply_idle_to_dorm`。
+                       ⚠️ **默认 `True`（开）**（用户口径"闲置入宿默认是开启的"）；
                        要"完全不动布局"的旧口径就显式传 `False`。
+                       ⚠️ **文档 §2 的生效门槛**：排班的**不同班次数 < 3** ⇒ 引擎直接返回、
+                       布局一个字节都不改（设置全部保留）。
         idle_entries  界面的逐人设置（`[IdleToDormEntry, ...]`，**只列改过默认的**：
-                       不参与的人、或指定了交换对象的人）。给了它就**盖过** JSON 里的
-                       `idle_to_dorm.per_operator`（界面口径优先）；`None` = 用 JSON。
+                       不参与的人、手动指定位置的人、或点名了交换对象的人）。给了它就**盖过**
+                       JSON 里的 `idle_to_dorm.per_operator`（界面口径优先）；`None` = 用 JSON。
+        idle_protected_slots  **锁定位置数**（文档 §5）：给了就盖过 JSON 的
+                       `idle_to_dorm.protected_slots`（默认 5）；`None` = 用 JSON。
+        idle_blacklist **黑名单**（文档 §6）：给了就盖过 JSON 的 `idle_to_dorm.blacklist`；
+                       `None` = 用 JSON（`[]` = 清空名单）。
         mood_events   **心情指定事件**（`[MoodSetEvent, ...]`，见那个类）：在
                        `(周期, 周期内时刻)` 把某位干员的心情**直接置为**给定值，
                        之后按正常速率演化（同刻跳变 + 速率重算）。缺省 `None` = 没有。
@@ -989,13 +999,22 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     #: 每个班次一份**"从未被动过"的计划副本** —— 引擎每段（含每个周期）都从它**重建**当前布局，
     #: 见下面段循环里的说明（副本绝不能被就地改着复用）。
     pristine = [copy.deepcopy(s.world) for s in schedule.shifts]
-    # 闲置入宿：界面传了逐人设置就盖过 JSON 的（"界面口径优先"，与进驻事件同一约定）
+    # 闲置入宿：界面传了逐人设置 / 锁定位置数 / 黑名单就盖过 JSON 的（"界面口径优先"，与进驻事件同一约定）
     if idle_to_dorm:
-        idle_cfg = (IdleToDormConfig(enabled=True, per_operator=list(idle_entries))
-                    if idle_entries is not None else None)
-        if idle_cfg is not None:
+        needs_override = (idle_entries is not None or idle_protected_slots is not None
+                          or idle_blacklist is not None)
+        if needs_override:
             for w in pristine:
-                w.idle_to_dorm = idle_cfg
+                base_idle = getattr(w, "idle_to_dorm", None) or IdleToDormConfig()
+                w.idle_to_dorm = IdleToDormConfig(
+                    enabled=True,
+                    protected_slots=(int(base_idle.protected_slots)
+                                     if idle_protected_slots is None
+                                     else int(idle_protected_slots)),
+                    blacklist=(list(base_idle.blacklist) if idle_blacklist is None
+                               else [str(n) for n in idle_blacklist]),
+                    per_operator=(list(base_idle.per_operator) if idle_entries is None
+                                  else list(idle_entries)))
     # 每个班次解析一次"这一班的有效配置"，挂到该班次的副本上（按班次覆盖在这里生效）。
     # ⚠️ 覆盖列表要**显式传给 resolve_entry_config**：它默认读的是"第一个参数"的 per_shift，
     #    而这里的 base 是拼出来的（per_shift 为空），不显式传就会把按班次配置整段忽略。
@@ -1110,10 +1129,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                 pending = [h for h, _room in entry_event_holders(world)
                            if moods.get(h, MOOD_MAX) < MOOD_MAX]
 
-        # —— 闲置入宿（可选）：把"没在上班、也不在宿舍、心情还没满"的干员安排进宿舍 ——
-        # 顺序上**排在进驻事件之后**：换心情是"进驻那一刻"的游戏事件，闲置入宿是人工调度；
-        # 而且闲置入宿会把满心情的人换出宿舍，先换心情可以保住"前一位进驻"的判定基准。
+        # —— 闲置入宿（可选）：把"这一班完全没出现在任何设施里、心情还没满"的干员安排进宿舍 ——
+        # 顺序上**排在进驻事件之后**：换心情是"进驻那一刻"的游戏事件，闲置入宿是人工调度。
         # ⚠️ 本班未排班的干员不在 `world` 里（心情在 `moods` 字典里），所以要把他们的心情传进去。
+        # ⚠️ `shift_count` **必给**（"引擎强制"，文档 §2）：不同班次数 < 3 时引擎自己直接返回。
         if idle_to_dorm:
             _sync_moods(world, moods)
             idle_moods = {n: moods[n] for n in names if world.get_operator(n) is None}
@@ -1123,8 +1142,8 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             # 逐位候选各留一份"轮到她的那一刻"的宿舍态 → 界面逐次表逐行取用
             # （面板不能拿班末那份 `world_at` 或排班快照当"她那一刻的世界"）。
             per_cand: Dict[str, dict] = {}
-            for ev in apply_idle_to_dorm(world, enabled=True, idle=idle_moods, scope=scope,
-                                         trace=per_cand):
+            for ev in apply_idle_to_dorm(world, len(schedule.shifts), enabled=True,
+                                         idle=idle_moods, scope=scope, trace=per_cand):
                 marks.append(Mark(t0, "idle", ev.detail))
             idle_states[t0] = per_cand
         # 本段**实际生效**的那份布局 → `Trajectory.world_at(t)`（界面看板 / API `layout_at` 都读它）。

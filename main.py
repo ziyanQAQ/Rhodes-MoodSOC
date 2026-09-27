@@ -88,11 +88,10 @@ def main() -> int:
                              "场景 JSON 顶层也可写 \"entry_events\": {\"enabled\": true, "
                              "\"swap_with\": \"某人\"} 来开启并指定与谁互换")
     parser.add_argument("--idle-to-dorm", action="store_true", default=False,
-                        help="强制结算闲置入宿（**默认本来就结算**，见 --no-idle-to-dorm）；"
-                             "本开关只用于**压过场景 JSON 里显式写的 false**。"
-                             "结算内容：把「没在上班、也不在宿舍、心情还没满」的干员"
-                             "安排进宿舍（有空位就放进去，没空位就与宿舍里那位互换）；"
-                             "逐人设置写 \"idle_to_dorm\": {\"per_operator\": {\"某人\": \"换谁\"}}")
+                        help="显式声明要结算闲置入宿（本开关只用于**压过场景 JSON 里显式写的 false**）。"
+                             "⚠️ 按《闲置入宿完整逻辑》文档 §2：闲置入宿**只对包含 ≥3 个不同班次"
+                             "的排班生效**；本命令用的是**单份布局**（视为 1 个班次）"
+                             "⇒ 不会产生任何布局变化（界面 / 程序接口的多班排班才生效）。")
     parser.add_argument("--no-idle-to-dorm", action="store_true", default=False,
                         help="关掉闲置入宿（即使场景 JSON 里没写 false、或写了 true）")
     args = parser.parse_args()
@@ -116,17 +115,23 @@ def main() -> int:
         for ev in apply_entry_events(world, enabled=True):
             print(f"[进驻事件] {ev.source()}　{ev.detail}", file=sys.stderr)
 
-    # 1.6) 闲置入宿（**默认开**，用户口径"闲置入宿默认是开启的"）：把"没在上班、也不在宿舍、
-    #      心情还没满"的干员安排进宿舍——宿舍有空位就直接放进去，没空位就与宿舍里那位互换。
+    # 1.6) 闲置入宿（**默认开**，用户口径"闲置入宿默认是开启的"）：把"这一班完全没出现在任何
+    #      设施里、心情还没满"的干员安排进宿舍——有连续空位就直接住进去，全满了才换出
+    #      锁定区之外心情最高的那位。口径＝《闲置入宿完整逻辑》文档。
     #      开关来源：`--no-idle-to-dorm`（强制关）> `--idle-to-dorm`（强制开）> JSON 顶层
     #      `"idle_to_dorm": {"enabled": ...}`（没写 = 开）。
-    #      ⚠️ 这里只在"当前这一份布局"上结算一次（多班轮换要逐班结算，见 ui.schedule）。
+    #      ⚠️ 文档 §2 的**生效门槛**：不同班次数 < 3 时引擎直接返回、布局一个字节都不改。
+    #         这里是**单份布局**（视为 1 个班次）⇒ 一定不生效；多班排班走界面 / 程序接口。
     idle_on = (False if args.no_idle_to_dorm
                else True if args.idle_to_dorm
                else bool(getattr(world.idle_to_dorm, "enabled", True)))
     if idle_on:
-        for ev in apply_idle_to_dorm(world, enabled=True):
+        # `shift_count=1`＝"这份场景只有 1 个班次"⇒ 引擎按文档 §2 拒绝执行（显式声明这一事实）
+        for ev in apply_idle_to_dorm(world, 1, enabled=True):
             print(f"[闲置入宿] {ev.source()}　{ev.detail}", file=sys.stderr)
+        if args.idle_to_dorm:
+            print("[闲置入宿] 未执行：单份布局视为 1 个班次（< 3）—— 闲置入宿只对 ≥3 班的排班生效",
+                  file=sys.stderr)
 
     # 2) 按模式测算并组装 JSON
     if args.mode == "base":

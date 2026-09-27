@@ -27,6 +27,7 @@ Session（本模块）            ui/app.py（视图）              api/ops.py�
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -36,7 +37,7 @@ from data.skills_data import DEFAULT_OPERATORS
 from mood_soc.battery import to_decimal
 from mood_soc.config import MOOD_MAX, FacilityType
 from mood_soc.models import IdleToDormEntry, normalize_entry_when
-from mood_soc.rules import dorm_state, mood_skill_summary
+from mood_soc.rules import MIN_SHIFTS_FOR_IDLE, dorm_state, mood_skill_summary
 
 from .layout import build_base_layout
 from .schedule import (MoodSetEvent, LoadedSchedule, Schedule, Shift, Trajectory,
@@ -122,6 +123,10 @@ class Session:
 
     #: 闲置入宿总开关（**默认开**：用户口径"闲置入宿默认是开启的"；文件里显式写 false 才关）
     idle_to_dorm: bool = True
+    #: **锁定位置数**（文档 §5）：按竖向正序锁前 N 个位置，自动交换不换锁定区里的人（默认 5）
+    idle_protected_slots: int = 5
+    #: **黑名单**（文档 §6）：永远不能**通过闲置入宿进宿舍**的干员（不是"保护其宿舍位次"）
+    idle_blacklist: List[str] = field(default_factory=list)
     #: 不限班次/周期的逐人设置 `{干员: (参与, 目标标签)}`
     idle_globals: Dict[str, Tuple[bool, Optional[str]]] = field(default_factory=dict)
     #: 逐次设置 `{(周期, 班次, 干员): (参与, 目标标签)}`（序号均为 1 基）
@@ -194,6 +199,9 @@ class Session:
             self.entry_per_shift = []
             self.idle_globals = {}
             self.idle_entries = {}
+            # 文件里的闲置入宿全局口径也不继承（锁定位置数 / 黑名单回到项目默认）
+            self.idle_protected_slots = 5
+            self.idle_blacklist = []
         if entry_events is not None:
             self.entry_events = bool(entry_events)
         # 闲置入宿：本入口默认**开**（未显式指定时）；显式 `False` 才关。
@@ -247,6 +255,8 @@ class Session:
         # ⚠️ 默认**开**（用户口径"闲置入宿默认是开启的"）：文件里没写这个键 → 开；
         #    显式写 `"idle_to_dorm": false` / `{"enabled": false}` → 关。
         self.idle_to_dorm = bool(getattr(idle, "enabled", True))
+        self.idle_protected_slots = int(getattr(idle, "protected_slots", None) or 5)
+        self.idle_blacklist = [str(n) for n in (getattr(idle, "blacklist", None) or [])]
         self.idle_globals = {}
         self.idle_entries = {}
         for e in (getattr(idle, "per_operator", None) or []):
@@ -289,6 +299,12 @@ class Session:
             bool(self.entry_events), self.entry_swap_with, self.entry_scope,
             bool(self.entry_restore_back), self.entry_when,
             bool(self.idle_to_dorm), tuple(self.detached),
+            # 闲置入宿的**全局口径**：锁定位置数 / 黑名单 / 不限班次的逐人设置 ——
+            # ⚠️ 三者都会影响**每一段**，所以进"整条重算"的指纹。
+            #    （`idle_globals` 是列表推导式的：`{名字: (参与, 目标)}`，
+            #      值里有 `None`，直接排序会 TypeError ⇒ 用 repr 归一。）
+            int(self.idle_protected_slots), tuple(sorted(self.idle_blacklist)),
+            tuple(sorted((str(k), repr(v)) for k, v in self.idle_globals.items())),
         )
         per_shift = []
         for i, s in enumerate(sch.shifts):
@@ -355,6 +371,8 @@ class Session:
             entry_per_shift=list(self.entry_per_shift),
             idle_to_dorm=self.idle_to_dorm,
             idle_entries=self.idle_entry_list(),
+            idle_protected_slots=int(self.idle_protected_slots),
+            idle_blacklist=list(self.idle_blacklist),
             mood_events=list(self.mood_events),
             continue_from=resume,
             _sigs=sigs,               # 给 `adopt` 记账用，不进引擎（见 `compute_trajectory`）
@@ -724,6 +742,8 @@ class Session:
             },
             "idle_to_dorm": {
                 "enabled": self.idle_to_dorm,
+                "protected_slots": int(self.idle_protected_slots),
+                "blacklist": list(self.idle_blacklist),
                 "per_operator": [
                     {"name": n, "enabled": use, "target": target}
                     for n, (use, target) in self.idle_globals.items()] +
@@ -964,26 +984,61 @@ class Session:
     # ================================================================ 闲置入宿 / 进驻事件
     def idle_entry_list(self) -> Optional[List[IdleToDormEntry]]:
         """把界面的逐次设置转成 `[IdleToDormEntry, ...]`——**只列改过默认的**
-        （勾掉不参与的、或指定了目标的人）；没人改过就返回 `None`（＝全都参与、全自动）。
+        （勾掉不参与的、指定了位置、或点名了对象的人）；没人改过就返回 `None`
+        （＝全都参与、全自动）。
 
-        目标有两类，界面用同一个下拉表达：
-        - `宿舍01`/`宿舍02`…（**放进那间宿舍的空位**，不动任何人）→ `dorm=序号`
-        - 干员名（**与这位满心情的宿舍干员互换**，他换出来闲置）→ `swap_with=名字`
+        目标有三类，界面用同一个下拉表达（标签 ↔ 字段的翻译只在这一处）：
+        - `宿舍01`（放进那间的**下一个连续位**，不动任何人）→ `dorm=序号`
+        - `宿舍01·第3位`（**精确位次**：是空位就入住、有人就过心情闸互换）→ `dorm=序号, slot=3`
+        - 干员名（**手动点名**与那一刻在宿舍的这位互换）→ `swap_with=名字`
         """
         out: List[IdleToDormEntry] = []
         for name, (use, target) in self.idle_globals.items():
             if use and not target:
                 continue
-            dorm = _dorm_index_of(target)
-            out.append(IdleToDormEntry(name=name, enabled=use, dorm=dorm,
-                                       swap_with=(None if dorm else idle_target_name(target))))
+            out.append(_entry_from_label(name, use, target))
         for (cyc, shf, n), (use, target) in self.idle_entries.items():
             if use and not target:
                 continue
-            dorm = _dorm_index_of(target)
-            out.append(IdleToDormEntry(name=n, enabled=use, cycle=cyc, shift=shf,
-                                       dorm=dorm, swap_with=(None if dorm else idle_target_name(target))))
+            entry = _entry_from_label(n, use, target)
+            entry.cycle, entry.shift = cyc, shf
+            out.append(entry)
         return out or None
+
+    @staticmethod
+    def _idle_options(state: dict, name: str, mood_of: dict, traj, t0) -> List[str]:
+        """某一行的「位置 / 换谁」下拉选项（按**轮到她的那一刻**的宿舍态算）。
+
+        三类，顺序即下拉里的显示顺序（「自动…」由面板自己加在最前面）：
+
+        | 选项 | 含义 |
+        |---|---|
+        | `宿舍NN` | 那间宿舍的**下一个连续位**（只在那间还有空位时列出） |
+        | `宿舍NN·第M位` | **精确位次**：M 取 `1..下一个连续位`（含）—— 更靠后的位次会留空洞，引擎必跳过，所以不列 |
+        | `人名 心情` | **点名互换**：那一刻**所有可用宿舍里的人**（含黑名单干员；不列候选人自己） |
+
+        ⚠️ 必须用 `traj.idle_state_at(t0, 干员)`（引擎**轮到这一位**时的宿舍态）——
+        候选是依次处理的，拿班末世界或排班快照会列出那一刻早已被换出宿舍的人。
+        """
+        opts: List[str] = []
+        dorms = state.get("dorms", {})
+        for no in sorted(dorms):
+            nxt = int(state.get("next", {}).get(no, 1))
+            cap = int(state.get("capacity", {}).get(no, 0))
+            if nxt <= cap:
+                opts.append(f"宿舍{no:02d}")
+            for slot in range(1, min(nxt, cap) + 1):
+                opts.append(f"宿舍{no:02d}·第{slot}位")
+        people = []
+        for no in sorted(dorms):
+            for who in dorms[no]:
+                if who == name:
+                    continue                     # 候选人不列自己
+                m = mood_of[who] if who in mood_of else traj.mood_at(who, t0)
+                people.append((-m, f"{who} {m:.1f}"))
+        people.sort()                            # 心情高的排前面（最好的目标先出现）
+        opts += [label for _k, label in people]
+        return opts
 
     def idle_groups(self, cycles: Optional[int] = None,
                     entries: Optional[dict] = None) -> List[tuple]:
@@ -993,21 +1048,30 @@ class Session:
         只列出**真的有候选**的那几次（心情跨班跨周期连续 ⇒ 每次谁没满都不一样）。
         `cycles` 同样夹到 `1 ~ MAX_CYCLES`（与 `set_cycles` 一个口径）。
 
+        **候选口径与引擎同一份**（文档 §7，`rules.apply_idle_to_dorm`）：该班
+        **完全没有出现在任何设施**里、心情 < 24、且不在**黑名单**里的人；
+        行序＝(心情↑, 名字↑) —— 候选是**依次**处理的，所以表里的行序就是引擎的安排顺序。
+        ⚠️ 班初在加工站 / 训练室的人、副手、所有上班与在宿舍的人**都不是候选**（不变式 6），
+        所以表里不再出现"挂件位"那些行。
+
         ⚠️ **「谁在宿舍 / 哪间有空位」按引擎那一刻的那份世界算**（AGENTS 坑 20）：
         每一行取 `traj.idle_state_at(t0, 干员)`（＝引擎**轮到这一位**时的宿舍态），
         取不到（没开闲置入宿 / 她不是引擎候选）就退回整份段世界 `world_at(t0)`，
         再退回排班快照。**不能**直接拿 `shift.world` 快照当"她那一刻的世界" ——
         候选是依次处理的，排前面的人会把宿舍里的人换出去，而快照里那位看着还在宿舍
         （用户报过"面板里列着清流、那一刻宿舍里并没有清流"）。
-        ⚠️ 候选**行**仍按"本班班初的位置"（＝排班快照的位置）判定，与引擎的候选来源同一口径：
-        引擎的候选来自班初"没在宿舍、也没在上班"的人；班中被换出宿舍的人不算候选。
+
+        ⚠️ **不同班次数 < 3 时返回空表**（文档 §2：闲置入宿不生效，配置保留）。
         """
         cycles = min(MAX_CYCLES, max(1, int(cycles if cycles is not None else self.cycles)))
         entries = self.idle_entries if entries is None else entries
         traj = self.traj
         if self.schedule is None or traj is None:
             return []
+        if len(self.schedule.shifts) < MIN_SHIFTS_FOR_IDLE:
+            return []                            # 文档 §2：班次数不足 ⇒ 不生效
         bench = set(self.bench_names())          # 「不在基建」的人（含名单点名的）
+        blocked = set(self.idle_blacklist)       # 黑名单：不进候选、也不出现在这张表里
         groups = []
         for k in range(max(1, cycles)):
             for i, shift in enumerate(self.schedule.shifts):
@@ -1015,47 +1079,26 @@ class Session:
                 mood_of = traj.moods_at(t0)
                 # 兜底那份宿舍态：整份段世界（引擎那份）→ 排班快照
                 base_state = dorm_state(traj.world_at(t0) or shift.world)
-                cands = []                       # [(排序维1, 心情, 名字, 位置)]
+                cands = []                       # [(心情, 名字, 位置)]
                 for name in traj.names:
+                    if name in blocked:
+                        continue                 # 黑名单：不进初始候选
+                    if shift.world.facility_of(name) is not None:
+                        continue                 # 该班出现在任何设施里 ⇒ 不是候选（文档 §7-4）
                     mood = mood_of[name]
-                    fac = shift.world.facility_of(name)
-                    if fac is not None and fac.ftype == FacilityType.DORMITORY:
-                        continue                 # 班初就在宿舍（引擎也留着她）
-                    if fac is not None and fac.ftype not in (FacilityType.WORKSHOP,
-                                                             FacilityType.TRAINING):
-                        continue                 # 正在上班，不动
                     if mood >= MOOD_MAX:
-                        continue
-                    # `where`：本班未排班的人分两种 —— 「不在基建」名单点名的、
-                    # 与"只是这一班没排到"的（后者可能在别的班上班，文案要区别开）
-                    if fac is not None:
-                        where = fac.display_name
-                    elif name in bench:
-                        where = "不在基建"
-                    else:
-                        where = "未排班"
-                    # 排序维 1：**不在任何设施里**（＝"不在工作也不在宿舍"）的排前面 ——
-                    # 与引擎的处理顺序同一口径（`mood_soc/rules._idle_candidates` 的排序键）。
-                    cands.append((0 if fac is None else 1, mood, name, where))
+                        continue                 # 心情满 24，不需要恢复
+                    where = "不在基建" if name in bench else "未排班"
+                    cands.append((mood, name, where))
                 if not cands:
                     continue
-                # 与引擎同一口径：① 先"不在工作也不在宿舍" ② 心情从低到高 ③ 名字。
-                # ⚠️ 候选是**依次**处理的，所以表里的行序＝引擎的安排顺序（用户口径，2026-09）。
-                cands.sort(key=lambda row: (row[0], row[1], row[2]))
+                # 与引擎同一口径：① 心情从低到高 ② 名字（排序稳定）。候选依次处理 ⇒ 行序＝安排顺序。
+                cands.sort(key=lambda row: (row[0], row[1]))
                 rows = []
-                for _rank, mood, name, where in cands:
+                for mood, name, where in cands:
                     # 这一行的可选目标＝**轮到她的那一刻**宿舍里的人和空位（引擎那份世界）
                     state = traj.idle_state_at(t0, name) or base_state
-                    opts = [f"宿舍{no:02d}" for no in state["free"]]
-                    people = []
-                    for no in sorted(state["dorms"]):
-                        for who in state["dorms"][no]:
-                            if who == name:
-                                continue         # 候选人不列自己
-                            m = mood_of[who] if who in mood_of else traj.mood_at(who, t0)
-                            people.append((-m, f"{who} {m:.1f}", who))
-                    people.sort()                # 心情高的排前面（最好换的先出现）
-                    opts += [label for _k, label, _n in people]
+                    opts = self._idle_options(state, name, mood_of, traj, t0)
                     use, target = entries.get((k + 1, i + 1, name)) \
                         or self.idle_globals.get(name) or (True, None)
                     rows.append((name, mood, where, use, target, opts))
@@ -1115,19 +1158,42 @@ def _same_moods(a: Dict[str, Decimal], b: Dict[str, Decimal],
     return all(abs(a[n] - b[n]) <= eps for n in a)
 
 
+#: 「宿舍NN」/「宿舍NN·第M位」标签的形状（人与界面的翻译只认这一处）
+_DORM_LABEL_RE = re.compile(r"^宿舍\s*0*(\d+)\s*(?:[·.\-]?\s*第\s*0*(\d+)\s*位)?$")
+
+
 def _dorm_index_of(label) -> Optional[int]:
-    """「宿舍01」→ `1`；不是这种标签（人名 / 空）就返回 `None`。"""
-    text = (label or "").strip()
-    if text.startswith("宿舍") and text[2:].isdigit():
-        return int(text[2:])
-    return None
+    """「宿舍01」/「宿舍01·第3位」→ `1`；不是这种标签（人名 / 空）就返回 `None`。"""
+    match = _DORM_LABEL_RE.match((label or "").strip())
+    return int(match.group(1)) if match else None
+
+
+def _dorm_slot_of(label) -> Optional[int]:
+    """「宿舍01·第3位」→ `3`；只写了宿舍序号（或压根不是位置标签）→ `None`。"""
+    match = _DORM_LABEL_RE.match((label or "").strip())
+    return int(match.group(2)) if match and match.group(2) else None
 
 
 def _idle_label_of(entry) -> Optional[str]:
-    """`IdleToDormEntry` → 下拉里的标签（`宿舍01` 或 人名；都没有 = 自动）。"""
+    """`IdleToDormEntry` → 下拉里的标签（`宿舍01` / `宿舍01·第3位` / 人名；都没有 = 自动）。"""
     if getattr(entry, "dorm", None) is not None:
-        return f"宿舍{entry.dorm:02d}"
+        slot = getattr(entry, "slot", None)
+        return f"宿舍{entry.dorm:02d}" + (f"·第{slot}位" if slot else "")
     return (getattr(entry, "swap_with", None) or None)
+
+
+def _entry_from_label(name: str, use: bool, label) -> IdleToDormEntry:
+    """下拉标签 → `IdleToDormEntry`（**界面的标签只有这一处翻译成引擎字段**）。
+
+    `宿舍01` → `dorm=1`；`宿舍01·第3位` → `dorm=1, slot=3`；人名 → `swap_with=名字`；
+    空 / 「自动…」→ 全都参与、全自动。
+    """
+    dorm = _dorm_index_of(label)
+    if dorm is not None:
+        return IdleToDormEntry(name=name, enabled=use, dorm=dorm,
+                               slot=_dorm_slot_of(label))
+    return IdleToDormEntry(name=name, enabled=use,
+                           swap_with=idle_target_name(label))
 
 
 def idle_target_name(label) -> Optional[str]:
