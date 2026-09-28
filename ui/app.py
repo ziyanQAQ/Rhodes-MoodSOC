@@ -123,6 +123,9 @@ class MoodSocApp(tk.Tk):
         self._playing = False
         self._play_job = None
         self._layout_sig = None
+        #: 看板当前画的是**哪一份引擎世界**（`world_at` 每个换班执行点各自一份深拷贝）。
+        #: 判"要不要重画看板"不能只看班次号：**内部换班执行点不改 `shift_index`**，见 `set_time`。
+        self._layout_world = None
         self._setting_scale = False
         self._pending_t = None
         self._refresh_job = None
@@ -848,6 +851,8 @@ class MoodSocApp(tk.Tk):
     def _refresh_layout(self, quick: bool = False):
         """看板只在"当前时刻所在班次的布局"变化时刷新（房间结构没变则只换内容）。
 
+        ⚠️ 判"布局有没有变"用的是**内容签名**（房间 + 住户 + 练度），所以哪怕调用方因为
+        "换了个执行点 / 换了排班"而每段都调进来，只要画出来一样就不会重画控件。
         `quick=True`（拖动中）时**先只换看板**，把「全员一览」的位置标记推迟到停手后补——
         否则拖过班次边界时要额外重画 57 个芯片，会噎一下。
         """
@@ -862,6 +867,8 @@ class MoodSocApp(tk.Tk):
             self.board.set_layout(world, sub_title=self._shift_span_text(idx),
                                   shift_label=self.schedule.shifts[idx].label)
             self._layout_sig = sig
+        # 记下"画的是哪一份世界"：`set_time` 用它判断要不要在**内部换班执行点**上重画
+        self._layout_world = world
         if quick:
             self._roster_dirty = True
         else:
@@ -963,7 +970,15 @@ class MoodSocApp(tk.Tk):
         self._setting_scale = True
         self.scale.set(float(t))
         self._setting_scale = False
-        if changed_shift:
+        # ⚠️ 判据**不能只看"班次变了"**：**内部换班执行点**（长班 >12h 的 12h 整数倍）按设计
+        #    **不改 `shift_index`**（见 `store.schedule.execution_offsets`），可那一刻引擎会
+        #    重建布局、重跑进驻事件与闲置入宿 —— 布局可能真的换人（实测：24h 单班在 t=12
+        #    把一个人换进宿舍#2）。只判班次的话，看板会一直画着换人**之前**的排布
+        #    （用户报过"内部换班时 UI 没有显示对应布局"）。
+        #    判法：`world_at(t)` 在**每个换班执行点**各给一份深拷贝，所以"这一刻那份世界还是不是
+        #    上一次画的那一份"就是"要不要重画"的判据；同一段内是同一个对象（不会每步都重画）。
+        world = self._engine_world(t)
+        if changed_shift or world is not self._layout_world:
             self._refresh_layout(quick=quick)
         self.refresh_view(quick=quick)
 
