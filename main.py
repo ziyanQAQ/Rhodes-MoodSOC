@@ -120,8 +120,10 @@ def main() -> int:
     #      锁定区之外心情最高的那位。口径＝《闲置入宿完整逻辑》文档。
     #      开关来源：`--no-idle-to-dorm`（强制关）> `--idle-to-dorm`（强制开）> JSON 顶层
     #      `"idle_to_dorm": {"enabled": ...}`（没写 = 开）。
+    #      ⚠️ **单次 CLI 只对当前传入的这一个布局执行一次闲置入宿** —— 它不遍历班次、不生成周期、
+    #         也不生成长班的内部 12h 执行点（那是"排班轨迹"的事）。
+    #         多班次 / 多周期 / 长班内部换班执行点由 `store.schedule.simulate_schedule` 负责。
     #      ⚠️ **不设班次数量门槛**（文档 §2 第二版）：这里是"单份布局"，也照样结算一次。
-    #         多班排班由界面 / 程序接口逐班、逐换班执行点结算（`store.schedule`）。
     idle_on = (False if args.no_idle_to_dorm
                else True if args.idle_to_dorm
                else bool(getattr(world.idle_to_dorm, "enabled", True)))

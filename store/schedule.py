@@ -1198,7 +1198,16 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         #    逐人配置（文档 §8/§14、不变式 9）。
         if idle_to_dorm:
             _sync_moods(world, moods)
-            idle_moods = {n: moods[n] for n in names if world.get_operator(n) is None}
+            # ⚠️ **候选判定看"原始布局"，候选心情看"执行点实时心情"** —— 两件事分开：
+            #    · 存在性用 `pristine[idx]`（这一班**导入时**的那份布局），**不是** `world`：
+            #      `world` 此刻已经跑过进驻事件（位置互换 / `restore_back=False`），
+            #      将来若再加"会改变成员"的布局事件，用 `world` 判就会把"被事件挪出设施的人"
+            #      误判成新候选（文档 §7 第 3 条：必须"在该班次原始布局中完全未出现在任何设施"）。
+            #    · 心情一律取 `moods`（跨班/跨周期连续、内部换班点用当时的实际值、
+            #      心情指定事件可能已经改过它）—— 别从原始布局里的干员对象读 `op.mood`。
+            original_world = pristine[idx]
+            idle_moods = {n: moods[n] for n in names
+                          if original_world.get_operator(n) is None}
             # 逐位候选各留一份"轮到她的那一刻"的宿舍态 → 界面逐次表逐行取用
             # （面板不能拿班末那份 `world_at` 或排班快照当"她那一刻的世界"）。
             per_cand: Dict[str, dict] = {}

@@ -625,7 +625,7 @@ class IdleToDormMixin:
 
     | 序 | 条件 | 动作 |
     |---|---|---|
-    | 候选 | 该班**完全没出现在任何设施**、心情 < 24、不在黑名单 | 按 (心情↑, 名字↑) **依次**处理 |
+    | 候选 | 该班**原始布局**里**完全没出现在任何设施**、心情（**执行点实时值**）< 24、不在黑名单 | 按 (心情↑, 名字↑) **依次**处理 |
     | ① | 竖向正序里有"下一个连续位" | 直接住进去（**可以用锁定区里的空位**） |
     | ② | 所有可用宿舍全满 | 换**锁定区之外、心情最高**的那位（同心情取竖向最靠后）；**严格大于你**才换 |
     | ③ | 被换出的那位 | 心情 < 24 且不在黑名单且队列里没有同名 ⇒ **追加队尾**，可能再被处理一次 |
@@ -694,27 +694,28 @@ class IdleToDormMixin:
         self._protected_cache = max(0, int(protected_slots))
         pad = dict(padx=theme.PAD)
 
-        tk.Label(self, text="闲置入宿 = 每班开始时，把【这一班完全没出现在任何设施里、心情还没满】"
-                            "的干员安排进宿舍恢复。",
-                 bg=theme.BG, fg=theme.TEXT, justify="left", wraplength=600,
+        tk.Label(self, text="闲置入宿 = 在每个换班执行点，把【这一班完全没出现在任何设施里、"
+                            "心情还没满】的干员安排进宿舍恢复。\n"
+                            "每个真实班次的班初都会执行；时长超过 12h 的班次，还会在班内每个"
+                            "严格位于班末之前的 12h 整数倍执行内部换班。",
+                 bg=theme.BG, fg=theme.TEXT, justify="left", wraplength=660,
                  font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(anchor="w", **pad,
                                                                pady=(theme.PAD, 2))
         tk.Label(self,
-                 text="规则：候选（该班未出现在任何设施 + 心情未满 + 不在黑名单）按【心情从低到高】"
-                      "依次处理：① 竖向正序里有空位（宿舍1位1 → 宿舍2位1 → …）就直接住进去；\n"
+                 text="规则：候选（该班**原始布局**里未出现在任何设施 + 心情未满 + 不在黑名单）"
+                      "按【心情从低到高】依次处理："
+                      "① 竖向正序里有空位（宿舍1位1 → 宿舍2位1 → …）就直接住进去；\n"
                       "② 所有可用宿舍都满了 → 换出【锁定位置之外、心情最高】的那位"
                       "（心情相同取竖向最靠后的）；③ 每次互换都要求【对方心情严格大于你】，"
                       "相等也不换；被换出的人（心情 < 24、不在黑名单）会排到队尾、可能再被安排一次。\n"
-                      "手动高于自动：指定「宿舍NN·第M位」＝精确位次（那里空着就入住、有人就互换；"
-                      "若它前面还有空位会留下空洞 ⇒ 这一班直接跳过）；指定「宿舍NN」＝放进那间的"
-                      "下一个连续位；点名某人＝与那一刻在宿舍里的她互换。\n"
-                      "⚠️ 加工站 / 训练室的人、副手、所有上班与在宿舍的人**都不是候选**。",
-                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=600,
+                      "手动设置优先于自动（见下方那行）；加工站 / 训练室的人、副手、"
+                      "上班与在宿舍的人都**不是候选**。",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=640,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
                                                                 pady=(0, theme.GAP))
 
         self.enabled = tk.BooleanVar(value=bool(enabled))
-        ttk.Checkbutton(self, text="① 启用闲置入宿（每班开始时结算一次）",
+        ttk.Checkbutton(self, text="① 启用闲置入宿（每个换班执行点结算）",
                         variable=self.enabled, command=self._on_toggle).pack(anchor="w", **pad)
 
         # ---- ② 全局口径：锁定位置数 + 黑名单 ----

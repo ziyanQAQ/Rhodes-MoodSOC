@@ -449,7 +449,7 @@ def op_set_entry_events(session: Session, args: dict) -> dict:
 
 
 def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
-    """「闲置入宿」：每班开始时把"这一班完全没出现在任何设施、心情未满"的干员安排进宿舍。
+    """「闲置入宿」：**每个换班执行点**把"这一班完全没出现在任何设施、心情未满"的干员安排进宿舍。
 
     口径＝用户文档《闲置入宿完整逻辑》（见 `mood_soc.rules.apply_idle_to_dorm`）：
     有连续空位就直接住进去，全满了才换出**锁定区之外心情最高**的那位（要求严格大于候选）；
