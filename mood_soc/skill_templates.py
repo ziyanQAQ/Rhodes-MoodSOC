@@ -223,7 +223,7 @@ M_TEMPLATES: Tuple[Template, ...] = (
        params=("value",), notes="菲亚梅塔自律：+2 且拒绝其它一切来源（含宿舍基础回复）"),
     _t("M15a", ModelTier.A2_EVENT, "心情互换/顺序", Domain.DORM, Target.COND_FILTERED,
        Effect.MOOD_EVENT, ValueShape.POOL, Stacking.ZERO_PRIORITY,
-       params=("swap_with=previous_occupant",), notes="菲亚梅塔患难之交（未实现）"),
+       params=("swap_with=previous_occupant",), notes="菲亚梅塔患难之交（进驻事件）"),
     _t("M15b", ModelTier.A2_EVENT, "触发式恢复一次心情", Domain.SELF_FACILITY, Target.SELF,
        Effect.MOOD_EVENT, ValueShape.SCALAR, Stacking.ZERO_PRIORITY,
        params=("trigger", "amount=recipe_cost"), notes="棘刺爆炸艺术（加工站，未实现）"),
@@ -231,7 +231,7 @@ M_TEMPLATES: Tuple[Template, ...] = (
        Effect.VARIABLE, ValueShape.THRESHOLD, Stacking.SUM, modeled=False,
        params=("mood_condition", "real_effect"), notes="令山河远阔/铅踝心情落差/絮雨追忆等 6 条"),
     _t("M17", ModelTier.A1_RATE, "强化他人恢复效果（元修正）", Domain.DORM, Target.COND_FILTERED,
-       Effect.MOOD_RECOVER, ValueShape.SCALAR, Stacking.SUM, modeled=False,
+       Effect.MOOD_RECOVER, ValueShape.SCALAR, Stacking.SUM,
        params=("provider", "target_filter", "value"),
        notes="摩根「头号陪练」：描述不含「心情」两字，但把推进之王对格拉斯哥帮的宿舍恢复效果 +0.3。"
              "这类「改别人的技能」的元修正技能是描述关键词检索的盲区，靠台账兜住"),
