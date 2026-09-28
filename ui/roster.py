@@ -35,6 +35,7 @@ class RosterStrip(tk.Frame):
         self._entries: List[str] = []
         self._columns = COLUMNS_MAX
         self._rebuild_job = None
+        self._closing = False          # 窗口正在销毁 ⇒ 不再排新的 idle 重建（见 `cancel_pending`）
 
         head = tk.Frame(self, bg=theme.BG)
         head.pack(fill="x", padx=theme.PAD)
@@ -132,6 +133,8 @@ class RosterStrip(tk.Frame):
         """
         if event.width < 200:              # 尚未真正布局完，别用窄宽度把网格压成 1 列
             return
+        if self._closing:                  # 窗口在销毁：排了也没人跑，还会刷 invalid command name
+            return
         columns = self._columns_for_width(event.width)
         if columns == self._columns:
             return
@@ -143,6 +146,26 @@ class RosterStrip(tk.Frame):
         self._rebuild_job = None
         if self.winfo_exists():
             self._rebuild()
+
+    def cancel_pending(self) -> None:
+        """**窗口销毁前**必须调：撤掉挂着的 `after_idle` 重建，且**从此不再排新的**。
+
+        ⚠️ 不撤的话，`await idle` 到点时会去调一个**已被销毁**的 Tcl 命令，Tk 直接往 stderr 喷
+        `invalid command name "..._deferred_rebuild"`（回调里的 `winfo_exists()` 挡不住它 ——
+        错误发生在**进入 Python 回调之前**）。
+
+        ⚠️ 还要**上闩**（`_closing`）：销毁过程中 Tk 仍会派发 `<Configure>`
+        （实测 `Tk.destroy()` → 逐个销毁子控件时收到一个真实宽度 1560 的 Configure），
+        `_on_resize` 会因此**又排一个新的** idle 重建 —— 只撤一次是不够的（实测撤完还留一个）。
+        回归见 `tests/test_ui_app_smoke.TestGC只在主线程跑`。
+        """
+        self._closing = True
+        if self._rebuild_job is not None:
+            try:
+                self.after_cancel(self._rebuild_job)
+            except tk.TclError:
+                pass
+            self._rebuild_job = None
 
     def _rebuild(self) -> None:
         if not self._entries:

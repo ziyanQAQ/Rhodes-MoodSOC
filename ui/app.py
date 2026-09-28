@@ -73,6 +73,62 @@ PLAY_TICK_MS = 60
 #: 有界 join 是为了让线程不可能在本窗口销毁之后还把 Tk 对象在非主线程里回收。
 RECALC_JOIN_TIMEOUT = 5.0
 
+# ---------------------------------------------------------------------------
+# 「GC 只在主线程跑」的全局记账
+#
+# `gc.disable()/enable()` 是**解释器级**的（不是线程局部），所以这里用一个模块级计数器
+# 表达"现在有几个重算工作线程活着 + 我们是否替它们关掉了 GC"。
+#
+# 为什么非要这样：Tk 对象的析构（`tkinter.Variable/Tk.__del__` → Tcl 解释器销毁）**只能在主线程**。
+# 只要 GC 有机会在工作线程里跑，就可能把"创建完又被丢掉的 Tk 根"在非主线程里收掉 ⇒
+# `Tcl_AsyncDelete: async handler deleted by the wrong thread`（**进程直接 abort**，不是异常；
+# 实测全量测试合并跑会偶发崩）。所以：**工作线程里只关不恢复**，恢复一律交给主线程
+# （`_gc_on_when_idle()`，在 `_poll_recalc` / `_publish_recompute` / `refresh_view` /
+# `wait_recalc` / `destroy` 里调 —— 全都是主线程路径）。
+# 万一 `destroy()` 的 join 超时（线程还没收工），GC 就**继续关着**，由下一次主线程路径
+# 顺手恢复（测试里＝下一个窗口建起来；真实场景＝进程反正要退了）——宁可晚恢复，不可错线程收。
+# ---------------------------------------------------------------------------
+_gc_lock = threading.Lock()
+_gc_workers = 0          # 还活着的工作线程数（只统计我们自己起的重算线程）
+_gc_restore = False      # 我们替它们关掉了 GC ⇒ 等它们都结束、由主线程恢复
+
+
+def _gc_off_for_worker() -> None:
+    """工作线程入口：登记 + 关 GC（**不恢复**，恢复看 `_gc_on_when_idle()`）。"""
+    global _gc_workers, _gc_restore
+    with _gc_lock:
+        _gc_workers += 1
+        if gc.isenabled():                 # 环境本来就关着就别抢着开
+            gc.disable()
+            _gc_restore = True
+
+
+def _gc_worker_done() -> None:
+    """工作线程出口：只减计数（**不在线程里 `gc.enable()`**）。"""
+    global _gc_workers
+    with _gc_lock:
+        _gc_workers = max(0, _gc_workers - 1)
+
+
+def _gc_on_when_idle() -> None:
+    """**主线程**调用：没有工作线程了就把 GC 恢复回去。
+
+    开销只有一次布尔读（`refresh_view` 每帧都会调；只有真的"我们关过 GC"时才取锁复核）。
+    """
+    global _gc_restore
+    if not _gc_restore:                        # 快速路径：正常工作期间都走这里，不取锁
+        return
+    with _gc_lock:
+        if _gc_workers <= 0 and _gc_restore:
+            gc.enable()
+            _gc_restore = False
+
+
+def _live_recalc_workers() -> int:
+    """当前还活着的工作线程数（测试与诊断用）。"""
+    with _gc_lock:
+        return _gc_workers
+
 
 class _ViewVar:
     """**ViewVar** —— 长得像 `tk.BooleanVar` 的轻量视图（没有 .get(_var) 的重载）。"""
@@ -682,20 +738,21 @@ class MoodSocApp(tk.Tk):
         queue_ = self._recalc_q
 
         def _work():
-            # ⚠️ 工作线程里**临时关掉 gc**：Tk 的 `Variable.__del__` 只能在主线程跑，
-            #    如果析构正好发生在算的时候（GC 在工作线程触发），Tk 会打印
-            #    `RuntimeError: main thread is not in main loop`（测试输出里很吵）。
-            #    算完立刻恢复；这段时间主线程的回收只是推迟，不会漏。
-            gc_was = gc.isenabled()
-            gc.disable()
+            # ⚠️ 工作线程里**只关 GC、绝不恢复**（见模块头 `_gc_off_for_worker` 的说明）：
+            #    `gc.enable()` 是解释器级的，只要析构还有机会在工作线程里发生，Tk 就会报
+            #    `main thread is not in main loop`，再往下就是 `Tcl_AsyncDelete` **崩进程**。
+            #    恢复交给主线程的 `_gc_on_when_idle()`（本线程结束后由轮询任务触发）。
+            #    计数一直压到"线程真正干完活"为止（`queue_.put` 之后），否则并发窗口里
+            #    主线程可能提前把它恢复掉。
+            _gc_off_for_worker()
             try:
-                traj = Session.compute_trajectory(inputs)
-            except Exception as exc:            # noqa: BLE001 —— 线程里出错也要让主线程知道
-                traj = exc
+                try:
+                    traj = Session.compute_trajectory(inputs)
+                except Exception as exc:        # noqa: BLE001 —— 线程里出错也要让主线程知道
+                    traj = exc
+                queue_.put((gen, fit, sigs, traj))
             finally:
-                if gc_was:
-                    gc.enable()
-            queue_.put((gen, fit, sigs, traj))
+                _gc_worker_done()
 
         thread = threading.Thread(target=_work, name="dsh-recalc", daemon=True)
         self._recalc_thread = thread
@@ -732,6 +789,7 @@ class MoodSocApp(tk.Tk):
         就按最新设置重算 → ⑤ 都落地了收尾。
         """
         self._recalc_poll_job = None
+        _gc_on_when_idle()                       # 主线程路径：工作线程都收工了就把 GC 恢复
         if not self.winfo_exists():
             return
         latest = None
@@ -792,6 +850,7 @@ class MoodSocApp(tk.Tk):
         """
         deadline = time.perf_counter() + timeout
         while time.perf_counter() < deadline:
+            _gc_on_when_idle()                   # 主线程泵事件循环期间顺手把 GC 收回来
             if (self._recalc_thread is None or not self._recalc_thread.is_alive()) \
                     and self._recalc_done_gen == self._recalc_gen:
                 return True
@@ -812,6 +871,7 @@ class MoodSocApp(tk.Tk):
 
     def _publish_recompute(self, fit_slider: bool):
         """把 `session.traj` 的**最新结果**铺到界面上（同步/异步两条路共用）。"""
+        _gc_on_when_idle()                       # 主线程路径
         total = self._total_hours()
         if fit_slider or self.current_t > total:
             self.current_t = Decimal("0")
@@ -908,6 +968,7 @@ class MoodSocApp(tk.Tk):
 
         `quick=True`：拖动中的快路径（数值 + 色条跟手，底色等停手后再补）。
         """
+        _gc_on_when_idle()                       # 主线程路径（快速路径，几乎零成本）
         if self.traj is None:
             return
         moods = self.traj.moods_at(self.current_t)
@@ -1699,6 +1760,17 @@ class MoodSocApp(tk.Tk):
                 thread.join(timeout=RECALC_JOIN_TIMEOUT)
             except Exception:                  # noqa: BLE001 —— 收尾阶段不许再抛
                 pass
+        # 线程都收工了才恢复 GC —— 恢复动作本身必须在**主线程**（见模块头）。
+        _gc_on_when_idle()
+        # 「全员一览」的 `after_idle` 重建任务也取消掉：窗口没了它还挂着，Tk 会打印
+        # `invalid command name "..._deferred_rebuild"`（回调里的 `winfo_exists()` 挡不住 ——
+        # 命令名在 Tcl 里已经被删了，进回调之前就报错）。
+        try:
+            roster = getattr(self, "roster", None)
+            if roster is not None:
+                roster.cancel_pending()
+        except Exception:                      # noqa: BLE001
+            pass
         super().destroy()
 
 

@@ -313,8 +313,12 @@ documents/
     工作线程在 **52 名干员**的轨迹上不一致）。修法：引擎入口（`store.schedule.simulate_schedule`、
     `rules.evaluate` / `evaluate_base`）都先调 `config.use_project_decimal_context()`；
     回归 `Test线程与精度`（逐位一致 + 故意改坏上下文也会被设回来）。
-    ④ 工作线程里**临时 `gc.disable()`**：Tk 的 `Variable.__del__` 只能在主线程跑，析构落在工作线程会打印
-    `RuntimeError: main thread is not in main loop`（测试输出很吵）。
+    ④ ⚠️ **GC 只许在主线程跑**（`gc.disable()/enable()` 是**解释器级**的，不是线程局部）：
+    工作线程入口 `_gc_off_for_worker()`（登记 + 关），出口 `_gc_worker_done()` **只减计数、
+    一次都不 `gc.enable()`**；恢复一律由**主线程路径** `_gc_on_when_idle()` 做
+    （`_poll_recalc` / `_publish_recompute` / `refresh_view` / `wait_recalc` / `destroy`），
+    只要还有工作线程活着就继续关着。理由＝⑦：析构只要有一次落在工作线程就可能**崩进程**。
+    回归 `TestGC只在主线程跑`（线程里全程为假 + 出口不许自己开回来 + 落地/销毁后恢复）。
     ⑤ `apply_batch` / `apply_entry_event` / 改房间等级这类"落地后要写状态栏"的，文案放
     `app._status_after_recalc`（由 `_settle_recalc` 盖上）；面板要按新轨迹重建的就用
     `app.add_recalc_listener(绑定方法)`（`weakref.WeakMethod`，**不能传 lambda**）。
@@ -333,6 +337,11 @@ documents/
     by the wrong thread` **崩掉进程**（实测：全量测试合并跑三次崩两次、把 Tk 用例单独跑就稳；
     真实场景＝**重算过程中关窗口**）。`load_paths` 甩掉的旧线程也登记在 `_recalc_threads` 里，
     所以一样会被 join。回归 `Test重算中关窗口`（两条：在算的线程 / 被换排班甩掉的旧线程）。
+    ⚠️ **`destroy()` 还要撤掉挂着的 `after_idle`**：`Tk.destroy()` 逐个销毁子控件时 Tk **仍会派发
+    `<Configure>`**（实测收到一个真实宽度 1560），`RosterStrip._on_resize` 会因此**又排一个新的**
+    idle 重建 ⇒ 只撤一次不够、之后必然刷 `invalid command name "..._deferred_rebuild"`。
+    故 `cancel_pending()` **上闩** `_closing`（之后 `_on_resize` 直接返回），`destroy()` 里在
+    `super().destroy()` **之前**调它。回归 `TestGC只在主线程跑`。
 25. **计数基准 `power_count` 数的是「有效间数」**（2026-09）：上游有两条技能的**唯一效果**是
     「**仅影响设施数量**」——森蚺「我寻思能行」（**控制中枢** ∧ **Lancet-2 在发电站** ⇒ 发电站 **+2**）、
     承曦格雷伊「晨曦」（**发电站** ∧ **其他发电站内没有作业平台 `cc.tag.op`** ⇒ 发电站 **+1**）。
