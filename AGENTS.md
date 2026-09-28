@@ -40,7 +40,7 @@
 （`I>0` 下降 / `I<0` 上升 / `I=0` 不变），心情全程钳位 `[0, 24]`，全程 `decimal.Decimal`。
 
 **为谁服务（定位）**：`ArknightsInfraCalc-v3`（Rust，`E:\code_h\ArknightsInfraCalc-v3`）
-算"高效率的基建布局"，本项目**匹配那套布局**并生成它的**完整心情变化周期**；
+算"高效率的基建布局"，本项目**匹配那套布局**并在支持的设施、技能和建模假设范围内生成它的**完整心情变化周期**；
 图形界面只负责让人直观地看，**真正的交付面是 `api/`**：v3 把求解结果内联喂进来
 （`load_json`），配好「换干员 / 闲置入宿 / 周期」三组口径，然后问
 「某人 + 时间节点 → 心情」（`operator_detail`）或「时间节点 → 整座基地的布局 + 心情」（`layout_at`）。
@@ -116,7 +116,7 @@ documents/
    `data/skills_registry.txt` 是 buff 级 755 行覆盖台账。
 9. **数值一律 `decimal.Decimal`**，外部输入走 `to_decimal()`（经字符串，禁止 `Decimal(float)`）。
 10. **技能数值不要手写进 `skills.py`**：改 `data/*.txt` → 重跑生成脚本（生成物 `data/*_data.py` 勿手改）。
-11. **改完跑全量黑盒测试** `.venv/Scripts/python.exe -m unittest discover -s tests`（本机当前 **486 个**全绿），
+11. **改完跑全量黑盒测试**：优先使用 `.venv/Scripts/python.exe -m unittest discover -s tests`；环境缺少该解释器时使用 `py -3 -m unittest discover -s tests`。文档不固定测试总数；核心测试与 GUI 验收分别记录，GUI 不能用跳过代替真实 Windows 验收。
     并 `scripts/classify_skills.py --check`（模板全命中 + 台账行数 == 上游 buff 数）。
 12. **改了技能数据就跑技能全量核对** `scripts/verify_skills.py --check`（**四层**：
     L1 模板自洽 / L2 250 条 clause 逐条造场景核对 / L3 上游 755 条台账双向核对 + 描述数字对照 /

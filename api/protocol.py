@@ -26,6 +26,15 @@ from typing import Any, Optional
 
 from . import PROTOCOL_VERSION
 
+
+class ProtocolMismatch(Exception):
+    """调用方声明的协议版本与服务端不一致。"""
+
+    def __init__(self, expected: object, actual: int = PROTOCOL_VERSION):
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"协议版本不匹配：调用方 {expected!r}，服务端 {actual}")
+
 #: 结束常驻进程的伪 op（不查 op 表）。
 QUIT_OPS = ("quit", "exit", "__quit__")
 
@@ -59,6 +68,13 @@ def make_response(op: Optional[str], data: Any = None, *, error: Optional[dict] 
 
 def error_of(exc: BaseException) -> dict:
     """异常 → `{"type","message"}`。参数类错误归 `bad_request`，其余用类名。"""
+    if isinstance(exc, ProtocolMismatch):
+        return {
+            "type": "protocol_mismatch",
+            "message": str(exc),
+            "expected": exc.expected,
+            "actual": exc.actual,
+        }
     kind = "bad_request" if isinstance(exc, (ValueError, KeyError, TypeError)) else type(exc).__name__
     return {"type": kind, "message": str(exc) or type(exc).__name__}
 
@@ -68,4 +84,4 @@ def dumps(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
-__all__ = ["QUIT_OPS", "parse_request", "make_response", "error_of", "dumps"]
+__all__ = ["QUIT_OPS", "ProtocolMismatch", "parse_request", "make_response", "error_of", "dumps"]

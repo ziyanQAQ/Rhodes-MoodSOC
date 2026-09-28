@@ -25,6 +25,7 @@ from store import serialize
 from store.session import Session
 
 from . import PROTOCOL_VERSION
+from .protocol import ProtocolMismatch
 
 # ---------------------------------------------------------------------------
 # 工具
@@ -100,6 +101,8 @@ def _red_face(session: Session, name: str) -> List[List[object]]:
 # ---------------------------------------------------------------------------
 def op_capabilities(session: Session, args: dict) -> dict:
     """**握手**：协议版本 + 全部 op 名 + 本排班是否已载入。"""
+    if "expected_protocol" in args and args["expected_protocol"] != PROTOCOL_VERSION:
+        raise ProtocolMismatch(args["expected_protocol"])
     return {
         "protocol": PROTOCOL_VERSION,
         "operations": sorted(OPERATIONS),
@@ -263,7 +266,7 @@ def op_load_json(session: Session, args: dict) -> dict:
       - `apply_file_settings`：是否沿用**文件里的开关**（**默认 `false`**：不继承 v3 的
         `Fiammetta.enable`，「换心情」保持关闭）；
       - `entry_events`：显式开关「换心情」（缺省＝沿用上面那条规则）；
-      - `idle_to_dorm`：显式开关「闲置入宿」（**本入口默认开**，用本项目默认四级优先级）。
+      - `idle_to_dorm`：显式开关「闲置入宿」（**本入口默认开**，空位优先、锁定区外按心情最高者交换）。
 
     与 `load_file` 走**同一条装配路径**，同一份 JSON 走文件或走内存必须给出同一批数值。
     """

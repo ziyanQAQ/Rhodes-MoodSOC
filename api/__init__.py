@@ -56,6 +56,6 @@ python -m api.cli --op load_schedule --args @layout.json --then '{"op":"moods"}'
 """
 from __future__ import annotations
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 __all__ = ["PROTOCOL_VERSION"]

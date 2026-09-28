@@ -11,7 +11,7 @@
 - **base**：给定「布局」→ 每个干员的心情，以及"没有一个干员红脸"还能维持多久。
 
 **为谁服务**：`ArknightsInfraCalc-v3`（Rust）负责算"高效率的基建布局"，本项目负责**匹配那套布局**
-并生成它的**完整心情变化周期**。图形界面只是让人直观地看，**真正的交付面是 `api/`**：
+并在项目支持的设施、技能和建模假设范围内生成它的**完整心情变化周期**。图形界面只是让人直观地看，**真正的交付面是 `api/`**：
 v3 把求解结果内联喂进来（`load_json`），配好「换干员 / 闲置入宿 / 周期」三组口径，然后问
 「**某人 + 时间节点** → 心情」（`operator_detail`）或「**时间节点** → 整座基地的布局 + 全员心情」（`layout_at`）。
 
@@ -131,7 +131,7 @@ $ python main.py --demo --target 泡泡 --period 8 --explain
 ```
 
 ```jsonc
-{"id":1,"op":"capabilities"}                                     // 先握手：协议版本（当前 3）+ op 表
+{"id":1,"op":"capabilities","args":{"expected_protocol":4}}   // 先握手：协议版本 4 + op 表
 {"id":2,"op":"load_json","args":{"data": /* v3 求解结果原样塞进来 */ }}
 {"id":3,"op":"layout_at","args":{"at":8}}                        // 整座基地的布局 + 全员心情
 {"id":4,"op":"operator_detail","args":{"name":"但书","at":8}}     // 某人此刻的心情

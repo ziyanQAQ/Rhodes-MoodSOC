@@ -175,7 +175,7 @@ class Session:
         | 项 | 本入口默认 | 理由 |
         |---|---|---|
         | 文件里的开关（如 v3 的 `Fiammetta.enable`） | **不继承**（`apply_file_settings=False`） | 换干员必须手动配置，默认关 |
-        | 闲置入宿 | **开**（本项目默认四级优先级） | v3 没给就按本项目默认逻辑；**这也是全项目默认**（用户裁决"闲置入宿默认是开启的"），界面 / `load_file` / `simulate_schedule` 同样默认开 |
+        | 闲置入宿 | **开**（空位优先、锁定区外按心情最高者交换） | v3 没给就按本项目默认逻辑；**这也是全项目默认**（用户裁决"闲置入宿默认是开启的"），界面 / `load_file` / `simulate_schedule` 同样默认开 |
         | 周期 | 取文件里的班次时长（如 12/6/6 → 24h），`cycles=1` | 正好一个完整周期 |
 
         要按文件里的设置走（老口径）就传 `apply_file_settings=True`。
@@ -255,7 +255,8 @@ class Session:
         # ⚠️ 默认**开**（用户口径"闲置入宿默认是开启的"）：文件里没写这个键 → 开；
         #    显式写 `"idle_to_dorm": false` / `{"enabled": false}` → 关。
         self.idle_to_dorm = bool(getattr(idle, "enabled", True))
-        self.idle_protected_slots = int(getattr(idle, "protected_slots", None) or 5)
+        protected_slots = getattr(idle, "protected_slots", None)
+        self.idle_protected_slots = 5 if protected_slots is None else int(protected_slots)
         self.idle_blacklist = [str(n) for n in (getattr(idle, "blacklist", None) or [])]
         self.idle_globals = {}
         self.idle_entries = {}
@@ -1214,7 +1215,7 @@ def _entry_from_label(name: str, use: bool, label) -> IdleToDormEntry:
 def idle_target_name(label) -> Optional[str]:
     """下拉标签 → **干员名**（`"巫恋 23.4"` → `"巫恋"`）；`宿舍NN` / 「自动…」/ 空 → `None`。
 
-    ⚠️ 为什么标签里带心情：第④级的「点名换人」是**主动换**（不要求对方满 24），
+    ⚠️ 为什么标签里带心情：手动「点名换人」是**主动换**（不要求对方满 24），
     所以选项必须让人看得见他当时的心情（`store/session.idle_groups` 里生成）。
     剥法：只剩最后一段"能解析成数字"的尾巴才当心情剥掉 —— 干员名里没有空格
     （`data/operators.txt`），所以这条规则不会误伤。

@@ -741,6 +741,23 @@ def test_idle_groups_per_point():
           f"{[r[0] for r in groups[0][2]]} / {[r[0] for r in groups[1][2]]}")
 
 
+def test_session_import_preserves_zero_protected_slots():
+    print("导入配置：显式 protected_slots=0 不回退到默认 5")
+    from store.session import Session
+
+    session = Session()
+    session.load_layout({
+        "facilities": [
+            {"type": "宿舍", "level": 1, "slots": 1,
+             "operators": [{"name": "甲", "mood": "24"}]},
+        ],
+        "idle_to_dorm": {"enabled": True, "protected_slots": 0},
+    })
+    check("Session 同步导入配置后保留 protected_slots=0",
+          session.idle_protected_slots == 0,
+          str(session.idle_protected_slots))
+
+
 # ============================================================================
 # 入口
 # ============================================================================
@@ -751,7 +768,7 @@ def main() -> int:
                  test_vertical_reverse_tiebreak, test_protected_slots, test_blacklist,
                  test_candidates, test_queue, test_manual_position, test_named_swap,
                  test_auto, test_config, test_schedule_layer, test_internal_swap_points,
-                 test_idle_groups_per_point):
+                 test_idle_groups_per_point, test_session_import_preserves_zero_protected_slots):
         test()
     print(f"\n通过 {PASS} 条，失败 {FAIL} 条。")
     return 1 if FAIL else 0
