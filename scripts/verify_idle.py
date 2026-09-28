@@ -6,7 +6,7 @@
 
 覆盖：
   · **文档 §16 的典型示例**（默认锁定区 / 空位优先 / 自动交换 / 相等不换 /
-    同分取竖向最靠后 / 黑名单 / 重复入队 / 单班 / 长班内部换班 / 班末不重复 / 无候选）；
+    位置优先 / 黑名单 / 重复入队 / 单班 / 长班内部换班 / 班末不重复 / 无候选）；
   · **文档 §17 的不变式**（逐条挑关键项各配用例）；
   · 适用条件（任意班次数都执行；§2）、连续排列（§4）、竖向正序·反序（§4.1/§4.2）、
     手动位置与点名（§10/§11）、配置格式（§14）、以及**班次层**的三条集成口径
@@ -171,14 +171,15 @@ def test_vertical_order():
 
 
 def test_vertical_reverse_tiebreak():
-    print("§4.2/§16.5 同心情按竖向反序")
+    print("§4.2/§13 自动交换按竖向反序优先，心情只作资格条件")
     dorms = [[(f"宿{n}位{i}", 10) for i in range(1, 6)] for n in range(1, 5)]
-    dorms[0][4] = ("甲五", 22)          # 宿舍1位5
-    dorms[3][4] = ("丁五", 22)          # 宿舍4位5
-    world = make_layout(dorms, capacity=5, dorm_count=4, protected_slots=0)
+    dorms[0][4] = ("甲五", 22)          # 宿舍1位5：心情更高但位置更前
+    dorms[3][4] = ("丁五", 7)           # 宿舍4位5：心情较低但位置更后
+    world = make_layout(dorms, capacity=5, dorm_count=4, protected_slots=0,
+                        blacklist=["丁五"])
     run(world, {"候选": 6})
     after = dorm_names(world)
-    check("22 与 22 同分 ⇒ 优先换竖向最靠后的（宿舍4位5）",
+    check("先按位置：宿舍4位5满足心情闸，即使宿舍1位5心情更高也优先换宿舍4位5",
           "候选" in after[3] and "甲五" in after[0],
           str(after))
 
@@ -214,11 +215,11 @@ def test_protected_slots():
     check("锁定区的空位可以被候选入住（宿1位1）",
           dorm_names(world) == [["候选"], ["乙"]], str(dorm_names(world)))
 
-    # protected_slots=0 ⇒ 全都可以换：换掉心情最高的（宿1位1 的 9）
+    # protected_slots=0 ⇒ 全都可以换：按竖向反序扫描，首个满足心情闸的目标
     world = make_layout([[("甲", 9)], [("乙", 8)]], capacity=1, dorm_count=2, protected_slots=0)
     run(world, {"候选": 5})
-    check("protected_slots=0 ⇒ 锁定区外＝全部，换心情最高的（甲 9）",
-          dorm_names(world) == [["候选"], ["乙"]], str(dorm_names(world)))
+    check("protected_slots=0 ⇒ 锁定区外＝全部，按位置优先选择首个满足心情闸的目标",
+          dorm_names(world) == [["乙"], ["候选"]], str(dorm_names(world)))
 
     # 超出总位置数 ⇒ 钳到总数（谁都不能换）
     world = make_layout([[("甲", 9)], [("乙", 8)]], capacity=1, dorm_count=2, protected_slots=999)
@@ -231,8 +232,8 @@ def test_protected_slots():
     world = make_layout([[], [("乙", 9)], [("丙", 8)]], capacity=1, dorm_count=3,
                         protected_slots=1)
     run(world, {"甲": 5, "丁": 6})
-    check("候选住进锁定位置后该位置继续锁定（甲在宿1位1，被换走的是乙 9）",
-          dorm_names(world) == [["甲"], ["丁"], ["丙"]], str(dorm_names(world)))
+    check("候选住进锁定位置后该位置继续锁定（甲在宿1位1，后续按位置扫描）",
+          dorm_names(world) == [["甲"], ["丙"], ["丁"]], str(dorm_names(world)))
 
 
 # ============================================================================
@@ -475,11 +476,11 @@ def test_auto():
           dorm_names(world) == [["甲"], ["乙"]]
           and all(e.target != "乙" for e in events), str(dorm_names(world)))
 
-    # §16.3 自动交换：换出锁定区外心情最高的那位，她被追加队尾
+    # §16.3 自动交换：按竖向反序换出首个满足心情闸的那位，她被追加队尾
     world = make_layout([[("乙", 20)]], capacity=1, dorm_count=1, protected_slots=0)
     trace = {}
     run(world, {"甲": 8}, trace=trace)
-    check("§16.3 全满时换出心情最高者（20 > 8）",
+    check("§16.3 全满时按位置优先换出满足心情闸者（20 > 8）",
           dorm_names(world) == [["甲"]], str(dorm_names(world)))
     check("§16.3 被换出的乙（20 < 24）追加到队尾", "乙" in trace, str(list(trace)))
 

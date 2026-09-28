@@ -880,12 +880,12 @@ def reset_entry_events(world: BaseLayout) -> int:
 # 安排进宿舍；有连续空位就直接住进去，全满了就与宿舍里心情更高的人互换。
 # 位置每个执行点都从**原始排班**重建，心情跨执行点、跨班、跨周期连续。
 #
-# 处理顺序（文档 §9）：手动指定位置 → 手动点名交换 → 竖向正序找空位 → 自动最高心情交换。
+# 处理顺序（文档 §9）：手动指定位置 → 手动点名交换 → 竖向正序找空位 → 按竖向反序逐位检查自动交换。
 #
 # 关键概念：
 #   · **竖向正序** = 位次优先、宿舍序号其次：宿1位1、宿2位1、…、宿1位2、宿2位2、…
 #     用于锁定位置 / 找空位 / 位次选项；**竖向反序** = 它的完全逆序，只用于
-#     "自动交换的多个目标心情相同时"（优先取竖向最靠后的那位）。
+    #     "自动交换"按竖向反序逐位扫描，心情只作为是否满足交换条件的门槛。
 #   · **锁定位置** = 竖向正序的前 `protected_slots` 个位置（默认 5，文档 §5）。
 #     自动交换不换锁定区里的人；锁定区的**空位**照样能让候选入住。锁的是位置、不是人。
 #   · **连续排列** = 每间宿舍从第 1 位开始一个挨一个，唯一"可入住空位"＝现有人数 + 1。
@@ -895,7 +895,7 @@ def reset_entry_events(world: BaseLayout) -> int:
 #
 # ⚠️ 第一版里的"四级优先级 / 挂件门 `_is_pendant` / 阵营门 `_faction_protected` /
 #    "优先 4 最后 1" / "只看第 2~5 位" / "必须满 24" / 菲亚梅塔例外 / 自回型门"
-#    已按文档**全部取消**：自动交换只看"锁定区之外、心情最高、且严格大于候选"。
+#    已按文档**全部取消**：自动交换只看"锁定区之外、按竖向反序扫描，首个严格大于候选"。
 # ⚠️ **不设班次数量门槛**（文档 §2 第二版）：1 个班次的排班照样执行
 #    （第一版那套"少于 3 班不执行"已取消）。
 # ----------------------------------------------------------------------------
@@ -981,29 +981,26 @@ def _next_free_slots(world: BaseLayout) -> List[tuple]:
     return out
 
 
-def _auto_swap_target(world: BaseLayout, protected: set):
+def _auto_swap_target(world: BaseLayout, protected: set, candidate_mood):
     """**自动交换**的目标 → `(设施, 干员, 位次)`；没有可换的人返回 `(None, None, None)`。
 
     文档 §13：只在"当前实际位于可用宿舍、且**在锁定区之外**"的人里挑；**不再检查**
-    是否满心情 / 是否挂件 / 是否受阵营联动保护 / 在哪一间宿舍 / 位次是第几 / 是否特殊名单 /
-    是否自回复。排序键：
-      ① 心情**从高到低**；
-      ② 同心情按**竖向反序**（⇒ 竖向正序里位置最靠后的那位优先）。
+    是否满心情 / 是否挂件 / 是否受阵营联动保护 / 是否特殊名单 / 是否自回复。
+    按竖向反序逐位扫描，遇到第一个心情**严格高于候选**的住户就返回；位置优先，
+    心情只作为交换资格条件。
     """
-    best = None
-    for no, fac in _dorm_numbered(world):
-        for idx, op in enumerate(fac.operators):
+    dorms = _dorm_numbered(world)
+    for no, fac in reversed(dorms):
+        for idx in range(len(fac.operators) - 1, -1, -1):
+            op = fac.operators[idx]
             slot = idx + 1
             if (no, slot) in protected:
                 continue
             if world.facility_of(op.name) is not fac:
                 continue                     # 陈旧对象 / 她已经不在这一间了
-            key = (-op.mood, -slot, -no)     # 心情降序；同心情取竖向最靠后
-            if best is None or key < best[0]:
-                best = (key, fac, op, slot)
-    if best is None:
-        return None, None, None
-    return best[1], best[2], best[3]
+            if op.mood > candidate_mood:
+                return fac, op, slot
+    return None, None, None
 
 
 def _named_target(world: BaseLayout, name: str):
@@ -1046,7 +1043,7 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
     | 4 | 手动**只指定宿舍** | 放进"现有人数 + 1"；那间满了 → 跳过（不回退自动） |
     | 5 | 手动**点名**了交换对象 | 对象必须这一刻在某可用宿舍（可锁定区 / 可黑名单）；过严格心情闸后互换 |
     | 6 | 竖向正序找**可入住空位** | 直接入住（可以用锁定区里的空位） |
-    | 7 | 全都满了 → **自动交换** | 锁定区之外**心情最高**的那位（同心情取竖向最靠后）；**严格大于候选**才换 |
+    | 7 | 全都满了 → **自动交换** | 按竖向反序扫描锁定区之外的位置，取首个**严格大于候选**的住户 |
     | 8 | 换出来的那位 | 心情 < 24 且不在黑名单且队列里没有同名 ⇒ **追加队尾** |
 
     - **初始候选**（文档 §7/§8）：`idle` 传进来的"这一班**完全没有出现在任何设施**里的人"
@@ -1237,20 +1234,15 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
                    f"自动（竖向正序最靠前的空位：宿舍{key[1]:02d}·第{pos}位）")
             continue
 
-        # ---- 自动交换（文档 §13）：锁定区之外、心情最高的那位 ----
-        dorm, target, slot = _auto_swap_target(world, protected)
+        # ---- 自动交换（文档 §13）：竖向反序扫描，取首个满足心情闸的目标 ----
+        dorm, target, slot = _auto_swap_target(world, protected, mood)
         if target is None:
             _skip(name, "", (
                 f"（{name} 心情 {mood} 想入宿，但宿舍全满、锁定区之外没有可交换的人 "
                 f"→ 这一班不动）"))
             continue
-        if target.mood <= mood:
-            _skip(name, target.name, (
-                f"（{name} 心情 {mood}、宿舍里心情最高的可换对象 {target.name} 心情 "
-                f"{target.mood} —— 不严格大于你 → 这一班不动）"))
-            continue
         _swap(dorm, slot, target, name, op, mood, where,
-              "自动（宿舍全满 ⇒ 换出锁定区之外心情最高的那位）")
+              "自动（宿舍全满 ⇒ 按竖向反序取首个心情严格高于候选的目标）")
     return events
 
 
