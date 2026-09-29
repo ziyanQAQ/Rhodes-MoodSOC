@@ -1246,7 +1246,7 @@ class MoodSocApp(tk.Tk):
         if not self.idle_to_dorm.get():
             return "闲置入宿：未开启"
         return (f"闲置入宿：已开启（每个换班执行点把该班没出现在任何设施、心情未满的干员"
-                f"安排进宿舍：{self._idle_count()} 次；空位优先，全满则换出锁定区外心情最高的人；"
+                f"安排进宿舍：{self._idle_count()} 次；空位优先，全满则按竖向反序换出锁定区外首个心情严格更高者；"
                 f"锁定 {self.idle_protected_slots()} 个位置"
                 + (f"、黑名单 {len(self.idle_blacklist())} 人" if self.idle_blacklist() else "")
                 + "）")
