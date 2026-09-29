@@ -155,8 +155,19 @@ class SettingsDialog(tk.Toplevel):
         self.bind("<Escape>", lambda _e: self.destroy())
         # Tab 只在本分区里转（隐藏页仍然存在，不拦一下焦点会跑进看不见的控件）
         self.bind("<Tab>", lambda _e: self._cycle_focus(False))
-        self.bind("<Shift-Tab>", lambda _e: self._cycle_focus(True))
-        self.bind("<ISO_Left_Tab>", lambda _e: self._cycle_focus(True))
+        # Shift+Tab（反向）的**序列名要挑当前 Tk 认得的那个**：
+        # ⚠️ X11 那边叫 `<ISO_Left_Tab>`，但 **Windows 的 Tk ≤ 8.6.12 没有这个 keysym** ——
+        #    直接 bind 会抛 `TclError: bad event type or keysym "ISO_Left_Tab"`，
+        #    而它就发生在设置窗口的 `__init__` 里 ⇒ **整个「设置…」都打不开**
+        #    （Tk 8.6.13+ 才认这个名字，所以用 Python 3.14 构建的 exe 一直没暴露；
+        #     源码用 3.10~3.12 跑的用户会直接踩到）。
+        #    只绑**一个**（绑上就 break）：两个都绑的话，X11 上同一次按键可能触发两次。
+        for _seq in ("<Shift-Tab>", "<Shift-Key-Tab>", "<ISO_Left_Tab>"):
+            try:
+                self.bind(_seq, lambda _e: self._cycle_focus(True))
+                break
+            except tk.TclError:
+                continue
 
         self._center(parent)
         self.open_page(page or PAGES[0][0], first=True)
