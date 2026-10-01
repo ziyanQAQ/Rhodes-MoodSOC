@@ -801,19 +801,67 @@ class Session:
 
     def set_slots(self, shift_index: int, facility_index: int,
                   operators: Sequence[str]) -> None:
-        """改某个班次某间房的**进驻干员**（`operators` 为空串的位置直接丢弃 = 清空该位）。"""
+        """改某个班次某间房的**进驻干员**（`operators` 里的空串 = 该位留空）。
+
+        ⚠️ 位次语义：`operators[i]` 写的就是**第 i+1 位**。空串**留空洞、不左移**
+        （"清空第 1 位"不会把后面的人往前挪），导出时写成 `slots: ["", …]`。
+
+        **手动编辑逻辑**：调用方传进来的整份列表都被当作"人写的"——
+        每个填入的位次与被写进去的那位一起记进手动台账（`models.mark_manual`），
+        原来那份台账整份作废。自动入宿从此不占这些位次、不换这些人。
+        导入**不打标**（只有这个入口与 `set_facility_slots` 会打）。
+        """
         facs = self.facilities_of(shift_index)
         if not (0 <= facility_index < len(facs)):
             raise ValueError(f"第 {shift_index + 1} 班没有第 {facility_index + 1} 间房")
-        facs[facility_index]["operators"] = [n for n in operators if n]
+        names = [str(n) if n else "" for n in operators]
+        fac = dict(facs[facility_index])
+        _write_seats(fac, names)
+        _write_manual(fac, raw_slots=[i for i, n in enumerate(names) if n],
+                      raw_names=[n for n in names if n])
+        facs[facility_index] = fac
+        self.replace_facilities(shift_index, facs)
+
+    def set_facility_slots(self, shift_index: int, facility_index: int,
+                           slots: Sequence[Optional[str]]) -> None:
+        """**带空洞的逐位写入**（界面的看板/表格走这条）：`slots[i]` = 第 i+1 位的干员名或 `None`。
+
+        与 `set_slots` 的区别是**不动没提到的位次**：传进来的每一位按原样写
+        （`None`/空串 = 该位留空），后面的位次与它们的手动标记保持原样。
+        手动台账：这些位次被标成"人写的"，写了名字的连人一起标（`_write_manual`）。
+        """
+        facs = self.facilities_of(shift_index)
+        if not (0 <= facility_index < len(facs)):
+            raise ValueError(f"第 {shift_index + 1} 班没有第 {facility_index + 1} 间房")
+        fac = dict(facs[facility_index])
+        current = _seat_values(fac)
+        merged = list(current)
+        for i, spec in enumerate(slots):
+            value = str(spec) if spec else ""
+            while len(merged) <= i:
+                merged.append("")
+            merged[i] = value
+        _write_seats(fac, merged)
+        _write_manual(fac, raw_slots=[i for i, n in enumerate(merged) if n],
+                      raw_names=[n for n in merged if n], touched=len(slots))
+        facs[facility_index] = fac
         self.replace_facilities(shift_index, facs)
 
     def set_room_level(self, shift_index: int, facility_index: int, level: int) -> None:
-        """改某个班次某间房的等级（容量随之变化）。"""
+        """改某个班次某间房的等级（容量随之变化）。
+
+        ⚠️ 容量变小 ⇒ **越界的位次与它的手动标记一起丢掉**（Q37 的裁决）：
+        数据里不保留"看不见的第 7 位"，否则导出/再导入会让位次与容量对不上。
+        """
         facs = self.facilities_of(shift_index)
         if not (0 <= facility_index < len(facs)):
             raise ValueError(f"第 {shift_index + 1} 班没有第 {facility_index + 1} 间房")
-        facs[facility_index]["level"] = int(level)
+        fac = dict(facs[facility_index])
+        fac["level"] = int(level)
+        cap = _capacity_of_dict(fac)
+        if cap:
+            fac = _trim_to_capacity(fac, cap)
+        facs[facility_index] = fac
         self.replace_facilities(shift_index, facs)
 
     def replace_facilities(self, shift_index: int, facilities: List[dict]) -> None:
@@ -824,7 +872,12 @@ class Session:
         self.recompute()
 
     def facilities_of(self, shift_index: int) -> List[dict]:
-        """某班次布局的**可改副本**（`{"type","level","operators",...}` 形式）。"""
+        """某班次布局的**可改副本**（`{"type","level","slots"/"operators","manual",...}` 形式）。
+
+        占位按**位次**给出：有空洞时 `slots`（数组长度 = 到过的最大位次，空槽为 `""`），
+        没有空洞时仍是紧凑的 `operators`。调用方拿到的是一份**独立副本**，改完要
+        `replace_facilities` 写回。
+        """
         if self.schedule is None:
             return []
         return [dict(f, operators=list(f.get("operators", [])))
@@ -1231,6 +1284,106 @@ def idle_target_name(label) -> Optional[str]:
             return text
         return head
     return text
+
+
+# ---------------------------------------------------------------- 布局写入原语
+def _seat_values(fac: dict) -> List[str]:
+    """设施描述 dict → **按位次对齐的值列表**（空槽写 `""`）。
+
+    有 `slots` 用 `slots`（空槽 = `null`/`""`），否则用紧凑的 `operators`（位次 = 下标）。
+    ⚠️ "所有干员名都排在前面"是导入数据的常态，所以紧凑列表在这里就是"从第 1 位起连续"。
+    """
+    raw = fac.get("slots")
+    values = raw if raw is not None else fac.get("operators") or []
+    return [str(n) if n else "" for n in values]
+
+
+def _write_seats(fac: dict, values: Sequence[str]) -> None:
+    """把**按位次对齐的值列表**写回设施描述（`_seat_values` 的逆）。
+
+    写法（Q25/Q32 的裁决）：**尾部没有空槽 ⇒ 紧凑的 `operators`**（老文件、老读法不受影响）；
+    只要**中间或开头留了空洞** ⇒ `slots`（真正的空槽写 `null`）。
+
+    ⚠️ **不裁剪尾部空槽**：`[null, null, "丙"]` 这种前面留空必须原样写下来 —— 位次是正式的
+    概念，裁掉头部空洞会让"第 3 位的丙"变成"第 1 位的丙"（手动台账、`dorm_state.reach` 全跟着错）。
+    内容全空时按紧凑写法写空数组。
+    """
+    values = [str(v) if v else "" for v in values]
+    reached = [i for i, v in enumerate(values) if v]
+    if not reached:
+        fac.pop("slots", None)
+        fac["operators"] = []
+        return
+    width = reached[-1] + 1
+    trimmed = values[:width]
+    fac.pop("operators", None)
+    if any(not v for v in trimmed):
+        fac["slots"] = [v or None for v in trimmed]
+    else:
+        fac["operators"] = list(trimmed)
+
+
+def _write_manual(fac: dict, *, raw_slots=(), raw_names=(), touched: Optional[int] = None) -> None:
+    """写设施描述的 `manual` 台账（`store.session.set_slots` / `set_facility_slots` 用）。
+
+    规则（Q2/Q12/Q13）：
+      · 传进来的位次（前 `touched` 个）一律进 `slots`＝"这一位归人管"；
+      · 写了名字的进 `names`＝"这个人是人放的"；
+      · 同一份数据里**已经被写掉的人**（不再出现在 `values` 里）从 `names` 摘掉；
+      · 台账空了就把 `manual` 键删掉（导出保持干净）。
+    """
+    limit = len(_seat_values(fac)) if touched is None else min(int(touched), len(_seat_values(fac)))
+    slots = {int(i) for i in raw_slots if 0 <= int(i) < limit}
+    slots |= set(range(limit)) if touched is not None else set()
+    names = {str(n) for n in raw_names if n}
+    live = {v for v in _seat_values(fac) if v}
+    names &= live
+    if slots or names:
+        fac["manual"] = {"slots": sorted(slots), "names": sorted(names)}
+    else:
+        fac.pop("manual", None)
+
+
+def _capacity_of_dict(fac: dict) -> int:
+    """某条设施描述（dict）的容量：`capacity` 覆盖优先（历史的数字型 `slots` 也认），
+    否则按等级查容量表（宿舍各等级都是 5）。"""
+    override = fac.get("capacity")
+    if override is None:
+        legacy = fac.get("slots")
+        if isinstance(legacy, (int, float)) and not isinstance(legacy, bool):
+            override = legacy
+    if override is not None:
+        return int(override)
+    from mood_soc.config import facility_slots, parse_facility_type
+
+    ftype = parse_facility_type(fac.get("type"))
+    if ftype is None:
+        return 0
+    return int(facility_slots(ftype, int(fac.get("level", 1))))
+
+
+def _trim_to_capacity(fac: dict, capacity: int) -> dict:
+    """容量变小 ⇒ **越界的空位次与它的手动标记一起丢掉**（Q37 的裁决）。
+
+    ⚠️ **只丢空位、不丢人**：越界格子里还住着人时**保留**（那正是"超容量"这种布局问题，
+    要交给自检报出来，不能在用户没看见的时候把人悄悄删掉 —— 曾经的实现就是那样）。
+    """
+    values = _seat_values(fac)
+    if len(values) <= capacity:
+        return fac
+    drop = [i for i in range(capacity, len(values)) if not values[i]]
+    if not drop:
+        return fac
+    keep = values[:capacity]
+    ledger = dict(fac.get("manual") or {})
+    if ledger:
+        ledger["slots"] = [i for i in (ledger.get("slots") or []) if int(i) < capacity]
+    out = {k: v for k, v in fac.items() if k not in ("slots", "operators")}
+    _write_seats(out, keep)
+    if ledger and ledger["slots"]:
+        out["manual"] = {"slots": sorted(int(i) for i in ledger["slots"]),
+                         "names": sorted(str(n) for n in (ledger.get("names") or []))}
+    return out
 
 
 __all__ = [

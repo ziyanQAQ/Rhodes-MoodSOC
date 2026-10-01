@@ -147,6 +147,10 @@ class Facility:
     deputies: List[Operator] = field(default_factory=list)   # 副手（不占位）
     slots: Optional[int] = None                      # 容量覆盖；None = 按 FACILITY_SLOTS_BY_LEVEL 取该等级
     enabled: bool = True                             # 是否已建成/启用（未启用不计入"每有 N 间"）
+    #: **位次映射**：`{0 基位次: 干员}`（见 `_slots`）
+    _slots: Dict[int, "Operator"] = field(default_factory=dict, init=False, repr=False)
+    #: **手动台账**（见 `ManualLedger`）：用户手动动过的位次与人；`None` = 从没手动编辑过
+    _manual: Optional["ManualLedger"] = field(default=None, init=False, repr=False)
 
     # ------------------------------------------------------------------ 便捷属性
     @property
@@ -168,11 +172,222 @@ class Facility:
 
     def is_full(self) -> bool:
         """进驻人数是否已达容量（容量 0 表示该设施不可进驻）。"""
-        return len(self.operators) >= self.capacity
+        return len(self.slot_map()) >= self.capacity
+
+    def slot_map(self) -> Dict[int, Operator]:
+        """`{0 基位次: 干员}` —— **位次可留空洞**的占位视图（见 `_slots`）。
+
+        没有显式位次（绝大多数设施、老数据）时按 `enumerate(operators)` 现算，等价于旧行为。
+        ⚠️ **自愈**：`_slots` 是"位次 → 干员"的快照，若有人绕过 `set_seat` 直接改
+        `operators`（历史上确实有过这种写法），它与 `operators` 会失配 —— 检测到失配就
+        **退回紧凑视图**（宁可按"位次＝下标"理解，也不给出一个错位的位次）。
+        """
+        saved = self._slots
+        if saved:
+            if [id(o) for o in self.operators] == [id(saved[k]) for k in sorted(saved)]:
+                return saved
+            self._slots = {}                 # 被外部改过 ⇒ 位次不再可信
+        return {i: op for i, op in enumerate(self.operators)}
+
+    def slot_of(self, name: str) -> Optional[int]:
+        """某干员占的**位次**；不在本设施 → `None`。"""
+        for i, op in self.slot_map().items():
+            if op.name == name:
+                return i
+        return None
+
+    def next_open_slot(self) -> Optional[int]:
+        """**第一个可入住空位**的 0 基位次；满了（或容量 0）→ `None`。
+
+        ⚠️ 与"列表长度"不是一回事：清空某一位会**留下空洞**（位次不左移），
+        所以下一个可入住位可能是中间的一格。老数据（无空洞）下结果与 `len(operators)` 相同。
+        ⚠️ **手动钉住的位次不算"可入住"**（「手动清空的那一位保持空着」，见 Q13/Q12）——
+        这条判断的权威版本在 `rules._seat_verdict`；这里镜像一份，方便 `dorm_state` / 面板用。
+        """
+        cap = self.capacity
+        if cap <= 0:
+            return None
+        led = read_manual(self)
+        used = self.slot_map()
+        for i in range(cap):
+            if i not in used and not led.pins_slot(i):
+                return i
+        return None
 
     def all_people(self) -> List[Operator]:
         """进驻 + 副手（全部在场干员）。"""
         return list(self.operators) + list(self.deputies)
+
+
+# ============================================================================
+# ① 手动编辑逻辑的数据表达（解耦三层之一；见 rules 里的「座位裁决」）
+# ============================================================================
+@dataclass
+class ManualLedger:
+    """**手动台账** —— "人对这个设施的这些位次做过什么"。
+
+    它是「手动编辑逻辑」唯一的持久化痕迹：**导入不打标**，只有用户在界面上
+    动过某个班次某个位置（`store.session.set_slots` 等入口）才会写进来。
+
+    ```json
+    {"slots": [0, 2], "names": ["甲", "丙"]}      // 位次（0 基）与被手动放进去的人
+    ```
+
+    语义（优先级链「手动 > 自动 > 导入」的第 1 层）：
+
+    - `slots` 里的位次 = **被手动钉住**：自动入宿既不占用它、也不换出里面的人。
+      手动把某位清空 ⇒ 该位次**留在台账里**（＝"这一位保持空着"，见 Q13/Q12 的裁决）。
+    - `names` 里的人 = **被手动放进去**：自动入宿不许把她换出（哪怕她心情很低）。
+    - 加了一条进去、就不再有"解除"的隐式路径：显式清空某位仍留 `slots` 标记（锁空位），
+      要真正让自动入宿接管这一位，只能由调用方显式 `clear_manual`。
+
+    ⚠️ 它**只被 ① 写、只被 ② 读**：写入点全在 `store/session.py`，读取点全在
+    `rules._seat_verdict` 与自动入宿内部。自动入宿换人时**不碰**它（它就地改的是运行副本）。
+    """
+    slots: set = field(default_factory=set)      # 0 基位次
+    names: set = field(default_factory=set)
+
+    def is_empty(self) -> bool:
+        return not self.slots and not self.names
+
+    def pins_slot(self, index: int) -> bool:
+        return int(index) in self.slots
+
+    def pins_name(self, name: str) -> bool:
+        return bool(name) and str(name) in self.names
+
+    def to_dict(self) -> dict:
+        return {"slots": sorted(int(i) for i in self.slots),
+                "names": sorted(str(n) for n in self.names)}
+
+
+def build_manual_ledger(raw) -> "ManualLedger":
+    """解析设施上的 `manual` 键（缺省 → 空台账＝这份布局纯导入）。
+
+    宽松写法：缺省 / `null` / `{}` → 空；`{"slots": [...], "names": [...]}`。
+    """
+    if not isinstance(raw, dict):
+        return ManualLedger()
+    slots = raw.get("slots") or ()
+    names = raw.get("names") or ()
+    if not isinstance(slots, (list, tuple, set)) or not isinstance(names, (list, tuple, set)):
+        raise ValueError(f"manual 应当是 {{'slots': [...], 'names': [...]}}，收到 {raw!r}")
+    return ManualLedger(slots={int(i) for i in slots},
+                        names={str(n) for n in names if str(n)})
+
+
+# ---------------------------------------------------------------- 占位原语
+def facility_occupancy(raw: dict) -> tuple:
+    """由一条设施描述解析**占位** → `(operators 列表, 位次映射)`。
+
+    两种写法（`store.layout.build_base_layout` 与 `store.serialize` 用同一口径）：
+
+    ```json
+    {"operators": ["甲", "乙"]}                     // 紧凑：位次 = 下标（老文件、绝大多数设施）
+    {"slots": ["甲", null, "丙", null, null]}       // 有位次空洞：空槽写 null（长度 = 容量）
+    ```
+
+    ⚠️ `slots` 优先于 `operators`（二者同时出现时以 `slots` 为准）；`slots` 里的空槽
+    **不产生干员对象**，只体现在位次映射里（第 `i` 位没人 ⇒ `i` 不在映射中）。
+    ⚠️ **历史写法**：`slots` 早先是"容量覆盖"（数字，v4 蓝图的 `dorm_beds` 也走它）。
+    数字型 `slots` 仍然当容量读（不是占位数组）；容量覆盖的正式键是 `capacity`。
+    """
+    raw_slots = raw.get("slots")
+    if isinstance(raw_slots, (list, tuple)):
+        mapping: Dict[int, object] = {}
+        for i, spec in enumerate(raw_slots):
+            if spec is None or (isinstance(spec, str) and not spec.strip()):
+                continue
+            mapping[i] = spec
+        return list(mapping.values()), mapping
+    specs = list(raw.get("operators") or ())
+    return specs, {i: spec for i, spec in enumerate(specs)}
+
+
+def set_seat(facility: "Facility", index: int, occupant: Optional["Operator"],
+             *, invalidate=None) -> None:
+    """把 `facility` 的第 `index`（0 基）位设为 `occupant`（`None` = 留空）。
+
+    **空洞的唯一写入口**：维护 `_slots` 与紧凑的 `operators` 列表两者的一致，
+    并保证 `operators` 里的对象顺序与位次顺序一致（读的人不必懂 `_slots`）。
+    容量越界 → 抛 `ValueError`（调用方应先钳位；静默丢人会掩盖 bug）。
+    """
+    if index < 0 or index >= int(facility.capacity):
+        raise ValueError(f"{facility.display_name} 没有第 {index + 1} 位"
+                         f"（容量 {facility.capacity}）")
+    mapping = dict(facility.slot_map())
+    for key in [k for k, op in mapping.items()
+                if op.name == occupant.name] if occupant is not None else []:
+        if key != index:
+            del mapping[key]                       # 同一个人不占两个位
+    if occupant is None:
+        mapping.pop(index, None)
+    else:
+        mapping[index] = occupant
+    facility._slots = mapping
+    facility.operators = [mapping[k] for k in sorted(mapping)]
+    if invalidate is not None:
+        invalidate()
+
+
+def remove_occupant(facility: "Facility", name: str, *, invalidate=None) -> bool:
+    """把某人从该设施里摘掉（留空洞，**不左移**）。返回是否真的摘掉了。
+
+    ⚠️ 它**不动手动台账**：台账里"钉住的位次"是用户意图，不会因为人被挪走而消失；
+    "手动放进去的人"由调用方（`store/session.py` 的编辑入口）负责同步。
+    """
+    hit = False
+    for key, op in list(facility.slot_map().items()):
+        if op.name == name:
+            set_seat(facility, key, None)
+            hit = True
+    if hit and invalidate is not None:
+        invalidate()
+    return hit
+
+
+# ---------------------------------------------------------------- 台账原语
+def read_manual(facility: "Facility") -> ManualLedger:
+    """该设施的**手动台账**（没有就现建一个空的；不写回）。"""
+    ledger = getattr(facility, "_manual", None)
+    return ledger if ledger is not None else ManualLedger()
+
+
+def mark_manual(facility: "Facility", index: int, name: str = "") -> ManualLedger:
+    """**① 手动编辑逻辑的唯一写入口**：记下"第 `index` 位被手动写成 `name`（可空）"。
+
+    规则（Q2/Q12/Q13 的裁决）：
+      · 位次一定进 `slots`（这一位从此由人负责，自动入宿不占不换）；
+      · 写了名字 ⇒ 该名字进 `names`，同时把这一位**原来那个名字**移出 `names`；
+      · 名字为空（手动清空）⇒ 只留位次标记，原来那个名字移出 `names`（她不再是"手动放的"）。
+    """
+    facility._slots = dict(facility.slot_map())
+    ledger = read_manual(facility)
+    facility._manual = ledger
+    ledger.slots.add(int(index))
+    old = facility._slots.get(int(index))
+    if old is not None:
+        ledger.names.discard(old.name)
+    if name:
+        ledger.names.add(str(name))
+    return ledger
+
+
+def clear_manual(facility: "Facility", index: Optional[int] = None,
+                 name: str = "") -> None:
+    """撤掉手动标记（`index=None` = 清空该设施整份台账）。
+
+    用于"整份替换该班次布局 / 房间等级变小"这类动作（Q37：越界位次连同标记一起丢掉）。
+    """
+    ledger = read_manual(facility)
+    facility._manual = ledger
+    if index is None:
+        ledger.slots.clear()
+        ledger.names.clear()
+        return
+    ledger.slots.discard(int(index))
+    if name:
+        ledger.names.discard(str(name))
 
 
 @dataclass
@@ -745,9 +960,14 @@ class BaseLayout:
                 issues.append(f"{f.display_name} 等级 Lv{f.level} 超过上游最高等级 Lv{max_lv}")
             # 容量按**当前等级**算（等级可改；上游 phases[lv].maxStationedNum）
             cap = facility_slots(f.ftype, f.level) if f.slots is None else f.slots
-            if len(f.operators) > cap:
-                issues.append(f"{f.display_name} 进驻 {len(f.operators)} 人，"
+            occupied = len(f.slot_map())
+            if occupied > cap:
+                issues.append(f"{f.display_name} 进驻 {occupied} 人，"
                               f"超过 Lv{f.level} 容量 {cap} 人")
+            over = [i for i in f.slot_map() if i >= int(cap)]
+            if over:
+                issues.append(f"{f.display_name} 有第 {max(over) + 1} 位的干员，"
+                              f"超过 Lv{f.level} 容量 {cap} 位")
         return issues
 
 

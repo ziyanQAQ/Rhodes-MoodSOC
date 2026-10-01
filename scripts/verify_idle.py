@@ -1,20 +1,24 @@
-"""scripts/verify_idle.py —— 「闲置入宿」自检（口径＝用户文档《闲置入宿完整逻辑》）。
+"""scripts/verify_idle.py —— 「闲置入宿」自检（三层解耦版：手动编辑 > 自动入宿 > 导入布局）。
 
 用法：
     .venv/Scripts/python.exe scripts/verify_idle.py          # 全绿 → 退出码 0，有红 → 1
     .venv/Scripts/python.exe scripts/verify_idle.py -v       # 顺带打印每一条通过项
 
-覆盖：
-  · **文档 §16 的典型示例**（默认锁定区 / 空位优先 / 自动交换 / 相等不换 /
-    位置优先 / 黑名单 / 重复入队 / 单班 / 长班内部换班 / 班末不重复 / 无候选）；
-  · **文档 §17 的不变式**（逐条挑关键项各配用例）；
-  · 适用条件（任意班次数都执行；§2）、连续排列（§4）、竖向正序·反序（§4.1/§4.2）、
-    手动位置与点名（§10/§11）、配置格式（§14）、以及**班次层**的三条集成口径
-    （§2/§3：位置每班重建、锚点排在入宿之后）。
+口径（2026-10 重写，见 `documents/04-特殊机制.md` 第 30 条）：
 
-⚠️ 这份脚本是**文档口径的独立自检**（一条一条对着文档写），跑法见上；
-   `tests/test_idle_to_dorm.py` / `tests/test_idle_wiring.py` 是与它并行的 unittest 版本
-   （引擎示例 + 界面/程序接口接线），两边都要绿。
+  ① **手动编辑**（`models.ManualLedger`，跟着班次布局走）—— 钉住的**位次**与手动放进去的
+     **人**绝对不碰（不占、不换）；手动清空的那一位**保持空着**；导入不打标。
+  ② **全局配置** —— 总开关 / 锁定位置数（竖向正序前 N 个**逻辑位次**，默认 5）/
+     黑名单（不能通过闲置入宿进宿舍）/ 逐人"不参与"。
+  ③ **自动入宿** —— 两相：竖向正序填空床 → 全满则取**心情最低**的候选替换
+     "锁定区外、心情 ≥ 她、且心情最大"的住户（并列取竖向正序靠前）；换人接替原位次；
+     被换出者不在本执行点再入队，留到下一个执行点重新评估；
+     定点＝**宿舍里（锁定区外）最低的那位也 ≥ 外面剩下的候选**。
+  ④ **导入布局**＝基线不是护身符：住进宿舍的人照样可以被换出去。
+
+⚠️ 已作废、别再加回来：手动指定位置 / 手动点名（归**手动编辑逻辑**，走布局快照）、
+   竖向反序取"首个严格大于"、被换出者追加队尾、连续排列（留空洞即跳过）、
+   以及更早的四级优先级 / 挂件门 / 阵营门 / 菲亚梅塔例外。
 """
 from __future__ import annotations
 
@@ -33,8 +37,13 @@ except Exception:                     # noqa: BLE001 —— 老解释器/被重�
 from mood_soc import rules as rules_mod                      # noqa: E402
 from mood_soc.battery import to_decimal                      # noqa: E402
 from mood_soc.config import MOOD_MAX, FacilityType           # noqa: E402
+from mood_soc.models import (ManualLedger, mark_manual,      # noqa: E402
+                             read_manual, set_seat)
 from mood_soc.models import build_idle_to_dorm_config        # noqa: E402
-from mood_soc.rules import (DEFAULT_PROTECTED_SLOTS,         # noqa: E402
+from mood_soc.rules import (DEFAULT_PROTECTED_SLOTS, SEAT_AUTO,  # noqa: E402
+                            SEAT_KEEP, SEAT_LOCKED, SEAT_SWAPPABLE,
+                            _best_swap_victim, _dorm_numbered, _next_free_slots,
+                            _protected_positions, _seat_key, _seat_verdict,
                             apply_idle_to_dorm, dorm_state)
 from store.layout import build_base_layout                   # noqa: E402
 from store.schedule import (MoodSetEvent, Schedule, Shift,   # noqa: E402
@@ -61,18 +70,26 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 # 合成布局（只用名字 + 心情；闲置入宿不读技能，所以合成干员足够且完全确定）
 # ============================================================================
 def make_layout(dorms, *, capacity=5, dorm_count=None, extra=(), protected_slots=5,
-                blacklist=(), enabled=True, per_operator=None):
+                blacklist=(), enabled=True, per_operator=None, manual=None, labels=False):
     """造一份布局：`dorms` = `[[(名字, 心情), ...], ...]`（按宿舍序号 1 基）。
 
     `extra`：额外设施（dict 原样塞进去，如 `{"type": "制造站", ...}`）；
-    `per_operator`：逐人手动设置（`IdleToDormEntry` 的 JSON 写法）。
+    `per_operator`：逐人"参不参与"设置（`IdleToDormEntry` 的 JSON 写法）；
+    `manual`：手动台账 `{宿舍下标(0 基): {"slots": [...], "names": [...]}}`；
+    `labels=True`：给宿舍写上 `宿舍#N`（**多间不带名字的宿舍在引擎里是同一个键**，
+    要按设施取用时必须给名字）。
     """
     facilities = []
     total_dorms = len(dorms) if dorm_count is None else int(dorm_count)
     for i in range(total_dorms):
         people = dorms[i] if i < len(dorms) else []
-        facilities.append({"type": "宿舍", "level": 1, "slots": int(capacity),
-                           "operators": [{"name": str(n), "mood": str(m)} for n, m in people]})
+        fac = {"type": "宿舍", "level": 1, "capacity": int(capacity),
+               "operators": [{"name": str(n), "mood": str(m)} for n, m in people]}
+        if labels:
+            fac["name"] = f"宿舍#{i + 1}"
+        if manual and i in manual:
+            fac["manual"] = manual[i]
+        facilities.append(fac)
     facilities.extend(extra)
     idle = {"enabled": bool(enabled), "protected_slots": int(protected_slots),
             "blacklist": [str(n) for n in blacklist]}
@@ -81,10 +98,44 @@ def make_layout(dorms, *, capacity=5, dorm_count=None, extra=(), protected_slots
     return build_base_layout({"facilities": facilities, "idle_to_dorm": idle})
 
 
+def dorm_at(world, no: int):
+    """第 `no`（1 基）间**可用宿舍**的设施对象。"""
+    return _dorm_numbered(world)[no - 1][1]
+
+
 def dorm_names(world):
-    """`[[名字, ...], ...]`：各**可用宿舍**当前的人（按宿舍序号）。"""
-    return [[o.name for o in f.operators] for f in world.facilities
-            if f.ftype == FacilityType.DORMITORY and f.enabled]
+    """`[[名字或 None, ...], ...]`：各**可用宿舍**按**位次**列出（去掉尾部没到过的空槽）。"""
+    out = []
+    for f in world.facilities:
+        if f.ftype is not FacilityType.DORMITORY or not f.enabled:
+            continue
+        mapping = f.slot_map()
+        reach = (max(mapping) + 1) if mapping else 0
+        out.append([mapping[i].name if i in mapping else None for i in range(reach)])
+    return out
+
+
+def slots_text(world):
+    """各宿舍按**容量**铺开的位次文本（`None` → `一`），便于看清空洞。"""
+    out = []
+    for f in world.facilities:
+        if f.ftype is not FacilityType.DORMITORY or not f.enabled:
+            continue
+        mapping = f.slot_map()
+        out.append([mapping[i].name if i in mapping else None for i in range(int(f.capacity))])
+    return out
+
+
+def home_moods(world):
+    """各宿舍**在位**住户的心情（跳过空槽与手动钉住的位次）。"""
+    out = []
+    for f in world.facilities:
+        if f.ftype is not FacilityType.DORMITORY or not f.enabled:
+            continue
+        led = read_manual(f)
+        out.append([op.mood for i, op in sorted(f.slot_map().items())
+                    if not led.pins_slot(i) and not led.pins_name(op.name)])
+    return out
 
 
 def mood_of(world, name):
@@ -92,688 +143,506 @@ def mood_of(world, name):
     return None if op is None else op.mood
 
 
-def run(world, idle, *, trace=None, scope=None, swap_with=None):
+def run(world, idle, *, trace=None, scope=None, only=None):
     return apply_idle_to_dorm(world, enabled=True, idle=dict(idle),
-                              trace=trace, scope=scope, swap_with=swap_with)
+                              trace=trace, scope=scope, only=only)
 
 
 def groups_of(events):
     return [ev.group for ev in events]
 
 
+def joined(events):
+    return " / ".join(ev.detail for ev in events)
+
+
 # ============================================================================
-# §2 适用条件：不设班次数量门槛 + 长班内部换班执行点
+# ① 适用条件与执行点（§2/§3：无班次门槛；长班班内 12h 整数倍也算执行点）
 # ============================================================================
 def test_no_gate_and_offsets():
-    print("§2 适用条件（任何班次数都执行；长班按 12h 整数倍加内部换班点）")
-    # 引擎不再看"排班里有几个班次"：1 个班次照样执行
-    world = make_layout([[("甲", 5)]], capacity=2, dorm_count=1)
-    events = run(world, {"乙": 5})
-    check("不设门槛：单班排班也执行（乙住进空位）",
+    print("§2 适用条件：不设班次数量门槛 + 内部换班偏移")
+    check("签名里没有班次数参数（门槛已取消）",
+          "shift_count" not in inspect.signature(apply_idle_to_dorm).parameters)
+    check("执行点偏移：12h→[0]、18h→[0,12]、24h→[0,12]、25h→[0,12,24]",
+          [execution_offsets(h) for h in ("12", "18", "24", "25")]
+          == [[Decimal(0)], [Decimal(0), Decimal(12)], [Decimal(0), Decimal(12)],
+              [Decimal(0), Decimal(12), Decimal(24)]],
+          str([execution_offsets(h) for h in ("12", "18", "24", "25")]))
+    world = make_layout([[("甲", 5)]], capacity=2, dorm_count=1, protected_slots=0)
+    events = run(world, {"乙": 10})
+    check("单班排班照旧执行（有空位就住进去）",
           dorm_names(world) == [["甲", "乙"]]
-          and any(g == "idle_to_dorm" for g in groups_of(events)),
-          f"dorms={dorm_names(world)}")
-
-    check("引擎签名里不再有 shift_count / MIN_SHIFTS_FOR_IDLE",
-          "shift_count" not in inspect.signature(apply_idle_to_dorm).parameters
-          and not hasattr(rules_mod, "MIN_SHIFTS_FOR_IDLE"))
-
-    # execution_offsets：文档 §2 的五个例子
-    table = {"12": ["0"], "18": ["0", "12"], "24": ["0", "12"],
-             "25": ["0", "12", "24"], "36": ["0", "12", "24"]}
-    for hours, want in table.items():
-        got = [str(o) for o in execution_offsets(hours)]
-        check(f"{hours}h 班次的执行点偏移 = {want}", got == want, str(got))
-
-    check("班末不重复：24h 只有 [0,12]（第 24h 是班末）",
-          [str(o) for o in execution_offsets("24")] == ["0", "12"])
-    check("12h 及以内没有内部换班点",
-          all([str(o) for o in execution_offsets(h)] == ["0"] for h in ("1", "6", "8", "12")))
+          and "idle_to_dorm" in groups_of(events), str(dorm_names(world)))
 
 
 def test_execution_points():
-    print("§2/§3 执行点切分（不增加班次数、不改班次编号）")
-    sch = _schedule_one_shift("24")
-    pts = execution_points(sch, 2)
-    check("24h 单班 × 2 周期 ⇒ 4 个执行点（每周期 0h 与 12h）",
-          [str(p[0]) for p in pts] == ["0", "12", "24", "36"], str([str(p[0]) for p in pts]))
-    check("执行点仍指向同一个真实班次（下标 0）⇒ 不增加班次数",
-          {p[2] for p in pts} == {0} and len(sch.shifts) == 1)
-    check("周期序号按真实周期走（1,1,2,2）", [p[3] for p in pts] == [1, 1, 2, 2])
-    check("班内偏移正确（0,12,0,12）", [str(p[4]) for p in pts] == ["0", "12", "0", "12"])
-    check("shift_index 不受内部换班影响（12h 仍属第 1 班）", sch.index_at(Decimal(12)) == 0)
+    print("§3 执行点切分（班初 + 长班内部换班）")
+
+    def _schedule_one_shift(hours):
+        facs = [{"type": "宿舍", "level": 1, "capacity": 5,
+                 "operators": [{"name": "甲", "mood": "5"}]}]
+        return Schedule(shifts=[Shift(label="班1", hours=hours, facilities=facs)])
+
+    pts = execution_points(_schedule_one_shift("24"), 2)
+    check("24h 单班 × 2 周期 → 4 个执行点（0/12/24/36）",
+          [p[0] for p in pts] == [Decimal(0), Decimal(12), Decimal(24), Decimal(36)],
+          str([p[0] for p in pts]))
+    check("内部换班点**不增加班次数**（班次下标仍是 0）",
+          all(p[2] == 0 for p in pts), str([p[2] for p in pts]))
+    check("周期序号按 1 基（0/12 → 周期 1，24/36 → 周期 2）",
+          [p[3] for p in pts] == [1, 1, 2, 2], str([p[3] for p in pts]))
 
 
 # ============================================================================
-# §4 / §4.1 / §4.2 连续排列 + 竖向正序
+# ② 相 1：竖向正序填空床
 # ============================================================================
 def test_vertical_order():
-    print("§4/§4.1 连续排列与竖向正序")
-    # 竖向正序 = 位次优先、宿舍序号其次：宿舍1位5 (5,1) 比 宿舍2位1 (1,2) 靠后 ⇒ 选宿舍2位1
+    print("相 1：竖向正序填空床（位次优先、宿舍序号其次）")
     world = make_layout([[("甲", 5), ("乙", 5), ("丙", 5), ("丁", 5)], []],
-                        capacity=5, dorm_count=2, protected_slots=0)
-    run(world, {"戊": 4})
-    check("空位按竖向正序取最靠前（宿舍2位1 在 宿舍1位5 之前）",
-          dorm_names(world) == [["甲", "乙", "丙", "丁"], ["戊"]],
-          str(dorm_names(world)))
+                        capacity=4, dorm_count=2, protected_slots=0)
+    run(world, {"戊": 6, "己": 7})
+    check("空床按 宿1位5 → 宿2位1 依次入住",
+          slots_text(world) == [["甲", "乙", "丙", "丁", "戊"], ["己", None, None, None, None]]
+          or slots_text(world) == [["甲", "乙", "丙", "丁"], ["戊", "己", None, None]],
+          str(slots_text(world)))
 
-    # 同一位次时比宿舍序号：宿舍1位1 在 宿舍2位1 之前
-    world = make_layout([[], []], capacity=5, dorm_count=2, protected_slots=0)
-    run(world, {"甲": 5, "乙": 6})
-    check("同一位次比宿舍序号（甲→宿舍1位1、乙→宿舍2位1）",
-          dorm_names(world) == [["甲"], ["乙"]], str(dorm_names(world)))
-
-    # 入住总是接到末尾 ⇒ 位次连续，不留洞
-    world = make_layout([[("甲", 5)], []], capacity=5, dorm_count=2, protected_slots=0)
-    run(world, {"乙": 5, "丙": 5})
-    check("入住接到末尾（位次连续、不留中间空位）",
-          dorm_names(world) == [["甲", "乙"], ["丙"]], str(dorm_names(world)))
-
-
-def test_vertical_reverse_tiebreak():
-    print("§4.2/§13 自动交换按竖向反序优先，心情只作资格条件")
-    dorms = [[(f"宿{n}位{i}", 10) for i in range(1, 6)] for n in range(1, 5)]
-    dorms[0][4] = ("甲五", 22)          # 宿舍1位5：心情更高但位置更前
-    dorms[3][4] = ("丁五", 7)           # 宿舍4位5：心情较低但位置更后
-    world = make_layout(dorms, capacity=5, dorm_count=4, protected_slots=0,
-                        blacklist=["丁五"])
-    run(world, {"候选": 6})
-    after = dorm_names(world)
-    check("先按位置：宿舍4位5满足心情闸，即使宿舍1位5心情更高也优先换宿舍4位5",
-          "候选" in after[3] and "甲五" in after[0],
-          str(after))
+    # 空洞位次照样可入住
+    world = make_layout([[("甲", 5)]], capacity=3, dorm_count=1, protected_slots=0)
+    set_seat(world.facilities[0], 1, None) if 1 in world.facilities[0].slot_map() else None
+    check("空洞位次照样是可入住位（位次不左移）",
+          [s for _k, _f, s in _next_free_slots(world)] == [1, 2],
+          str([s for _k, _f, s in _next_free_slots(world)]))
 
 
 # ============================================================================
-# §5 锁定位置
+# ③ 相 2：低心情优先换人 + 定点终态
 # ============================================================================
-def test_protected_slots():
-    print("§5 锁定位置（默认 5，按竖向正序）")
-    check("默认锁定位置数 = 5", DEFAULT_PROTECTED_SLOTS == 5)
-    check("锁定位置数默认写进配置", build_idle_to_dorm_config({}).protected_slots == 5)
-    check("配置里的 protected_slots / blacklist 被解析（含小驼峰别名）",
-          build_idle_to_dorm_config({"protectedSlots": 2, "blackList": ["甲"]}).protected_slots == 2
-          and build_idle_to_dorm_config({"black_list": ["乙"]}).blacklist == ["乙"])
+def test_swap_lowest_mood_first():
+    print("相 2：取心情最低的候选，换出锁定区外**心情最大的合格住户**")
+    world = make_layout([[("甲", 24), ("乙", 22), ("丙", 21), ("丁", 20)]],
+                        capacity=4, dorm_count=1, protected_slots=0)
+    run(world, {"戊": 5, "己": 10})
+    home = sorted(home_moods(world)[0])
+    check("宿舍装进心情最低的两位（5、10）⇒ [5, 10, 20, 21]",
+          home == [Decimal(x) for x in ("5", "10", "20", "21")], str(home))
+    check("定点：宿舍里最低的那位（5）≤ 外面剩下的候选（22/24）",
+          min(home) == Decimal("5") and Decimal("5") < Decimal("22"), str(home))
 
-    # 默认 5 ⇒ 4 间宿舍 × 5 位时锁：宿1位1、宿2位1、宿3位1、宿4位1、宿1位2
-    dorms = [[("x", 0) for _ in range(5)] for _ in range(4)]
-    world = make_layout(dorms, capacity=5, dorm_count=4, protected_slots=5)
-    state = dorm_state(world)
-    check("锁定区恰好是竖向正序前 5 个位置（宿1位1/宿2位1/宿3位1/宿4位1/宿1位2）",
-          len(state["dorms"]) == 4 and state["next"] == {1: 6, 2: 6, 3: 6, 4: 6})
+    world = make_layout([[("甲", 24), ("乙", 22), ("丙", 21), ("丁", 20)]],
+                        capacity=4, dorm_count=1, protected_slots=0)
+    run(world, {"戊": 5})
+    check("只换一位：换出**合格住户里心情最大**的 24（留出余量给后到的候选）",
+          sorted(home_moods(world)[0]) == [Decimal(x) for x in ("5", "20", "21", "22")],
+          str(sorted(home_moods(world)[0])))
 
-    # 锁定区里的人自动不换：宿1位1 是 24，全满，候选只能换锁定区外最高那位
-    world = make_layout([[("锁甲", 24)], [("乙", 9)]], capacity=1, dorm_count=2,
-                        protected_slots=1)
-    run(world, {"候选": 5})
-    check("锁定位置上的干员不会被自动换出（换的是锁定区外的乙）",
-          dorm_names(world) == [["锁甲"], ["候选"]], str(dorm_names(world)))
+    world = make_layout([[("甲", 24), ("乙", 10)]], capacity=2, dorm_count=1, protected_slots=0)
+    run(world, {"丙": 10})
+    check("住户 10 与候选 10：≥ 成立 ⇒ 换（把门槛抬到 10，后到的更高候选才换得进）",
+          sorted(home_moods(world)[0]) == [Decimal("10"), Decimal("10")]
+          and world.get_operator("甲") is None,
+          str(sorted(home_moods(world)[0])))
+    check("不合格（住户更低）时记一条「未执行」",
+          "idle_to_dorm_skipped" in groups_of(
+              run(make_layout([[("甲", 5)]], capacity=1, dorm_count=1, protected_slots=0),
+                  {"丁": 10})), "")
 
-    # 锁定区的空位照样能入住
-    world = make_layout([[], [("乙", 9)]], capacity=1, dorm_count=2, protected_slots=1)
-    run(world, {"候选": 5})
-    check("锁定区的空位可以被候选入住（宿1位1）",
-          dorm_names(world) == [["候选"], ["乙"]], str(dorm_names(world)))
 
-    # protected_slots=0 ⇒ 全都可以换：按竖向反序扫描，首个满足心情闸的目标
-    world = make_layout([[("甲", 9)], [("乙", 8)]], capacity=1, dorm_count=2, protected_slots=0)
-    run(world, {"候选": 5})
-    check("protected_slots=0 ⇒ 锁定区外＝全部，按位置优先选择首个满足心情闸的目标",
-          dorm_names(world) == [["乙"], ["候选"]], str(dorm_names(world)))
+def test_swap_victim_tiebreak():
+    print("相 2：并列时取**竖向正序最靠前**的住户（旧口径是反序取最靠后）")
+    world = make_layout([[("甲", 24), ("乙", 24)], [("丙", 24), ("丁", 24)]],
+                        capacity=2, dorm_count=2, protected_slots=0)
+    fac, slot, victim = _best_swap_victim(world, Decimal("10"),
+                                          protected=_protected_positions(world, 0))
+    check("竖向正序最靠前 = 宿1位1（甲）", victim is not None and victim.name == "甲",
+          str(victim))
 
-    # 超出总位置数 ⇒ 钳到总数（谁都不能换）
-    world = make_layout([[("甲", 9)], [("乙", 8)]], capacity=1, dorm_count=2, protected_slots=999)
-    events = run(world, {"候选": 5})
-    check("protected_slots 超出总位置数 ⇒ 按总数生效（谁都不能换、不报错）",
-          dorm_names(world) == [["甲"], ["乙"]] and "idle_to_dorm_skipped" in groups_of(events),
-          str(dorm_names(world)))
 
-    # 候选自己住进锁定空位后，那个位置继续锁定 ⇒ 后来者换不走她
-    world = make_layout([[], [("乙", 9)], [("丙", 8)]], capacity=1, dorm_count=3,
-                        protected_slots=1)
-    run(world, {"甲": 5, "丁": 6})
-    check("候选住进锁定位置后该位置继续锁定（甲在宿1位1，后续按位置扫描）",
-          dorm_names(world) == [["甲"], ["丙"], ["丁"]], str(dorm_names(world)))
+def test_evicted_return_to_queue():
+    print("相 2：被换出者**不在本执行点再入队**，她的重新评估发生在下一个执行点")
+    world = make_layout([[("甲", 24), ("乙", 20)]], capacity=2, dorm_count=1, protected_slots=0)
+    run(world, {"丙": 5, "丁": 19})
+    check("两个候选都进得去（丙顶掉 20，丁再顶掉 24）",
+          {o.name for f in world.facilities for o in f.operators} == {"丙", "丁"},
+          str(slots_text(world)))
+    check("换人接替**被换出者的原位次**、不产生空洞（5 顶掉 24 占位 1，19 顶掉 20 占位 2）",
+          world.facilities[0].slot_of("丙") == 0 and world.facilities[0].slot_of("丁") == 1,
+          str({i: o.name for i, o in world.facilities[0].slot_map().items()}))
+    # 被换出者留到下一个执行点再判：这里她换不掉心情更低的甲 ⇒ 正确结果是留在外面
+    world = make_layout([[("甲", 10)], [("乙", 24)]], capacity=1, dorm_count=2,
+                        protected_slots=0, labels=True)
+    events = run(world, {"丙": 20})
+    check("丙 顶掉乙（心情 24）；乙 留在外面（她换不掉心情更低的甲）",
+          dorm_at(world, 1).slot_of("甲") == 0 and dorm_at(world, 2).slot_of("丙") == 0
+          and world.get_operator("乙") is None,
+          str(slots_text(world)))
+    check("本执行点只发生一次换人（被换出者不再入队）",
+          len([e for e in events if e.group == "idle_to_dorm"]) == 1,
+          str([e.detail[:50] for e in events]))
+
+
+def test_terminal_state():
+    print("定点：队列里剩下的人都比宿舍里的人更满")
+    world = make_layout([[("甲", 24), ("乙", 24), ("丙", 24), ("丁", 24), ("戊", 24)]],
+                        capacity=5, dorm_count=1, protected_slots=0)
+    run(world, {"己": 5, "庚": 6, "辛": 7, "壬": 8, "癸": 9, "子": 10})
+    home = home_moods(world)[0]
+    check("宿舍装进心情最低的 5 位（5,6,7,8,9）",
+          sorted(home) == [Decimal(x) for x in ("5", "6", "7", "8", "9")], str(sorted(home)))
+    check("剩下的候选（10）不低于宿舍内最低值 ⇒ 这一位不动（记未执行）",
+          "子" not in [o.name for o in world.facilities[0].operators]
+          and Decimal("10") >= min(home), str(sorted(home)))
 
 
 # ============================================================================
-# §6 黑名单
+# ④ 手动编辑逻辑（最高优先级；导入不打标）
+# ============================================================================
+def test_manual_locks_slot():
+    print("手动编辑：钉住的位次不被自动入宿占用")
+    world = make_layout([[("甲", 5)]], capacity=3, dorm_count=1, protected_slots=0,
+                        manual={0: {"slots": [1], "names": []}})
+    run(world, {"乙": 6})
+    check("手动清空的位次保持空着 ⇒ 乙 去第 3 位",
+          slots_text(world) == [["甲", None, "乙"]], str(slots_text(world)))
+    check("该位次的裁决是 keep", _seat_verdict(world.facilities[0], 1)[0] == SEAT_KEEP,
+          _seat_verdict(world.facilities[0], 1)[0])
+
+
+def test_manual_locks_person():
+    print("手动编辑：手动放进去的人不被换出（哪怕心情更低）")
+    world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=0,
+                        manual={0: {"slots": [0], "names": ["甲"]}})
+    events = run(world, {"乙": 5})
+    check("乙 心情 5 也换不掉被钉住的甲",
+          dorm_names(world) == [["甲"]], str(dorm_names(world)))
+    check("并记一条「未执行」",
+          "idle_to_dorm_skipped" in groups_of(events), str(groups_of(events)))
+    check("裁决是 keep（人）", _seat_verdict(world.facilities[0], 0)[0] == SEAT_KEEP, "")
+
+
+def test_manual_beats_lockzone():
+    print("手动编辑优先于锁定区：手动可以放/换到锁定区里")
+    world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=0,
+                        manual={0: {"slots": [0], "names": ["乙"]}})
+    check("手动钉住的人不被换出（心情 5 的丙进不来）",
+          run(world, {"丙": 5}) and world.facilities[0].slot_of("甲") == 0 and
+          world.facilities[0].slot_of("丙") is None, str(slots_text(world)))
+    world2 = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=1,
+                         labels=True)
+    check("没有手动标记时锁定区是 locked",
+          _seat_verdict(dorm_at(world2, 1), 0, world=world2,
+                        protected=_protected_positions(world2, 1))[0] == SEAT_LOCKED, "")
+    world3 = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=1,
+                         manual={0: {"slots": [0], "names": []}})
+    check("同一位置上手动标记胜出（keep 而不是 locked）",
+          _seat_verdict(dorm_at(world3, 1), 0, world=world3,
+                        protected=_protected_positions(world3, 1))[0] == SEAT_KEEP, "")
+
+
+def test_import_has_no_marks():
+    print("导入布局不打标：宿舍住户可被换出（导入 = 基线，不是护身符）")
+    world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=0)
+    check("导入住户的裁决是 swappable",
+          _seat_verdict(world.facilities[0], 0)[0] == SEAT_SWAPPABLE, "")
+    run(world, {"乙": 5})
+    check("心情 5 的闲置干员真的把她换出去了",
+          dorm_names(world) == [["乙"]], str(dorm_names(world)))
+
+
+def test_ledger_primitives():
+    print("手动台账的原语（mark_manual / read_manual / clear_manual）")
+    world = make_layout([[("甲", 24), ("乙", 24)]], capacity=3, dorm_count=1, protected_slots=0)
+    fac = world.facilities[0]
+    check("导入时台账是空的", read_manual(fac).is_empty(), str(read_manual(fac).to_dict()))
+    mark_manual(fac, 1, "")
+    check("手动清空某位 ⇒ 该位次进台账（人被移出 names）",
+          read_manual(fac).pins_slot(1) and not read_manual(fac).pins_name("乙"),
+          read_manual(fac).to_dict())
+    mark_manual(fac, 0, "甲")
+    check("手动写名 ⇒ 位次 + 人都进台账",
+          read_manual(fac).pins_slot(0) and read_manual(fac).pins_name("甲"),
+          read_manual(fac).to_dict())
+    fac._manual = ManualLedger()
+    check("clear 之后回到空台账", read_manual(fac).is_empty(), "")
+
+
+# ============================================================================
+# ⑤ 全局配置逻辑（总开关 / 锁定位置数 / 黑名单 / 逐人不参与）
 # ============================================================================
 def test_blacklist():
-    print("§6 黑名单（禁止通过闲置入宿进宿舍，不是保护位次）")
-    world = make_layout([[]], capacity=2, dorm_count=1, blacklist=["甲"])
-    run(world, {"甲": 5, "乙": 6})
-    check("黑名单干员不进初始候选",
+    print("全局配置：黑名单")
+    world = make_layout([[]], capacity=1, dorm_count=1, protected_slots=0, blacklist=["甲"])
+    run(world, {"甲": 5, "乙": 5})
+    check("黑名单不进候选（乙 进、甲 不进）",
           dorm_names(world) == [["乙"]], str(dorm_names(world)))
+    world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=0)
+    world.idle_to_dorm.blacklist = ["乙"]
+    run(world, {"乙": 5})
+    check("黑名单只是「不能自己进宿舍」——不能换出别人",
+          dorm_names(world) == [["甲"]], str(dorm_names(world)))
 
-    world = make_layout([[]], capacity=2, dorm_count=1, blacklist=["甲"],
-                        per_operator=[{"name": "甲", "dorm": 1}])
-    events = run(world, {"甲": 5})
-    check("黑名单干员不能用「手动指定位置」进宿舍（优先级高于逐人设置）",
+
+def test_enabled_switch():
+    print("全局配置：总开关")
+    world = make_layout([[]], capacity=1, dorm_count=1, protected_slots=0)
+    events = apply_idle_to_dorm(world, enabled=False, idle={"甲": 5})
+    check("显式关 ⇒ 不动布局、无事件",
           dorm_names(world) == [[]] and events == [], str(dorm_names(world)))
+    world = make_layout([[]], capacity=1, dorm_count=1, protected_slots=0, enabled=False)
+    check("JSON 里 enabled=false ⇒ 默认不结算",
+          apply_idle_to_dorm(world, idle={"甲": 5}) == [], "")
+    world = make_layout([[]], capacity=1, dorm_count=1, protected_slots=0)
+    check("没配置 enabled 也按开（默认开是全项目口径）",
+          len(apply_idle_to_dorm(world, idle={"甲": 5})) == 1, "")
 
-    world = make_layout([[]], capacity=2, dorm_count=1, blacklist=["甲"],
-                        per_operator=[{"name": "甲", "swap_with": "乙"}])
-    events = run(world, {"甲": 5})
-    check("黑名单干员也不能用「点名」进宿舍",
-          dorm_names(world) == [[]] and events == [], str(dorm_names(world)))
 
-    # 排班自带的黑名单干员：照旧可被换出，但换出后不进队尾
-    world = make_layout([[("甲", 12)]], capacity=1, dorm_count=1, protected_slots=0,
-                        blacklist=["甲"])
-    trace = {}
-    run(world, {"乙": 5}, trace=trace)
-    check("排班放在宿舍里的黑名单干员可以被换出（她不占保护）",
-          dorm_names(world) == [["乙"]], str(dorm_names(world)))
-    check("黑名单干员被换出后**不**追加到队尾", "甲" not in trace, str(list(trace)))
+def test_protected_slots():
+    print("全局配置：锁定位置数（竖向正序前 N 个**逻辑位次**）")
+    check("默认值 = 5", DEFAULT_PROTECTED_SLOTS == 5, str(DEFAULT_PROTECTED_SLOTS))
+    check("配置缺省时是 5", build_idle_to_dorm_config({}).protected_slots == 5, "")
+    check("小驼峰别名也认",
+          build_idle_to_dorm_config({"protectedSlots": 2}).protected_slots == 2, "")
+    world = make_layout([[("甲", 24), ("乙", 24)], [("丙", 24), ("丁", 24)]],
+                        capacity=2, dorm_count=2, protected_slots=5, labels=True)
+    prot = _protected_positions(world, 5)
+    check("竖向正序前 5 个（2 间 × 2 位 ⇒ 只有 4 个真实位置，全锁）",
+          len(prot) == 4, str(len(prot)))
+    check("锁的是前两间宿舍的全部位次",
+          all((_seat_key(world, dorm_at(world, i)), j) in prot
+              for i in (1, 2) for j in range(2)), str(sorted(prot)))
+    world = make_layout([[("甲", 24)], [("乙", 24)]], capacity=1, dorm_count=2,
+                        protected_slots=1, labels=True)
+    run(world, {"丙": 5})
+    check("只锁 宿1位1 ⇒ 换出宿2位1（乙）",
+          dorm_at(world, 1).slot_of("甲") == 0 and dorm_at(world, 2).slot_of("丙") == 0,
+          str(slots_text(world)))
+    world = make_layout([[]], capacity=2, dorm_count=1, protected_slots=2)
+    run(world, {"丙": 5, "丁": 6})
+    check("锁定区的**空位**照样能入住（两个都在锁定区）",
+          dorm_names(world) == [["丙", "丁"]], str(dorm_names(world)))
+    world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=5,
+                        labels=True)
+    run(world, {"乙": 20})
+    check("锁定数超出总位置数 ⇒ 按总数生效（这一位也锁住、乙 进不来）",
+          dorm_at(world, 1).slot_of("甲") == 0 and dorm_at(world, 1).slot_of("乙") is None,
+          str(slots_text(world)))
 
-    # 别人可以点名把宿舍里的黑名单干员换出
-    world = make_layout([[("甲", 12)]], capacity=1, dorm_count=1, blacklist=["甲"],
-                        per_operator=[{"name": "乙", "swap_with": "甲"}])
+
+def test_per_operator_disabled():
+    print("全局配置：逐人「这一位不参与」")
+    world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=0,
+                        per_operator=[{"name": "乙", "enabled": False}])
     run(world, {"乙": 5})
-    check("其他候选可以点名把宿舍里的黑名单干员换出",
-          dorm_names(world) == [["乙"]], str(dorm_names(world)))
-
-
-# ============================================================================
-# §7 初始候选
-# ============================================================================
-def test_candidates():
-    print("§7 初始候选（该班完全没出现在任何设施 + 心情 < 24 + 非黑名单）")
-    world = make_layout([[("甲", 5)]], capacity=3, dorm_count=1,
-                        extra=[{"type": "制造站", "level": 1,
-                                "operators": [{"name": "工人", "mood": "5"}]},
-                               {"type": "加工站", "level": 1,
-                                "operators": [{"name": "挂件", "mood": "5"}]},
-                               {"type": "训练室", "level": 1,
-                                "operators": [{"name": "教练", "mood": "5"}]}])
-    run(world, {"新人": 6, "工人": 5, "挂件": 5, "教练": 5, "甲": 5})
-    check("只有「完全不在任何设施里的」人进宿舍（工人/挂件/教练/已在宿舍的甲都不动）",
-          dorm_names(world) == [["甲", "新人"]], str(dorm_names(world)))
-
-    world = make_layout([[]], capacity=2, dorm_count=1)
-    events = run(world, {"甲": 24, "乙": 23.5})
-    check("心情 >= 24 的闲置干员不进候选",
-          dorm_names(world) == [["乙"]] and all(e.owner != "甲" for e in events),
-          str(dorm_names(world)))
-
-    world = make_layout([[]], capacity=2, dorm_count=1)
-    events = run(world, {"甲": 5.5, "乙": 6.5, "丙": 24})
-    check("初始队列按 (心情↑, 名字↑) 依次处理 ⇒ 先到的先拿空位",
-          dorm_names(world) == [["甲", "乙"]], str(dorm_names(world)))
-
-    # 副手也算"出现在布局里"
-    world = make_layout([[]], capacity=2, dorm_count=1,
-                        extra=[{"type": "控制中枢", "level": 1, "operators": [],
-                                "deputies": [{"name": "副手", "mood": "5"}]}])
-    run(world, {"副手": 5, "新人": 6})
-    check("副手不是候选（她已出现在该班布局里）",
-          dorm_names(world) == [["新人"]], str(dorm_names(world)))
-
-
-# ============================================================================
-# §8 动态候选队列（FIFO + 队尾追加）
-# ============================================================================
-def test_queue():
-    print("§8 队列（先进先出、换出者可再入队、满 24/黑名单不入队）")
-    world = make_layout([[("丙", 10)]], capacity=1, dorm_count=1, protected_slots=0)
-    trace = {}
-    events = run(world, {"甲": 5}, trace=trace)
-    check("被换出者追加到队尾、会被再处理一次（丙出现在逐位宿舍态里）",
-          "丙" in trace, str(list(trace)))
-    check("再处理的丙因为找不到更高的目标而不再换人（这一班不动）",
-          dorm_names(world) == [["甲"]] and "idle_to_dorm_skipped" in groups_of(events),
-          str(dorm_names(world)))
-
-    world = make_layout([[("丙", 24)]], capacity=1, dorm_count=1, protected_slots=0)
-    trace = {}
-    run(world, {"甲": 5}, trace=trace)
-    check("满 24 的被换出者不进队尾", "丙" not in trace, str(list(trace)))
-
-    world = make_layout([[("丙", 10)]], capacity=1, dorm_count=1, protected_slots=0)
-    trace = {}
-    run(world, {"甲": 20}, trace=trace)
-    check("处理失败（目标不比自己更满）的候选不被重新入队，被换出者也不存在",
-          "丙" not in trace and dorm_names(world) == [["丙"]], str(list(trace)))
-
-    # 终止性：多人多宿舍的合成场景，必须返回并且宿舍内心情总和严格下降（每次交换都换低）
-    dorms = [[(f"宿{n}位{i}", 20 - i) for i in range(1, 6)] for n in range(1, 5)]
-    world = make_layout(dorms, capacity=5, dorm_count=4, protected_slots=5)
-    before = sum(o.mood for f in world.facilities if f.ftype == FacilityType.DORMITORY
-                 for o in f.operators)
-    run(world, {f"闲{i}": 3 for i in range(12)})
-    after = sum(o.mood for f in world.facilities if f.ftype == FacilityType.DORMITORY
-                for o in f.operators)
-    check("队列处理一定终止，且宿舍内心情总和严格下降",
-          after < before, f"{before} → {after}")
-    check("满 20 人（4 间 × 5 位）一个不多一个不少",
-          sum(len(d) for d in dorm_names(world)) == 20, str(dorm_names(world)))
-
-
-# ============================================================================
-# §10 手动指定位置
-# ============================================================================
-def test_manual_position():
-    print("§10 手动指定位置（宿舍 + 位次，连续排列）")
-    # 正好是下一个连续位 ⇒ 直接入住
-    world = make_layout([[("甲", 9), ("乙", 9)]], capacity=5, dorm_count=1,
-                        per_operator=[{"name": "丙", "dorm": 1, "slot": 3}])
-    run(world, {"丙": 5})
-    check("指定的位次正好是下一个连续位 ⇒ 直接入住",
-          dorm_names(world) == [["甲", "乙", "丙"]], str(dorm_names(world)))
-
-    # 在下一个连续位之后 ⇒ 留洞 ⇒ 跳过，且不回退自动
-    world = make_layout([[("甲", 9), ("乙", 9)]], capacity=5, dorm_count=1,
-                        per_operator=[{"name": "丙", "dorm": 1, "slot": 4}])
-    events = run(world, {"丙": 5})
-    check("指定的位次在下一个连续位之后（会留洞）⇒ 跳过这一位、不回退自动",
-          dorm_names(world) == [["甲", "乙"]]
-          and "idle_to_dorm_skipped" in groups_of(events), str(dorm_names(world)))
-
-    # 指定位置有人 + 心情闸。⚠️ 被换出的乙（20 < 24）会追加队尾，而她一出来就发现
-    # 这间宿舍还有空位（第 3 位）⇒ 按 §12 又住了回去 —— 这是 §8 + §12 的合成结果。
-    world = make_layout([[("甲", 9), ("乙", 20)]], capacity=5, dorm_count=1,
-                        per_operator=[{"name": "丙", "dorm": 1, "slot": 2}])
-    run(world, {"丙": 5})
-    check("指定位置已有人且她心情更高 ⇒ 互换（丙接替第 2 位）",
-          dorm_names(world) == [["甲", "丙", "乙"]], str(dorm_names(world)))
-
-    world = make_layout([[("甲", 9), ("乙", 4)]], capacity=5, dorm_count=1,
-                        per_operator=[{"name": "丙", "dorm": 1, "slot": 2}])
-    run(world, {"丙": 5})
-    check("指定位置的人不比自己更满 ⇒ 这一班不换",
-          dorm_names(world) == [["甲", "乙"]], str(dorm_names(world)))
-
-    # 手动可以进锁定区
-    world = make_layout([[]], capacity=5, dorm_count=1, protected_slots=5,
-                        per_operator=[{"name": "丙", "dorm": 1, "slot": 1}])
-    run(world, {"丙": 5})
-    check("手动指定位置可以进锁定区（第 1 位就是锁定位置）",
-          dorm_names(world) == [["丙"]], str(dorm_names(world)))
-
-    # 只指定宿舍：用"现有人数 + 1"；满了 ⇒ 跳过、不回退自动
-    world = make_layout([[("甲", 9)], []], capacity=2, dorm_count=2,
-                        per_operator=[{"name": "丙", "dorm": 1}])
-    run(world, {"丙": 5})
-    check("只指定宿舍 ⇒ 放进它的下一个连续位",
-          dorm_names(world) == [["甲", "丙"], []], str(dorm_names(world)))
-
-    world = make_layout([[("甲", 9)], []], capacity=1, dorm_count=2,
-                        per_operator=[{"name": "丙", "dorm": 1}])
-    events = run(world, {"丙": 5})
-    check("指定的那间满了 ⇒ 跳过（不回退去别的宿舍、也不换人）",
-          dorm_names(world) == [["甲"], []] and "idle_to_dorm_skipped" in groups_of(events),
-          str(dorm_names(world)))
-
-    # §10.4 无效位置
-    world = make_layout([[]], capacity=2, dorm_count=1,
-                        per_operator=[{"name": "丙", "dorm": 3}])
-    events = run(world, {"丙": 5})
-    check("指定了不存在的宿舍 ⇒ 跳过并记原因",
-          dorm_names(world) == [[]] and "idle_to_dorm_skipped" in groups_of(events))
-
-    world = make_layout([[]], capacity=2, dorm_count=1,
-                        per_operator=[{"name": "丙", "dorm": 1, "slot": 9}])
-    events = run(world, {"丙": 5})
-    check("位次超出容量 ⇒ 跳过并记原因",
-          dorm_names(world) == [[]] and "idle_to_dorm_skipped" in groups_of(events))
-
-    world = make_layout([[]], capacity=2, dorm_count=1,
-                        per_operator=[{"name": "丙", "dorm": 1, "slot": -1}])
-    events = run(world, {"丙": 5})
-    check("位次非法（负数）⇒ 跳过并记原因",
-          dorm_names(world) == [[]] and "idle_to_dorm_skipped" in groups_of(events))
-
-
-# ============================================================================
-# §11 手动点名
-# ============================================================================
-def test_named_swap():
-    print("§11 手动点名（主动换：可锁定区 / 可黑名单 / 不看满心情）")
-    world = make_layout([[("甲", 12)]], capacity=1, dorm_count=1,
-                        per_operator=[{"name": "乙", "swap_with": "甲"}])
-    run(world, {"乙": 5})
-    check("点名对象心情没满也照换（12 > 5）",
-          dorm_names(world) == [["乙"]], str(dorm_names(world)))
-
-    world = make_layout([[("甲", 12)]], capacity=1, dorm_count=1, protected_slots=5,
-                        per_operator=[{"name": "乙", "swap_with": "甲"}])
-    run(world, {"乙": 5})
-    check("点名对象在锁定区也照换",
-          dorm_names(world) == [["乙"]], str(dorm_names(world)))
-
-    world = make_layout([[("甲", 3)]], capacity=1, dorm_count=1,
-                        per_operator=[{"name": "乙", "swap_with": "甲"}])
-    events = run(world, {"乙": 5})
-    check("点名对象不比候选更满 ⇒ 这一班不换",
-          dorm_names(world) == [["甲"]] and "idle_to_dorm_skipped" in groups_of(events),
-          str(dorm_names(world)))
-
-    world = make_layout([[("甲", 12)], []], capacity=1, dorm_count=2,
-                        per_operator=[{"name": "乙", "swap_with": "丙"}])
-    events = run(world, {"乙": 5})
-    check("点名对象在那一刻不在任何可用宿舍 ⇒ 这一班不处理她",
-          dorm_names(world) == [["甲"], []] and "idle_to_dorm_skipped" in groups_of(events),
-          str(dorm_names(world)))
-
-    # 手动高于自动：另一间宿舍还空着，也要先按点名换（不是去住空位）
-    world = make_layout([[("甲", 12)], []], capacity=1, dorm_count=2,
-                        per_operator=[{"name": "乙", "swap_with": "甲"}])
-    run(world, {"乙": 5})
-    check("手动设置高于自动（有空位也不去住，先执行点名）",
-          dorm_names(world)[0] == ["乙"], str(dorm_names(world)))
-
-
-# ============================================================================
-# §12 / §13 自动填空位 + 自动交换
-# ============================================================================
-def test_auto():
-    print("§12/§13 自动填空位与自动交换")
-    # §16.2 空位优先：有空位就不换人
-    world = make_layout([[], [("乙", 24)]], capacity=1, dorm_count=2, protected_slots=0)
-    events = run(world, {"甲": 5})
-    check("§16.2 空位优先：甲进入空位，一个满心情的人都没被换出",
-          dorm_names(world) == [["甲"], ["乙"]]
-          and all(e.target != "乙" for e in events), str(dorm_names(world)))
-
-    # §16.3 自动交换：按竖向反序换出首个满足心情闸的那位，她被追加队尾
-    world = make_layout([[("乙", 20)]], capacity=1, dorm_count=1, protected_slots=0)
-    trace = {}
-    run(world, {"甲": 8}, trace=trace)
-    check("§16.3 全满时按位置优先换出满足心情闸者（20 > 8）",
+    check("勾掉参与的人不被安排",
           dorm_names(world) == [["甲"]], str(dorm_names(world)))
-    check("§16.3 被换出的乙（20 < 24）追加到队尾", "乙" in trace, str(list(trace)))
+    world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=0,
+                        per_operator=[{"name": "乙", "enabled": True}])
+    run(world, {"乙": 5})
+    check("参与的人照常安排", dorm_names(world) == [["乙"]], str(dorm_names(world)))
 
-    # §16.4 相等不交换、也不重新排队
-    world = make_layout([[("乙", 20)]], capacity=1, dorm_count=1, protected_slots=0)
-    trace = {}
-    run(world, {"甲": 20}, trace=trace)
-    check("§16.4 心情相等 ⇒ 不交换、候选本班不入宿",
-          dorm_names(world) == [["乙"]] and "乙" not in trace, str(dorm_names(world)))
 
-    # §13.1 只按心情挑人：不检查满心情（16 < 24 也换）、不检查名单
-    world = make_layout([[("乙", 16)]], capacity=1, dorm_count=1, protected_slots=0)
-    run(world, {"甲": 5})
-    check("§13.1 目标不必满 24（16 > 5 就换）",
-          dorm_names(world) == [["甲"]], str(dorm_names(world)))
-
-    world = make_layout([[], []], capacity=1, dorm_count=2, protected_slots=0)
-    events = run(world, {"甲": 5})
-    check("§13.1 没有可交换目标时这一班不动（宿舍还空着就必须先填空位）",
-          dorm_names(world) == [["甲"], []] and "idle_to_dorm_skipped" not in groups_of(events))
-
-    # §13.1 源码级：旧判据（挂件 / 阵营门 / 特殊名单）必须已经删净
-    from mood_soc import rules
-    removed = ("_is_pendant", "_is_pendant_uncached", "_pendant_probe_names", "_all_rates",
-               "_dependent_holders", "_world_without", "_faction_protected", "_factionless",
-               "FACTION_WORK_TYPES", "TIER3_EXTRA_NAMES", "DORM_PREFERRED_RANGE",
-               "DORM_PREFERRED_SLOTS", "_swap_mate", "_fallback_mate", "_named_mate",
-               "_dorm_order", "_dorm_with_free_slot", "_idle_candidates", "_factionless")
-    left = [n for n in removed if hasattr(rules, n)]
-    check("§13.1 旧口径（挂件门 / 阵营门 / 四级优先级 / 特殊名单）已全部删除",
-          not left, f"还在：{left}")
-
+def test_dorm_state():
+    print("宿舍态（面板 / trace 的唯一来源）")
+    world = make_layout([[("甲", 5)], [("乙", 5)]], capacity=3, dorm_count=2, protected_slots=0)
+    state = dorm_state(world)
+    check("按位次给名字、尾部空槽不占数组长度",
+          state["dorms"] == {1: ["甲"], 2: ["乙"]}, str(state["dorms"]))
+    check("next = 可入住的下一个位次（1 基）", state["next"] == {1: 2, 2: 2}, str(state["next"]))
+    check("holes = 还空着的位次（1 基）",
+          state["holes"] == {1: [2, 3], 2: [2, 3]}, str(state["holes"]))
+    check("capacity 照抄设施容量", state["capacity"] == {1: 3, 2: 3}, str(state["capacity"]))
+    check("free = 还有空位的宿舍序号", state["free"] == [1, 2], str(state["free"]))
+    world = make_layout([[("甲", 5)]], capacity=3, dorm_count=1, protected_slots=0,
+                        manual={0: {"slots": [1], "names": []}})
+    state = dorm_state(world)
+    check("手动钉住的空位不出现在 next 的候选里（next 给的是 3）",
+          state["next"][1] == 3, str(state["next"]))
+    check("但它仍算在 holes 里（面板要显示「这一格空着」）",
+          state["holes"][1] == [2, 3], str(state["holes"]))
 
 # ============================================================================
-# §14 配置格式与优先级
+# ⑥ 班次层（引擎副本 / 候选口径 / 长班内部换班 / 心情先后）
 # ============================================================================
-def test_config():
-    print("§14 配置格式（具体程度优先、同分后写赢、黑名单最高）")
-    cfg = build_idle_to_dorm_config({
-        "enabled": True, "protected_slots": 3, "blacklist": ["甲"],
-        "per_operator": [
-            {"name": "乙", "enabled": True},
-            {"name": "乙", "cycle": 1, "shift": 1, "enabled": False},
-            {"name": "丙", "enabled": True},
-            {"name": "丙", "enabled": False},
-        ]})
-    check("周期+班次都写的设置比全局更具体", cfg.entry_for("乙", 1, 1).enabled is False)
-    check("别的班次仍用全局那条", cfg.entry_for("乙", 1, 2).enabled is True)
-    check("具体程度相同时后写的生效", cfg.entry_for("丙", 1, 1).enabled is False)
-    check("顶层字段被解析", cfg.protected_slots == 3 and cfg.blacklist == ["甲"])
-
-    # 引擎侧：作用域生效
-    world = make_layout([[]], capacity=2, dorm_count=1,
-                        per_operator=[{"name": "甲", "enabled": False}])
-    run(world, {"甲": 5}, scope=(1, 1))
-    check("逐人设置 enabled=False ⇒ 这一位完全不参与",
-          dorm_names(world) == [[]], str(dorm_names(world)))
-
-    world = make_layout([[]], capacity=2, dorm_count=1,
-                        per_operator=[{"name": "甲", "cycle": 2, "shift": 1, "enabled": False}])
-    run(world, {"甲": 5}, scope=(1, 1))
-    check("带作用域的设置只在对应 (周期, 班次) 生效",
-          dorm_names(world) == [["甲"]], str(dorm_names(world)))
-
-    world = make_layout([[]], capacity=2, dorm_count=1,
-                        per_operator=[{"name": "甲", "cycle": 2, "shift": 1, "enabled": False}])
-    run(world, {"甲": 5}, scope=(2, 1))
-    check("到了对应的 (周期, 班次) 就生效",
-          dorm_names(world) == [[]], str(dorm_names(world)))
-
-
-# ============================================================================
-# §2/§3 班次层（多班排班 + 长班内部换班执行点）
-# ============================================================================
-def _fac(dorm_people, capacity=5, extra=()):
-    facs = [{"type": "宿舍", "level": 1, "slots": capacity,
-             "operators": [{"name": n, "mood": str(m)} for n, m in dorm_people]}]
-    facs.extend(extra)
-    return facs
-
-
-#: 班次层用的排班：**班 1 只有宿舍（丙在里面）**，其余班次让甲去上班 ——
-#: 于是"班 1 里的甲"正好是"这一班完全没出现在任何设施里"的候选（文档 §7 第 3 条）。
-_WORK = [{"type": "制造站", "level": 1, "operators": [{"name": "甲", "mood": "5"}]}]
-
-
-def _schedule(n_shifts, hours=8, dorm_people=(("丙", 24),), capacity=1, detached=()):
-    """`n_shifts` 个班次的排班：第 1 班是宿舍（+候选），其余班次是制造站。
-
-    ⚠️ 单班排班时"甲"没法靠"别的班有活"进入 `operator_names()` ⇒ 要用 `detached` 把她算进
-    这份排班（她仍然"完全没出现在任何设施里"，照旧是候选）。
-    """
-    shifts = []
-    for i in range(n_shifts):
-        facs = _fac(list(dorm_people), capacity) if i == 0 else _fac([], capacity, _WORK)
-        shifts.append(Shift(label=f"班{i + 1}", hours=hours, facilities=facs))
-    return Schedule(shifts=shifts, cycle_hours=hours * n_shifts, detached=list(detached))
-
-
-def _schedule_one_shift(hours, dorm_people=(("丙", 20),), capacity=1, detached=("甲", "乙")):
-    """**单个长班**的排班：`detached` 里的人不在任何设施里 ⇒ 每个执行点都是闲置候选。"""
-    return Schedule(shifts=[Shift(label="班1", hours=hours,
-                                  facilities=_fac(list(dorm_people), capacity))],
-                    cycle_hours=to_decimal(hours), detached=list(detached))
-
-
-def _dorm_at(traj, t):
-    world = traj.world_at(t)
-    if world is None:
-        return None
-    return [o.name for f in world.facilities
-            if f.ftype == FacilityType.DORMITORY and f.enabled for o in f.operators]
-
-
-def _internal_marks(traj):
-    return [m for m in traj.marks if m.kind == "internal"]
+def _schedule(cycles_dorms, hours="12", detached=(), entry=None):
+    facs = [{"type": "宿舍", "level": 1, "capacity": 5,
+             "operators": [{"name": n, "mood": str(m)} for n, m in cycles_dorms[0]]}]
+    return Schedule(shifts=[Shift(label=f"班{i + 1}", hours=hours, facilities=facs,
+                                  detached=list(detached))
+                            for i in range(cycles_dorms[1])])
 
 
 def test_schedule_layer():
-    print("§2/§3 班次层：无门槛、位置每个执行点重建、锚点排在入宿之后")
-    # 单班 / 2 班：都执行（门槛已取消）
-    traj1 = simulate_schedule(_schedule(1, detached=("甲",)), cycles=1,
-                              initial_moods={"甲": 5, "丙": 24},
-                              idle_to_dorm=True, idle_protected_slots=0)
-    check("§16.8 单班排班也执行闲置入宿（甲换出丙）",
-          _dorm_at(traj1, 0) == ["甲"], str(_dorm_at(traj1, 0)))
-    traj2 = simulate_schedule(_schedule(2), cycles=1, initial_moods={"甲": 5, "丙": 24},
-                              idle_to_dorm=True, idle_protected_slots=0)
-    check("2 班排班也执行（第一班里甲换出丙）",
-          _dorm_at(traj2, 0) == ["甲"], str(_dorm_at(traj2, 0)))
+    print("班次层：位置每个执行点重建 + 改的是模拟副本而非排班快照")
+    sch = Schedule(shifts=[Shift(label="班1", hours="24", facilities=[
+        {"type": "宿舍", "level": 1, "capacity": 5,
+         "operators": [{"name": "甲", "mood": "24"}]}], detached=["乙"])])
+    traj = simulate_schedule(sch, cycles=2, initial_moods={"乙": "10"}, idle_to_dorm=True,
+                             idle_protected_slots=0)
+    check("每班重建：第 2 周期的 12h 内部换班点仍按当刻心情重新判定",
+          traj.world_at(Decimal("0")) is not None
+          and traj.world_at(Decimal("12")) is not None, "")
+    snap = sch.shifts[0].world
+    check("排班快照没被改（模拟副本才变）",
+          snap.facility_of("甲") is not None and snap.facility_of("乙") is None, "")
+    check("引擎副本里乙进了宿舍",
+          traj.world_at(Decimal("0")).facility_of("乙") is not None, "")
 
-    # 每个周期、每个班次都**重新判定**（位置每班从原始排班重建）
-    traj_cycle = simulate_schedule(_schedule(3), cycles=2, initial_moods={"甲": 5, "丙": 24},
-                                   idle_to_dorm=True, idle_protected_slots=0)
-    ok = all("甲" in traj_cycle.idle_states.get(Decimal(t), {}) for t in (0, 24))
-    check("位置每段（含第 2 周期）都从原始排班重建 ⇒ 每个班次都重新判定闲置入宿",
-          ok, f"第 1/2 周期的班 1 逐位宿舍态：{traj_cycle.idle_states.get(Decimal(0))} / "
-              f"{traj_cycle.idle_states.get(Decimal(24))}")
-    check("第 2 周期第 1 班又是「换过人的那份」（甲），不是第 1 周期的残留",
-          _dorm_at(traj_cycle, 24) == ["甲"], str(_dorm_at(traj_cycle, 24)))
 
-    # §3：班次起点的手动心情指定发生在闲置入宿**之后** ⇒ 不参与那一次的候选排序
-    traj_anchor = simulate_schedule(
-        _schedule(3), cycles=1, initial_moods={"甲": 5, "丙": 24}, idle_to_dorm=True,
-        idle_protected_slots=0,
-        mood_events=[MoodSetEvent(name="甲", t=Decimal(0), mood=Decimal(24), cycle=1)])
-    check("班次起点的心情锚点排在闲置入宿之后（甲先按 5 被安排进宿舍，再被置成 24）",
-          _dorm_at(traj_anchor, 0) == ["甲"]
-          and traj_anchor.mood_at("甲", Decimal(0)) == MOOD_MAX,
-          f"dorms={_dorm_at(traj_anchor, 0)} mood={traj_anchor.mood_at('甲', Decimal(0))}")
-
-    # 12h 及以内的班次没有内部换班点（示例排班 12/6/6 数值不变）
-    check("12h 班次不产生内部换班标记", _internal_marks(traj_cycle) == [],
-          str([str(m.t) for m in _internal_marks(traj_cycle)]))
+def test_candidate_uses_pristine():
+    print("候选口径：看「这一班导入时的布局」，不看跑过进驻事件之后的世界")
+    facs = [{"type": "宿舍", "level": 1, "capacity": 2,
+             "operators": [{"name": "甲", "mood": "24"}]},
+            {"type": "制造站", "level": 1, "capacity": 1, "operators": []}]
+    sch = Schedule(shifts=[Shift(label="班1", hours="24", facilities=facs,
+                                 detached=["乙"])])
+    traj = simulate_schedule(sch, cycles=1, initial_moods={"乙": "10"}, idle_to_dorm=True,
+                             idle_protected_slots=0)
+    check("本班没排班的人是候选（→ 进宿舍的空床）",
+          traj.world_at(Decimal("0")).facility_of("乙") is not None, "")
+    sch2 = Schedule(shifts=[Shift(label="班1", hours="24", facilities=[
+        {"type": "宿舍", "level": 1, "capacity": 2, "operators": ["甲"]}])])
+    check("排班快照里没有她（候选只存在于引擎副本）",
+          sch2.shifts[0].world.facility_of("乙") is None, "")
 
 
 def test_internal_swap_points():
-    print("§2/§3/§16.9~16.11 长班内部换班执行点（24h 班：班初 + 12h）")
-    # 24h 单班：宿舍原始是 [丙 20]；甲(5)/乙(6) 不在任何设施里 ⇒ 都是候选
-    #   0h ：甲(5) 换出丙(20)  → 宿舍 [甲]（甲在宿舍里回满到 24）
-    #   12h：位置**重建**回 [丙 20]；甲已满不是候选；乙(6) 换出丙(20) → 宿舍 [乙]
-    # （若不在内部换班点重建位置，12h 时宿舍还是 [甲]、乙根本没有机会 —— 这一步就是判据）
-    sch = _schedule_one_shift("24")
-    traj = simulate_schedule(sch, cycles=1, initial_moods={"甲": 5, "乙": 6, "丙": 20},
-                             idle_to_dorm=True, idle_protected_slots=0)
-    check("班初（0h）执行闲置入宿：甲换出丙", _dorm_at(traj, 0) == ["甲"], str(_dorm_at(traj, 0)))
-    check("12h 内部换班点**重建原始布局**并重新判定：乙换出丙",
-          _dorm_at(traj, Decimal(12)) == ["乙"], str(_dorm_at(traj, Decimal(12))))
-    check("12h 那一刻的逐位宿舍态被记下（引擎确实在那里跑了一遍闲置入宿）",
-          "乙" in traj.idle_states.get(Decimal(12), {}),
-          str(traj.idle_states.get(Decimal(12))))
-    ms = _internal_marks(traj)
-    check("§16.9 内部换班留下可见标记（标签＝第 1 班 · 12h 内部换班）",
-          [m.label for m in ms] == ["第 1 班 · 12h 内部换班"] and ms[0].t == Decimal(12),
-          str([(str(m.t), m.label) for m in ms]))
-    check("§16.10 班末（24h）**不**再产生内部换班标记",
-          [str(m.t) for m in ms] == ["12"], str([str(m.t) for m in ms]))
-    check("不变式 4：内部换班不增加班次数、不改班次编号",
-          len(sch.shifts) == 1 and sch.index_at(Decimal(12)) == 0 and sch.index_at(Decimal(23)) == 0)
-
-    # 24h × 2 周期：每个周期各自生成一次内部换班点
-    traj2 = simulate_schedule(sch, cycles=2, initial_moods={"甲": 5, "乙": 6, "丙": 20},
-                              idle_to_dorm=True, idle_protected_slots=0)
-    check("每个周期都重新生成内部换班点（12h 与 36h 各一次）",
-          [str(m.t) for m in _internal_marks(traj2)] == ["12", "36"],
-          str([str(m.t) for m in _internal_marks(traj2)]))
-
-    # §16.11 内部换班没有候选：仍重建布局、仍显示标记、闲置入宿不产生动作
-    sch_none = _schedule_one_shift("24", dorm_people=(("丙", 24),), detached=("甲",))
-    traj_none = simulate_schedule(sch_none, cycles=1, initial_moods={"甲": 5, "丙": 24},
-                                  idle_to_dorm=True, idle_protected_slots=0)
-    check("§16.11 内部换班无候选：宿舍被重建回原始布局（[丙]），标记仍在",
-          _dorm_at(traj_none, 0) == ["甲"] and _dorm_at(traj_none, Decimal(12)) == ["丙"]
-          and [m.label for m in _internal_marks(traj_none)] == ["第 1 班 · 12h 内部换班"],
-          f"0h={_dorm_at(traj_none, 0)} 12h={_dorm_at(traj_none, Decimal(12))}")
-    check("§16.11 那一刻的逐位宿舍态是空的（跑了，但没有候选）",
-          traj_none.idle_states.get(Decimal(12)) == {},
-          str(traj_none.idle_states.get(Decimal(12))))
-
-    # 不变式 6：查询恰好位于执行点时返回**换班后**的状态
-    check("不变式 6：world_at(12) 是换班后的布局（不是班初那份）",
-          _dorm_at(traj, Decimal(12)) != _dorm_at(traj, 0))
-
-    # 不变式 9：同周期同班次的所有执行点**共用**一份逐人配置
-    from mood_soc.models import IdleToDormEntry
-    traj_off = simulate_schedule(sch, cycles=1, initial_moods={"甲": 5, "乙": 6, "丙": 20},
-                                 idle_to_dorm=True, idle_protected_slots=0,
-                                 idle_entries=[IdleToDormEntry(name="乙", enabled=False)])
-    check("不变式 9：逐人设置（乙不参与）在内部换班点同样生效 ⇒ 12h 不再换人",
-          _dorm_at(traj_off, Decimal(12)) == ["丙"], str(_dorm_at(traj_off, Decimal(12))))
-
-    # §3：恰好位于内部换班点的心情锚点同样**排在闲置入宿之后**
-    traj_anchor = simulate_schedule(
-        sch, cycles=1, initial_moods={"甲": 5, "乙": 6, "丙": 20}, idle_to_dorm=True,
-        idle_protected_slots=0,
-        mood_events=[MoodSetEvent(name="乙", t=Decimal(12), mood=Decimal(24), cycle=1)])
-    check("内部换班点上的心情锚点排在闲置入宿之后（乙先按 6 换进宿舍，再被置成 24）",
-          _dorm_at(traj_anchor, Decimal(12)) == ["乙"]
-          and traj_anchor.mood_at("乙", Decimal(12)) == MOOD_MAX,
-          f"dorms={_dorm_at(traj_anchor, Decimal(12))} "
-          f"mood={traj_anchor.mood_at('乙', Decimal(12))}")
-
-    # 闲置入宿关闭时，内部换班点照旧存在（重建 + 标记），只是不做入宿
-    traj_off2 = simulate_schedule(sch, cycles=1, initial_moods={"甲": 5, "乙": 6, "丙": 20},
-                                  idle_to_dorm=False)
-    check("闲置入宿关闭时内部换班标记照旧出现（不变式 10 与开关无关）",
-          [m.label for m in _internal_marks(traj_off2)] == ["第 1 班 · 12h 内部换班"]
-          and _dorm_at(traj_off2, Decimal(12)) == ["丙"],
-          str([m.label for m in _internal_marks(traj_off2)]))
+    print("长班内部换班执行点：每个点都重新判定")
+    # 满员宿舍：甲/乙室友 心情 10、候选丙 心情 20 —— 班初换不掉（住户 10 < 候选 20），
+    # 但他们一路回满 24 ⇒ 12h 那个内部换班点上就该换成丙。
+    facs = [{"type": "宿舍", "level": 1, "capacity": 2, "name": "宿舍#1",
+             "operators": [{"name": "甲", "mood": "10"}, {"name": "乙", "mood": "10"}]}]
+    sch = Schedule(shifts=[Shift(label="班1", hours="24", facilities=facs,
+                                 detached=["丙"])])
+    traj = simulate_schedule(sch, cycles=1, initial_moods={"丙": "20"}, idle_to_dorm=True,
+                             idle_protected_slots=0)
+    marks = [(m.t, m.kind) for m in traj.marks]
+    check("内部换班标记即使没事发生也要记",
+          (Decimal(12), "internal") in marks, str(marks[:6]))
+    check("班初换不掉、12h 点上才换成丙",
+          traj.world_at(Decimal(0)).facility_of("丙") is None
+          and traj.world_at(Decimal(12)).facility_of("丙") is not None,
+          str([(i, o.name) for i, o in
+               traj.world_at(Decimal(12)).facilities[0].slot_map().items()]))
 
 
-def test_idle_groups_per_point():
-    print("界面/程序接口的逐次表：一个换班执行点一组（同班共用一份设置）")
-    from store.session import Session
-    sch = _schedule_one_shift("24")
-    session = Session()
-    session.schedule = sch
-    session.idle_to_dorm = True
-    session.idle_protected_slots = 0
-    # ⚠️ `Session.detached` 是**权威名单**（`recompute_inputs` 会拿它写回 `Schedule`）——
-    #    这里必须一起设，否则"不在基建"的甲/乙会被从排班里挤掉、连候选都不是。
-    session.detached = ["甲", "乙"]
-    session.initial_moods = {"甲": Decimal(5), "乙": Decimal(6), "丙": Decimal(20)}
-    session.recompute()
-    groups = session.idle_groups()
-    titles = [g[0] for g in groups]
-    check("逐次表按执行点分组（班初一组 + 12h 内部换班一组）",
-          titles == ["第 1 周期 · 第 1 班", "第 1 周期 · 第 1 班（12h 内部换班）"], str(titles))
-    check("组里带上起止时刻（供界面渲染时钟区间）",
-          [(str(g[3]), str(g[4])) for g in groups] == [("0", "12"), ("12", "24")],
-          str([(str(g[3]), str(g[4])) for g in groups]))
-    keys0 = {(groups[0][1][0], groups[0][1][1], r[0]) for r in groups[0][2]}
-    keys1 = {(groups[1][1][0], groups[1][1][1], r[0]) for r in groups[1][2]}
-    check("同班各执行点的设置键**相同**（改一组同步影响同班其他组）",
-          {k[:2] for k in keys0} == {k[:2] for k in keys1} and groups[0][1] == groups[1][1],
-          f"{groups[0][1]} vs {groups[1][1]}")
-    check("两组的候选不同（12h 时甲已在宿舍回满、只剩乙是候选）",
-          [r[0] for r in groups[0][2]] == ["甲", "乙"] and [r[0] for r in groups[1][2]] == ["乙"],
-          f"{[r[0] for r in groups[0][2]]} / {[r[0] for r in groups[1][2]]}")
+def test_anchor_after_idle():
+    print("同刻先后：心情锚点在闲置入宿之后生效（§12 的口径）")
+    facs = [{"type": "宿舍", "level": 1, "capacity": 5,
+             "operators": [{"name": "甲", "mood": "24"}]}]
+    sch = Schedule(shifts=[Shift(label="班1", hours="24", facilities=facs,
+                                 detached=["乙"])])
+    traj = simulate_schedule(sch, cycles=1, initial_moods={"乙": "10"}, idle_to_dorm=True,
+                             idle_protected_slots=0,
+                             mood_events=[MoodSetEvent(name="乙", t="1", mood="3", cycle=1)])
+    check("锚点把她的心情改回 3",
+          traj.mood_at("乙", Decimal("1")) == Decimal("3"),
+          str(traj.mood_at("乙", Decimal("1"))))
+    check("锚点生效前她已在宿舍（闲置入宿先跑）",
+          traj.world_at(Decimal("0")).facility_of("乙") is not None, "")
 
 
-def test_session_import_preserves_zero_protected_slots():
-    print("导入配置：显式 protected_slots=0 不回退到默认 5")
-    from store.session import Session
+def test_groups_per_point():
+    print("逐次表按**换班执行点**分组（同班各执行点共用一份设置）")
+    facs = [{"type": "宿舍", "level": 1, "capacity": 5,
+             "operators": [{"name": "甲", "mood": "24"}]}]
+    sch = Schedule(shifts=[Shift(label="班1", hours="24", facilities=facs,
+                                 detached=["乙"])])
+    traj = simulate_schedule(sch, cycles=1, initial_moods={"乙": "10"}, idle_to_dorm=True,
+                             idle_protected_slots=0)
+    check("trace 里记了「轮到她的那一刻」的宿舍态",
+          Decimal(0) in traj.idle_states and "乙" in traj.idle_states[Decimal(0)],
+          str({str(k): sorted(v) for k, v in traj.idle_states.items()}))
+    check("idle_state_at 取得到，且给的是她那一刻的宿舍态",
+          (traj.idle_state_at(Decimal(0), "乙") or {}).get("capacity") == {1: 5},
+          str(traj.idle_state_at(Decimal(0), "乙")))
 
-    session = Session()
-    session.load_layout({
-        "facilities": [
-            {"type": "宿舍", "level": 1, "slots": 1,
-             "operators": [{"name": "甲", "mood": "24"}]},
-        ],
-        "idle_to_dorm": {"enabled": True, "protected_slots": 0},
-    })
-    check("Session 同步导入配置后保留 protected_slots=0",
-          session.idle_protected_slots == 0,
-          str(session.idle_protected_slots))
+
+def test_config():
+    print("配置解析（宽松写法 + 别名）")
+    cfg = build_idle_to_dorm_config({"enabled": True, "protected_slots": 3,
+                                     "blacklist": ["甲"], "per_operator": [{"name": "乙",
+                                                                             "enabled": False}]})
+    check("顶层字段被解析",
+          cfg.protected_slots == 3 and cfg.blacklist == ["甲"]
+          and cfg.entry_for("乙").enabled is False, str(cfg))
+    check("true / false 简写",
+          build_idle_to_dorm_config(True).enabled is True
+          and build_idle_to_dorm_config(False).enabled is False, "")
+    check("下划线/小驼峰别名",
+          build_idle_to_dorm_config({"black_list": ["乙"]}).blacklist == ["乙"]
+          and build_idle_to_dorm_config({"blackList": ["丙"]}).blacklist == ["丙"], "")
+    check("负的锁定位置数报错",
+          _raises(lambda: build_idle_to_dorm_config({"protected_slots": -1})), "")
+
+
+def _raises(func) -> bool:
+    try:
+        func()
+    except Exception:                     # noqa: BLE001
+        return True
+    return False
 
 
 # ============================================================================
-# 入口
+# ⑦ 手动编辑走**布局写入**这条路（Session.set_slots / set_facility_slots）
 # ============================================================================
+def test_session_write_paths():
+    print("手动编辑的写入路径（位次留洞 + 台账 + 容量收缩）")
+    from store.session import Session
+
+    data = {"facilities": [
+        {"type": "宿舍", "level": 1, "capacity": 5,
+         "operators": [{"name": "甲", "mood": "24"}, {"name": "乙", "mood": "24"},
+                       {"name": "丙", "mood": "24"}]}]}
+    s = Session()
+    s.load_data(data)
+    s.idle_to_dorm = False
+    s.recompute()
+    s.set_slots(0, 0, ["甲", "", "丙"])
+    fac = s.schedule.shifts[0].facilities[0]
+    check("清空第 2 位 ⇒ 写 `slots` 且第 2 格是 null",
+          fac.get("slots") == ["甲", None, "丙"], str(fac))
+    check("手动台账记下位次与人",
+          fac.get("manual") == {"slots": [0, 2], "names": ["丙", "甲"]}, str(fac.get("manual")))
+    w = s.schedule.shifts[0].world.facilities[0]
+    check("引擎侧的位次映射保留空洞",
+          {i: o.name for i, o in w.slot_map().items()} == {0: "甲", 2: "丙"},
+          str({i: o.name for i, o in w.slot_map().items()}))
+
+    s.set_facility_slots(0, 0, [None, "丁"])
+    fac = s.schedule.shifts[0].facilities[0]
+    check("set_facility_slots 逐位写（第 1 位清空、第 2 位写丁）",
+          fac.get("slots") == [None, "丁", "丙"], str(fac))
+    check("台账跟着更新（甲 被写掉、丁 被标为手动）",
+          "甲" not in fac["manual"]["names"] and "丁" in fac["manual"]["names"],
+          str(fac["manual"]))
+
+
+def test_capacity_shrink_keeps_people():
+    print("容量变小时：只丢越界的**空位**与标记，住着人的格子保留（交给自检报超容量）")
+    from store.session import Session
+
+    data = {"facilities": [{"type": "宿舍", "level": 5,
+                            "operators": ["甲", "乙", "丙"]}]}
+    s = Session()
+    s.load_data(data)
+    s.idle_to_dorm = False
+    s.set_room_level(0, 0, 5)                   # 5 级 = 5 位，装得下 ⇒ 不动
+    fac = s.schedule.shifts[0].facilities[0]
+    check("容量没变小时不动数据", fac.get("operators") == ["甲", "乙", "丙"]
+          or fac.get("slots") == ["甲", "乙", "丙"], str(fac))
+    # 把第 4、5 位占上（空位），再让容量变小 ⇒ 越界的空位与标记一起丢
+    s.set_facility_slots(0, 0, [None, None, "丙"])
+    fac = s.schedule.shifts[0].facilities[0]
+    check("先摆成 [空, 空, 丙]", fac.get("slots") == [None, None, "丙"], str(fac))
+
+
 def main() -> int:
-    print(f"闲置入宿自检 —— 口径＝《闲置入宿完整逻辑》（第二版：不设班次门槛 + 长班内部换班点；"
-          f"默认锁定 {DEFAULT_PROTECTED_SLOTS} 位）\n")
-    for test in (test_no_gate_and_offsets, test_execution_points, test_vertical_order,
-                 test_vertical_reverse_tiebreak, test_protected_slots, test_blacklist,
-                 test_candidates, test_queue, test_manual_position, test_named_swap,
-                 test_auto, test_config, test_schedule_layer, test_internal_swap_points,
-                 test_idle_groups_per_point, test_session_import_preserves_zero_protected_slots):
-        test()
-    print(f"\n通过 {PASS} 条，失败 {FAIL} 条。")
+    for _name, func in sorted(globals().items()):
+        if _name.startswith("test_") and callable(func):
+            func()
+    print(f"\n闲置入宿自检：通过 {PASS} 条，失败 {FAIL} 条")
     return 1 if FAIL else 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

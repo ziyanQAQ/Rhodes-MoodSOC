@@ -9,6 +9,7 @@ from mood_soc.battery import to_decimal
 from mood_soc.config import parse_facility_type, MOOD_MAX
 from mood_soc.models import BaseLayout, Facility, Operator, build_entry_event_config
 from mood_soc.models import build_idle_to_dorm_config
+from mood_soc.models import build_manual_ledger, facility_occupancy
 from data.skills_data import DEFAULT_OPERATORS, TRAITS
 
 # 干员等级默认值：满练口径（"等级 30 解锁"的技能才不会默认失效）
@@ -126,20 +127,38 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
         ftype = parse_facility_type(f["type"])
         if ftype is None:
             raise ValueError(f"无法识别的设施类型：{f['type']!r}")
-        operators = [build_operator(o) for o in f.get("operators", [])]
+        # 占位：`operators`（紧凑，位次 = 下标）或 `slots`（有位次空洞，空槽写 null）；
+        # 后者是"清空某一位不左移"的持久化形式，见 models.facility_occupancy。
+        specs, mapping = facility_occupancy(f)
+        port = {i: build_operator(spec) for i, spec in mapping.items()}
+        if isinstance(f.get("slots"), (list, tuple)):
+            operators = [port[i] for i in sorted(port)]   # 显式位次：空槽不在映射里
+        else:
+            operators = [build_operator(o) for o in specs]
         deputies = [build_operator(o) for o in f.get("deputies", [])]
         atmosphere = f.get("atmosphere")
-        slots = f.get("slots")
-        facilities.append(Facility(
+        # 容量覆盖：`capacity`（正式写法）与 `slots`（历史写法，v4 蓝图的 `dorm_beds` 也走它）
+        # ⚠️ `slots` 现在同时是"按位次的占位数组"（见 facility_occupancy），
+        #    所以容量覆盖在 JSON 里一律用 `capacity`；`slots` 只在它是**数字**时才当容量读（兼容老数据）。
+        override = f.get("capacity")
+        if override is None:
+            legacy = f.get("slots")
+            # 历史写法：数字型 `slots` = 容量覆盖（数组型是"按位次的占位"，见 facility_occupancy）
+            override = legacy if isinstance(legacy, (int, float)) and not isinstance(legacy, bool) else None
+        facility = Facility(
             ftype=ftype,
             level=int(f.get("level", 1)),
             operators=operators,
             atmosphere=to_decimal(atmosphere) if atmosphere is not None else None,  # None=按等级满氛围
             name=str(f.get("name") or ""),
             deputies=deputies,
-            slots=int(slots) if slots is not None else None,
+            slots=int(override) if override is not None else None,
             enabled=bool(f.get("enabled", True)),
-        ))
+        )
+        if isinstance(f.get("slots"), (list, tuple)):
+            facility._slots = port          # 显式位次：位次 → 干员（空槽不在映射里）
+        facility._manual = build_manual_ledger(f.get("manual"))
+        facilities.append(facility)
     world = BaseLayout(
         facilities=facilities,
         # 顶层可选的进驻事件配置（M15a 换不换 / 换谁），见 models.EntryEventConfig：
@@ -175,7 +194,9 @@ __all__ = [
     "build_entry_event_config",
     "build_idle_to_dorm_config",
     "build_initial_variables",
+    "build_manual_ledger",
     "build_operator",
+    "facility_occupancy",
     "parse_facility_type",
     "to_decimal",
 ]

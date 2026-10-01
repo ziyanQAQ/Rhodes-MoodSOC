@@ -12,7 +12,6 @@
 """
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Dict, List, Optional
@@ -33,7 +32,9 @@ from .config import DORM_LEVEL_TABLE
 from .ledger import Bucket, Contribution, MoodLedger
 from .variables import BASIS_DOC, VariableLedger, basis_count, collect_variables
 from .models import BaseLayout, BaseResult, Facility, MoodResult, Operator, OperatorResult
-from .models import normalize_entry_when
+from .models import (clear_manual, facility_occupancy, mark_manual, normalize_entry_when,
+                     read_manual, remove_occupant, set_seat)
+from .models import ManualLedger
 from .skill_templates import Stacking
 from .skills import (
     SKILLS,
@@ -684,21 +685,29 @@ ENTRY_AUTO_TARGETS = ("any", "auto", "anyone", "任意", "最累", "谁都可以
 
 
 def _position_of(world: BaseLayout, op: Operator):
-    """干员在布局里的 (设施, 下标)；不在布局里返回 (None, -1)。"""
+    """干员在布局里的 `(设施, 位次)`；不在布局里返回 `(None, -1)`。
+
+    ⚠️ 位次走 `slot_map()`（**带空洞的位次**），不是列表下标：清空过某一位之后
+    两者不再相等，用列表下标去写 `operators[i]` 会换错人。
+    """
     for f in world.facilities:
-        for i, o in enumerate(f.operators):
+        for i, o in f.slot_map().items():
             if o is op:
                 return f, i
     return None, -1
 
 
 def _swap_positions(world: BaseLayout, a: Operator, b: Operator) -> str:
-    """把两名干员的**位置**互换（就地）。返回人类可读说明（换不了时为空串）。"""
+    """把两名干员的**位置**互换（就地）。返回人类可读说明（换不了时为空串）。
+
+    走 `models.set_seat`（空洞的唯一写入口），所以 `_slots` 位次映射不会失配。
+    """
     fa, ia = _position_of(world, a)
     fb, ib = _position_of(world, b)
     if fa is None or fb is None:
         return ""
-    fa.operators[ia], fb.operators[ib] = fb.operators[ib], fa.operators[ia]
+    set_seat(fa, ia, b)
+    set_seat(fb, ib, a)
     world.invalidate_index()             # 成员换了房间 ⇒ 名字索引作废（见 `models._name_index`）
     return (f"（位置也对调：{a.name} 去 {fb.display_name}，"
             f"{b.name} 去 {fa.display_name}）")
@@ -873,35 +882,98 @@ def reset_entry_events(world: BaseLayout) -> int:
 
 
 # ----------------------------------------------------------------------------
-# 「闲置入宿」（按用户文档《闲置入宿完整逻辑》重写，2026-09）
+# 「闲置入宿」（三层解耦后的第二块：**自动入宿逻辑**，2026-10 重写）
 #
-# 一句话：**每个换班执行点**（每个真实班次的班初 ＋ 长班的内部换班点，见
-# `store.schedule.execution_points`），把"这一班完全没有出现在任何设施里、心情还没满"的干员
-# 安排进宿舍；有连续空位就直接住进去，全满后按竖向反序扫描锁定区外位置，
-# 与首个心情严格高于候选的住户互换。
-# 位置每个执行点都从**原始排班**重建，心情跨执行点、跨班、跨周期连续。
+# 优先级链（唯一口径，见 `_seat_verdict`）：  手动编辑  >  自动入宿  >  导入布局
 #
-# 处理顺序（文档 §9）：手动指定位置 → 手动点名交换 → 竖向正序找空位 → 按竖向反序逐位检查自动交换。
+#   · **导入布局**＝基线，**不是**护身符：它只决定"谁一开始在哪个位置"，
+#     住进宿舍的人照样可以被自动入宿换出去（换人时只按位置与心情选目标）。
+#   · **手动编辑**（`models.ManualLedger`）＝用户对"某个班次某个位置"的操作：
+#     钉住的位次与手动放进去的人**绝对不碰**（不占、不换）。导入不打标。
+#   · **锁定位置**（全局配置）＝竖向正序前 `protected_slots` 个位置：
+#     里面的人自动不换，但**里面的空位照样能入住**。
+#
+# 自动入宿本身只有两相：
+#
+#   相 1（填空床） 竖向正序取第一个"可入住空位"，候选按 (心情↑, 名字↑) 依次入住；
+#   相 2（换人）   队列改最小堆：反复取**心情最低**的候选，让她替换
+#                  **锁定区外、心情严格大于她、心情最大**的那位住户。
+#
+#   相 2 的终态＝**锁定区之外的每位住户，心情都 ≥ 队列里剩下的所有人**；找不到
+#   这样的住户就立刻停下（这句就是"低心情优先入宿"的可判定形式）。
+#   被换出者：心情 < 24、不在黑名单 ⇒ 按 (心情↑, 名字↑) **插回队列**（不是追加队尾）。
+#   终止性：每次换人都是"更低心情者替换更高心情者" ⇒ 宿舍内心情总和严格下降 ⇒ 必然收敛。
 #
 # 关键概念：
-#   · **竖向正序** = 位次优先、宿舍序号其次：宿1位1、宿2位1、…、宿1位2、宿2位2、…
-#     用于锁定位置 / 找空位 / 位次选项；**竖向反序** = 它的完全逆序，只用于
-#     "自动交换"按竖向反序逐位扫描，心情只作为是否满足交换条件的门槛。
-#   · **锁定位置** = 竖向正序的前 `protected_slots` 个位置（默认 5，文档 §5）。
-#     自动交换不换锁定区里的人；锁定区的**空位**照样能让候选入住。锁的是位置、不是人。
-#   · **连续排列** = 每间宿舍从第 1 位开始一个挨一个，唯一"可入住空位"＝现有人数 + 1。
-#     手动指定位次若在"下一个连续位"**之后**，会留下空洞 ⇒ 直接跳过这一位（不回退自动）。
-#   · **黑名单** = 永远不能"通过闲置入宿进宿舍"的人（排班自带的她照旧可被换出、可被点名）。
-#   · **队列** = 先进先出：被换出者心情 < 24、不在黑名单、且队列里没有同名 ⇒ 追加队尾。
+#   · **竖向正序** = 位次优先、宿舍序号其次：宿1位1、宿2位1、…、宿1位2、…
+#   · **空洞**：清空某一位**不左移**后面的人（位次粘人，`models.set_seat`）；
+#     "可入住空位"＝第一个**既没住户、又没被手动钉住**的位次。
+#   · **黑名单** = 永远不能"通过闲置入宿进宿舍"的人（可被换出，不是保护位次）。
 #
-# ⚠️ 第一版里的"四级优先级 / 挂件门 `_is_pendant` / 阵营门 `_faction_protected` /
-#    "优先 4 最后 1" / "只看第 2~5 位" / "必须满 24" / 菲亚梅塔例外 / 自回型门"
-#    已按文档**全部取消**：自动交换只看"锁定区之外、按竖向反序扫描，首个严格大于候选"。
-# ⚠️ **不设班次数量门槛**（文档 §2 第二版）：1 个班次的排班照样执行
-#    （第一版那套"少于 3 班不执行"已取消）。
+# ⚠️ 已作废（别再加回来）：手动指定位置 / 手动点名交换（那两件事归**手动编辑逻辑**，
+#    入口是看板与「干员与心情」表，写进布局快照 + 台账）；竖向反序扫描取"首个严格大于"
+#    的自动交换；被换出者追加队尾；以及更早的四级优先级 / 挂件门 / 阵营门 / 菲亚梅塔例外。
+# ⚠️ **不设班次数量门槛**：1 个班次的排班照样执行。
 # ----------------------------------------------------------------------------
 #: 锁定位置数默认值（文档 §5）。
 DEFAULT_PROTECTED_SLOTS = 5
+
+#: 座位裁决的四种动作（见 `_seat_verdict`）。
+SEAT_AUTO = "auto"            # 空位、无手动标记、非锁定 ⇒ 自动入宿可入住
+SEAT_KEEP = "keep"            # 已占位但**不许动**（手动钉住的位次 / 手动放进去的人）
+SEAT_LOCKED = "locked"        # 已占位且在锁定区 ⇒ 不可被换出（锁定区的**空位**仍走 AUTO）
+SEAT_SWAPPABLE = "swappable"  # 已占位、可被换出（导入住户与自动填入者都在这里）
+
+
+def _seat_key(world: BaseLayout, facility: Facility) -> tuple:
+    """**设施的稳定标识** —— 用作锁定位置集合的键（`(类型, 世界下标 | 实例名)`）。
+
+    ⚠️ 不能用 `id(facility)`：排班层是**先在 pristine（"未动过的计划副本"）上算锁定位置、
+    再在每段的深拷贝上跑自动入宿**，两边的 `Facility` 是不同的对象 ⇒ 用 id 当键会让
+    锁定区**静默失效**（实测踩到）。
+    ⚠️ 也不能只用 `display_name`：**同名宿舍**（导入的 `宿舍#1/#2` 多半没写 name ⇒ 都叫"宿舍"）
+    会共用一个键，锁定位置互相顶掉（实测：4 个锁定位置只剩 2 个）。
+    ⇒ 写了 `name` 用名字（跨深拷贝稳定、也能扛住设施顺序变化），没写名字退回**世界下标**。
+    """
+    if facility.name:
+        return (facility.ftype, facility.name)
+    for i, f in enumerate(world.facilities):
+        if f is facility:
+            return (facility.ftype, i)
+    return (facility.ftype, facility.display_name)
+
+
+def _seat_verdict(facility: Optional[Facility], index: int, *, world=None, protected=None,
+                  ledger=None) -> tuple:
+    """★ **三层逻辑的唯一裁决点** —— "这一位现在归谁、能不能动"。
+
+    返回 `(action, occupant, reason)`：
+
+    | action | 含义 | 自动入宿能做什么 |
+    |---|---|---|
+    | `SEAT_AUTO` | 空位（没人占） | 可以入住 |
+    | `SEAT_KEEP` | 已占位，但**手动编辑**钉住了这一位或这个人 | 谁都不许动 |
+    | `SEAT_LOCKED` | 已占位，且在**锁定区**内 | 不许被换出 |
+    | `SEAT_SWAPPABLE` | 已占位，可被换出（含导入住户） | 换人时可作目标 |
+
+    ⚠️ 判定顺序＝优先级链本身：**手动 → 锁定区 → 空位 → 其余**。
+    ⚠️ 手动标记**优先级高于"空位"**：手动清空的那一位（`slots` 里钉住、但没人占）
+    也算 `SEAT_KEEP` —— "这一位保持空着"就是它要表达的意思。
+    ⚠️ `protected` 的键是 `_seat_key(world, facility)`（**不是对象 id**，见那个函数）；
+    要判锁定区就必须传 `world`（否则只判手动标记与占位）。
+    整个模块里只允许这一个地方做这三条判断（别在别处再写一份）。
+    """
+    mapping = facility.slot_map() if facility is not None else {}
+    occupant = mapping.get(index)
+    led = ledger if ledger is not None else (read_manual(facility) if facility is not None
+                                            else ManualLedger())
+    if led.pins_slot(index) or (occupant is not None and led.pins_name(occupant.name)):
+        return SEAT_KEEP, occupant, "手动编辑（这一位/这个人由你钉住）"
+    if occupant is None:
+        return SEAT_AUTO, None, ""
+    if protected and world is not None and (_seat_key(world, facility), index) in protected:
+        return SEAT_LOCKED, occupant, "锁定位置"
+    return SEAT_SWAPPABLE, occupant, "可换出"
 
 
 def _dorm_numbered(world: BaseLayout) -> List[tuple]:
@@ -920,29 +992,41 @@ def _dorm_numbered(world: BaseLayout) -> List[tuple]:
 def dorm_state(world: BaseLayout) -> dict:
     """**这一刻的宿舍态**（名字 + 位次信息）
 
-    → `{"dorms": {序号: [名字…]}, "free": [还有空位的序号…],
-        "next": {序号: 可入住的下一个连续位}, "capacity": {序号: 容量}}`
+    → `{"dorms": {序号: [名字或 None…按位次]}, "free": [还有空位的序号…],
+        "next": {序号: 可入住的位次（1 基）}, "capacity": {序号: 容量},
+        "holes": {序号: [空的位次（1 基）…]}}`
 
-    谁在用：`apply_idle_to_dorm` 的 `trace`（**逐位候选**各留一份）与界面「闲置入宿」逐次表
-    （列「换谁 / 宿舍NN·第M位」的候选项）。候选是**依次**处理的，面板每一行必须按
-    **轮到她的那一刻**算 —— 拿班末世界或排班快照会列出"那一刻早已被换出宿舍的人"
-    （用户报过"面板里列着清流、宿舍里并没有 清流"）。序号口径同 `_dorm_numbered`。
+    谁在用：`apply_idle_to_dorm` 的 `trace`（**逐位候选**各留一份）与界面面板。
+    ⚠️ `dorms[no]` 按**位次**对齐、空槽写 `None`（第 i 项＝第 i+1 位）；
+    尾部还没到过人的空位不占数组长度，由 `capacity` / `holes` 表达。
     """
     dorms: dict = {}
     free: List[int] = []
     nxt: dict = {}
     cap: dict = {}
+    holes: dict = {}
     for no, dorm in _dorm_numbered(world):
-        dorms[no] = [o.name for o in dorm.operators]
+        mapping = dorm.slot_map()
+        led = read_manual(dorm)
         cap[no] = int(dorm.capacity)
-        nxt[no] = len(dorm.operators) + 1
-        if len(dorm.operators) < dorm.capacity:
+        # 已"到过"的位次长度：已占位次与**手动钉住的位次**里最靠后的那个（手工清空的位次
+        # 也是"到过"——它必须继续显示为一格空的，不能被当成"还没到过"的尾部）。
+        reached = [i for i in list(mapping) + [int(s) for s in led.slots] if i < cap[no]]
+        reach = (max(reached) + 1) if reached else 0
+        dorms[no] = [mapping[i].name if i in mapping else None for i in range(reach)]
+        open_slot = dorm.next_open_slot()
+        nxt[no] = (open_slot + 1) if open_slot is not None else cap[no] + 1
+        holes[no] = [i + 1 for i in range(cap[no]) if i not in mapping]
+        if open_slot is not None:
             free.append(no)
-    return {"dorms": dorms, "free": free, "next": nxt, "capacity": cap}
+    return {"dorms": dorms, "free": free, "next": nxt, "capacity": cap, "holes": holes}
 
 
 def _protected_positions(world: BaseLayout, protected_slots) -> set:
-    """**锁定位置**集合 `{(宿舍序号, 位次), …}` —— 竖向正序的前 `protected_slots` 个。
+    """**锁定位置**集合 `{(_seat_key(设施), 0 基位次), …}` —— 竖向正序的前 `protected_slots` 个。
+
+    ⚠️ 键是**稳定标识**（`_seat_key`）而不是对象 id：排班层先在 pristine 上算它、
+    再在每段深拷贝上用它（见 `_seat_key` 的说明）。
 
     文档 §5：`protected_slots` 钳位到 `[0, 当前班次可用宿舍的总位置数]`（超了按总数生效、
     不报错）；枚举按**竖向正序**（位次优先、宿舍序号其次），只收**真实存在**的位置
@@ -957,10 +1041,10 @@ def _protected_positions(world: BaseLayout, protected_slots) -> set:
     max_cap = max(int(f.capacity) for _no, f in dorms)
     made = 0
     for slot in range(1, max_cap + 1):
-        for no, fac in dorms:
+        for _no, fac in dorms:
             if slot > int(fac.capacity):
                 continue
-            out.add((no, slot))
+            out.add((_seat_key(world, fac), slot - 1))
             made += 1
             if made >= count:
                 return out
@@ -968,57 +1052,49 @@ def _protected_positions(world: BaseLayout, protected_slots) -> set:
 
 
 def _next_free_slots(world: BaseLayout) -> List[tuple]:
-    """每间可用宿舍"当前可入住的下一个位置" → `[((位次, 宿舍序号), 设施, 位次), …]`（竖向正序）。
+    """每间可用宿舍"当前可入住的下一个位置" → `[((位次, 宿舍序号), 设施, 0 基位次), …]`。
 
-    文档 §12：没有手动设置时，先在这些位置里取**竖向正序最靠前**的一个入住；一个都没有
-    （所有可用宿舍都满）才走自动交换。竖向正序的键就是 `(位次, 宿舍序号)`。
+    只有**既没住户、又没被手动钉住**的位次才算可入住（手动清空的位次会被锁住）。
+    排序键＝竖向正序 `(位次, 宿舍序号)`。
     """
     out: List[tuple] = []
     for no, fac in _dorm_numbered(world):
-        pos = len(fac.operators) + 1
-        if pos <= int(fac.capacity):
-            out.append(((pos, no), fac, pos))
+        for i in range(int(fac.capacity)):
+            action, _who, _why = _seat_verdict(fac, i, world=world)
+            if action == SEAT_AUTO:
+                out.append(((i + 1, no), fac, i))
     out.sort(key=lambda row: row[0])
     return out
 
+def _best_swap_victim(world: BaseLayout, candidate_mood, *, protected=None, ceiling=None):
+    """**相 2 的目标** → `(设施, 0 基位次, 干员)`；没有合格目标 → `(None, None, None)`。
 
-def _auto_swap_target(world: BaseLayout, protected: set, candidate_mood):
-    """**自动交换**的目标 → `(设施, 干员, 位次)`；没有可换的人返回 `(None, None, None)`。
+    口径（相 2 的终态）：在**锁定区之外、且没被手动钉住**的住户里，取
+    **心情 ≥ 候选、且心情最大**的那一位（并列时取竖向正序最靠前）。
 
-    文档 §13：只在"当前实际位于可用宿舍、且**在锁定区之外**"的人里挑；**不再检查**
-    是否满心情 / 是否挂件 / 是否受阵营联动保护 / 是否特殊名单 / 是否自回复。
-    按竖向反序逐位扫描，遇到第一个心情**严格高于候选**的住户就返回；位置优先，
-    心情只作为交换资格条件。
+    为什么是"≥ 里取最大"：相 2 按候选心情**从小到大**处理，且被换出者不在本执行点再入队。
+    取"≥ 候选里最大的那位"＝**把最少的那点余量让出去**，剩下的住户仍然够后面的候选换；
+    取最小的那位会把余量吃光，后到的、心情更高的候选就**换不进来**（实测：宿舍里留下
+    22/24，而外面还站着 10，达不到终态）。
+
+    `ceiling`＝**本次允许换出的心情下限**（`None` = 不限）：调用方传"还排在队里的候选的最低心情"，
+    保证被换出去的人不会比还在排队的人更该进宿舍。导入布局的住户与自动填入者都在目标里
+    （导入不上锁）。
     """
-    dorms = _dorm_numbered(world)
-    for no, fac in reversed(dorms):
-        for idx in range(len(fac.operators) - 1, -1, -1):
-            op = fac.operators[idx]
-            slot = idx + 1
-            if (no, slot) in protected:
+    best = None                          # (排序键, 设施, 位次, 干员)
+    for no, fac in _dorm_numbered(world):
+        for i in range(int(fac.capacity)):
+            action, occupant, _why = _seat_verdict(fac, i, world=world, protected=protected)
+            if action != SEAT_SWAPPABLE or occupant.mood < candidate_mood:
                 continue
-            if world.facility_of(op.name) is not fac:
-                continue                     # 陈旧对象 / 她已经不在这一间了
-            if op.mood > candidate_mood:
-                return fac, op, slot
-    return None, None, None
-
-
-def _named_target(world: BaseLayout, name: str):
-    """**点名**要互换的那位 → `(设施, 干员, 位次)`；不在可用宿舍里 → `(None, None, None)`。
-
-    文档 §11：对象必须**这一刻真的在某间可用宿舍**（可以在锁定位置、也可以是黑名单干员），
-    不检查满心情 / 挂件 / 阵营 / 技能 —— 换不换只由调用方的"心情闸"（严格大于候选）决定。
-    """
-    if not name:
+            if ceiling is not None and occupant.mood < ceiling:
+                continue
+            key = (-occupant.mood, i, no)     # 心情最大优先；再竖向正序
+            if best is None or key < best[0]:
+                best = (key, fac, i, occupant)
+    if best is None:
         return None, None, None
-    for _no, fac in _dorm_numbered(world):
-        for idx, op in enumerate(fac.operators):
-            if op.name != name:
-                continue
-            if world.facility_of(name) is fac:      # 真的还在这间（不是陈旧副本对象）
-                return fac, op, idx + 1
-    return None, None, None
+    return best[1], best[2], best[3]
 
 
 def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
@@ -1026,51 +1102,31 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
                        trace: Optional[dict] = None) -> List[Contribution]:
     """**把"未满心情的闲置干员"安排进宿舍**（换班执行点上的布局事件；就地修改 `world`）。
 
-    口径＝用户文档《闲置入宿完整逻辑》。与 `apply_entry_events` 同一层：它改的是**布局**
-    （谁在哪个房间），不是每小时速率，所以同样不进 `consume_ledger` / `recovery_ledger`，
-    由调用方在**每个换班执行点**显式结算 —— `store.schedule.simulate_schedule` 会为
-    「每个真实班次的班初 ＋ 长班的每个内部换班点」（`store.schedule.execution_points`）各调一次；
-    界面开关 / CLI 同样走这条。
+    口径＝三层解耦后的**自动入宿**（见本段开头的说明与 `_seat_verdict`）：
 
-    ⚠️ **不设班次数量门槛**（文档 §2 第二版）：1 个班次的排班照样执行。
+    ```
+    相 1  竖向正序填空床（候选按 心情↑、名字↑）
+    相 2  队列改最小堆：取最低心情候选 → 替换"锁定区外、严格大于她、心情最大"的住户
+          被换出者（心情 < 24、非黑名单）按 (心情↑, 名字↑) 插回队列
+          找不到合格住户 ⇒ 立刻停（终态：锁定区外每位住户的心情都 ≥ 队列剩下的所有人）
+    ```
 
-    每名候选出队后的处理顺序（文档 §9；**手动永远高于自动**）：
-
-    | 序 | 条件 | 动作 |
-    |---|---|---|
-    | 1 | 在黑名单里 | 跳过（防御性；初始候选已过滤） |
-    | 2 | (周期, 班次, 干员) 的手动设置 `enabled=False` | 结束这一位的处理 |
-    | 3 | 手动指定了**宿舍 + 位次** | 正好是"下一个连续位" → 直接入住（可进锁定区）；在其**之后** → 跳过（会留洞、**不回退**自动）；那个位置有人 → 过**严格心情闸**后互换；无效（宿舍不存在 / 禁用 / 位次越界）→ 跳过 |
-    | 4 | 手动**只指定宿舍** | 放进"现有人数 + 1"；那间满了 → 跳过（不回退自动） |
-    | 5 | 手动**点名**了交换对象 | 对象必须这一刻在某可用宿舍（可锁定区 / 可黑名单）；过严格心情闸后互换 |
-    | 6 | 竖向正序找**可入住空位** | 直接入住（可以用锁定区里的空位） |
-    | 7 | 全都满了 → **自动交换** | 按竖向反序扫描锁定区之外的位置，取首个**严格大于候选**的住户 |
-    | 8 | 换出来的那位 | 心情 < 24 且不在黑名单且队列里没有同名 ⇒ **追加队尾** |
-
-    - **初始候选**（文档 §7/§8）：`idle` 传进来的"这一班**完全没有出现在任何设施**里的人"
-      （未排班 /「不在基建」名单），心情 < 24，不在黑名单。排序键＝(心情↑, 名字↑)，
-      **先进先出**依次处理 ⇒ 排前面的先拿到空位、先挑换人对象。
-      ⚠️ 因此**加工站 / 训练室的入驻者、副手、所有上班与在宿舍的人都不是候选**。
-    - **终止性**（文档 §8.1）：每次成功交换都用**更低心情者替换更高心情者** ⇒ 宿舍内心情
-      总和严格下降；再加上"同名不重复入队 / 失败不入队 / 位置与人有限"，处理必然结束。
-    - **同一周期、同一班次的所有执行点共用一份逐人配置**（文档 §8/§14）：配置按
-      `(周期, 班次)` 取，内部换班点**不带**自己的序号 —— 所以调用方给同一个 `scope` 即可
-      （`store.schedule` 就是这么做的）。
-    - ⚠️ **旧口径已取消**：挂件判据、阵营门、"优先 4 最后 1"、"只看第 2~5 位"、"必须满 24"、
-      菲亚梅塔例外、自回型门、`swapped_out` 永久排除都没了；被换出者可以**再次**被处理。
+    与 `apply_entry_events` 同一层：它改的是**布局**（谁在哪个房间），不是每小时速率，
+    所以不进 `consume_ledger` / `recovery_ledger`，由调用方在**每个换班执行点**显式结算
+    （`store.schedule.simulate_schedule` 会为「每个真实班次的班初 ＋ 长班的每个内部换班点」各调一次）。
 
     参数：
         enabled      三态；`None` = 用 `world.idle_to_dorm.enabled`（**没配置也按开**），
                      显式 `False` 才不结算
         idle         本班**没排进布局**的干员 → 心情：`{名字: 心情}`；给了才把他们当候选
         only         只处理这些干员（`None` = 全部候选）
-        swap_with    指定交换对象：`{候选名: 目标名}`（`None`/`""` = 用逐人设置 / 自动）
+        swap_with    **已作废**（手动点名归手动编辑逻辑）；留着只为兼容旧调用
         scope        这一刻是"第几周期的第几班" → `(周期序号, 班次序号)`（1 基）；
-                     逐人设置按它取**最具体**的一条（周期×班次 > 周期/班次 > 全局）
+                     只用来取逐人设置里的"这一位参不参与"（`IdleToDormEntry.enabled`）
         trace        可选**出参**：逐位候选记一份"**轮到她的那一刻**"的宿舍态（`dorm_state`）
-                     → `{候选名: {"dorms": …, "free": …, "next": …, "capacity": …}}`
 
     ⚠️ **会就地修改 `world`**（有人进宿舍、有人被换出）。返回事件流水账（`Bucket.EVENT`）。
+    ⚠️ 它**不碰手动台账**：台账只由 `store/session.py` 的编辑入口写，这里只读。
     """
     cfg = getattr(world, "idle_to_dorm", None)
     if enabled is None:
@@ -1089,15 +1145,25 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
     cycle_no, shift_no = (scope if scope else (None, None))
 
     events: List[Contribution] = []
-    queue: deque = deque()
-    pending: set = set()                   # 队列里**此刻**有哪些名字（同名最多一项）
+    #: 队列项 = `[心情, 名字, 干员对象, 她本来从哪来]`
+    queue: List[list] = []
+    #: 本执行点已经"了结"过的人（坐进去了 / 没戏了）：不再入队，防打转
+    settled: set = set()
 
     def _enqueue(name, op, mood, where):
-        """入队（文档 §8）：满 24 / 黑名单 / 队列里已有同名 ⇒ 都不入队。"""
-        if mood >= MOOD_MAX or name in blacklist or name in pending:
+        """**初始候选**入队（心情满 24 / 黑名单 / 已了结过 / 已在队列里 ⇒ 都不入队）。"""
+        if mood >= MOOD_MAX or name in blacklist or name in settled:
             return
-        pending.add(name)
-        queue.append((name, op, mood, where))
+        if any(row[1] == name for row in queue):
+            return
+        queue.append([mood, name, op, where])
+
+    def _sort_queue():
+        queue.sort(key=lambda row: (row[0], row[1]))
+
+    def _pop():
+        _sort_queue()
+        return queue.pop(0)
 
     # ---- 初始候选（文档 §7）：该班**完全没有出现在任何设施**里 + 心情 < 24 + 非黑名单 ----
     for raw_name, mood in (idle or {}).items():
@@ -1110,10 +1176,10 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
         if mood >= MOOD_MAX:
             continue
         _enqueue(name, None, mood, "未排班")
-    queue = deque(sorted(queue, key=lambda row: (row[2], row[0])))    # 心情↑、名字↑
+    _sort_queue()
 
     def _op_for(name, op, mood):
-        """候选的干员对象：队尾追加来的那位本来就在世界里；初始候选现场造一个。"""
+        """候选的干员对象：被换出又回来的那位本来就在世界里；初始候选现场造一个。"""
         return op if op is not None else build_operator({"name": name, "mood": mood})
 
     def _skip(name, target, why):
@@ -1121,140 +1187,102 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
             Bucket.EVENT, "闲置入宿未执行", ZERO, group="idle_to_dorm_skipped",
             owner=name, target=target or "", detail=why))
 
-    def _place(dorm, pos, name, op, mood, where, how):
+    def _place(fac, slot, name, op, mood, where, how):
         # ⚠️ 顺序要紧：**先离开原设施、再进宿舍** —— 反过来的话"离开"会把刚放进去的人删掉。
-        # 追加到末尾 ⇒ 位次天然连续（文档 §4）。
         _leave_previous_facility(world, name)
-        dorm.operators.append(_op_for(name, op, mood))
-        world.invalidate_index()
+        set_seat(fac, slot, _op_for(name, op, mood), invalidate=world.invalidate_index)
         events.append(Contribution(
             Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
-            owner=name, target=dorm.display_name, detail=(
-                f"（{name} 心情 {mood} 未满且在闲置（{where}）→ 进 {dorm.display_name} "
-                f"第 {pos} 位（连续排列的下一个空位）；{how}）")))
+            owner=name, target=fac.display_name, detail=(
+                f"（{name} 心情 {mood} 未满且在闲置（{where}）→ 进 {fac.display_name} "
+                f"第 {slot + 1} 位（竖向正序最靠前的空位）；{how}）")))
 
-    def _swap(dorm, slot, target, name, op, mood, where, how):
-        # 进来的人**接替被换出者的原位次**（不是排到末尾）；被换出者离开宿舍 → 闲置。
+    def _swap(fac, slot, victim, name, op, mood, where, how):
+        # 进来的人**接替被换出者的原位次**（不产生空洞）；被换出者离开宿舍 → 闲置。
+        # ⚠️ 被换出者**不在本执行点里再入队**（实测：那样做出来的队列扰动永远是空转 ——
+        #    换人条件保证"她心情 ≥ 候选"，而候选取自最小堆 ⇒ 她进不了队列的下一轮；
+        #    她心情更低时又该留在宿舍里）。她的重新评估发生在**下一个换班执行点**：
+        #    那时她已在外面、心情也变过了，会被当成普通候选重新入队（不变式见模块说明）。
         _leave_previous_facility(world, name)
-        dorm.operators[slot - 1] = _op_for(name, op, mood)
-        world.invalidate_index()
-        _enqueue(target.name, target, target.mood, "被换出宿舍")
+        set_seat(fac, slot, _op_for(name, op, mood), invalidate=world.invalidate_index)
         events.append(Contribution(
             Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
-            owner=name, target=target.name, detail=(
-                f"（{name} 心情 {mood} 未满且在闲置（{where}）→ 与 {dorm.display_name} 第 "
-                f"{slot} 位、心情 {target.mood} 的 {target.name} 互换：{name} 进宿舍恢复，"
-                f"{target.name} 换出来闲置（既不工作也不在宿舍）；{how}）")))
+            owner=name, target=victim.name, detail=(
+                f"（{name} 心情 {mood} 未满且在闲置（{where}）→ 与 {fac.display_name} 第 "
+                f"{slot + 1} 位、心情 {victim.mood} 的 {victim.name} 互换：{name} 进宿舍恢复，"
+                f"{victim.name} 换出来闲置（既不工作也不在宿舍）；{how}）")))
 
+    # ================= 相 1：填空床（竖向正序） =================
     while queue:
-        name, op, mood, where = queue.popleft()
-        pending.discard(name)
+        mood, name, op, where = _pop()
         if trace is not None:
-            # 逐位候选各留一份"此刻的宿舍态"：**在判"参与"之前**登记（勾掉参与的人也要有）
+            # 逐位候选各留一份"此刻的宿舍态"：**在判"参与"之前**登记
             trace[name] = dorm_state(world)
         if name in blacklist:
-            continue                                   # 文档 §9-1（防御性）
-        if op is not None:
-            mood = op.mood                             # 用**实时**心情（她被换出去过也一样）
-        if mood >= MOOD_MAX:
-            continue
-        # 该 (周期, 班次, 干员) 的有效手动设置（最具体的那条；没有 = 参与、自动）
+            settled.add(name)
+            continue                               # 防御性
         entry = cfg.entry_for(name, cycle_no, shift_no) if cfg is not None else None
         if entry is not None and not entry.enabled:
-            continue                                   # 文档 §9-3：明确禁用 ⇒ 结束这一位
-
-        # ---- 手动指定位置（文档 §10）：精确到"宿舍序号 + 位次"，可以进锁定区 ----
-        if entry is not None and entry.dorm is not None:
-            dorms = _dorm_numbered(world)
-            no = int(entry.dorm)
-            if no < 1 or no > len(dorms):
-                _skip(name, f"宿舍{no:02d}", (
-                    f"（指定的「宿舍{no:02d}」不存在——本布局只有 {len(dorms)} 间可用宿舍 "
-                    f"→ 跳过这一位，不回退自动）"))
-                continue
-            dorm = dorms[no - 1][1]
-            nxt = len(dorm.operators) + 1
-            if entry.slot is None:
-                if nxt > int(dorm.capacity):
-                    _skip(name, dorm.display_name, (
-                        f"（指定的「宿舍{no:02d}」（{dorm.display_name}）那一刻已经满了 "
-                        f"→ 跳过这一位，不回退自动）"))
-                    continue
-                _place(dorm, nxt, name, op, mood, where,
-                       f"手动指定宿舍{no:02d}（没给位次 ⇒ 用它的下一个连续位）")
-                continue
-            slot = int(entry.slot)
-            if slot < 1 or slot > int(dorm.capacity):
-                _skip(name, dorm.display_name, (
-                    f"（指定的「宿舍{no:02d}·第{slot}位」无效：该宿舍容量只有 "
-                    f"{int(dorm.capacity)} 位 → 跳过这一位）"))
-                continue
-            if slot == nxt:
-                _place(dorm, slot, name, op, mood, where, f"手动指定宿舍{no:02d}·第{slot}位")
-                continue
-            if slot > nxt:
-                _skip(name, dorm.display_name, (
-                    f"（指定的「宿舍{no:02d}·第{slot}位」在下一个连续位（第 {nxt} 位）"
-                    f"**之后** —— 住进去会在第 {nxt} 位留下空洞，违反「连续排列」"
-                    f"→ 跳过这一位，不回退自动）"))
-                continue
-            target = dorm.operators[slot - 1]
-            if target.mood <= mood:
-                _skip(name, target.name, (
-                    f"（指定的宿舍{no:02d}·第{slot}位上是 {target.name}（心情 {target.mood}），"
-                    f"并不比你（心情 {mood}）更满 → 这一班不换）"))
-                continue
-            _swap(dorm, slot, target, name, op, mood, where,
-                  f"手动指定宿舍{no:02d}·第{slot}位（该位置已有人 ⇒ 过心情闸互换）")
+            settled.add(name)
+            continue                               # 逐人设置：这一位不参与
+        if op is not None:
+            mood = op.mood                         # 用**实时**心情（她被换出去过也一样）
+        if mood >= MOOD_MAX:
+            settled.add(name)
             continue
-
-        # ---- 手动点名（文档 §11）：主动换 —— 不看满心情 / 挂件 / 阵营 / 位次 ----
-        want = None
-        if isinstance(swap_with, dict):
-            want = swap_with.get(name) or None
-        if want is None and entry is not None:
-            want = entry.swap_with or None
-        if want:
-            dorm, target, slot = _named_target(world, want)
-            if target is None:
-                _skip(name, want, f"（你点名的「{want}」这一刻不在任何可用宿舍里 → 跳过这一位）")
-                continue
-            if target.mood <= mood:
-                _skip(name, target.name, (
-                    f"（{name} 心情 {mood}、你点名的 {target.name} 心情 {target.mood} —— "
-                    f"目标并不比你更满 → 这一班不动）"))
-                continue
-            _swap(dorm, slot, target, name, op, mood, where, f"你点名的（{want}）")
-            continue
-
-        # ---- 自动填空位（文档 §12）：竖向正序最靠前的那个"下一个连续位" ----
+        # 只信**有住户的**设施：空设施里的手动手工台账不该让"最后一个候选"被误判成"没空位"
         free = _next_free_slots(world)
-        if free:
-            key, dorm, pos = free[0]
-            _place(dorm, pos, name, op, mood, where,
-                   f"自动（竖向正序最靠前的空位：宿舍{key[1]:02d}·第{pos}位）")
-            continue
+        if not free:
+            queue.insert(0, [mood, name, op, where])   # 没有空位 ⇒ 交棒给相 2
+            break
+        _key, fac, slot = free[0]
+        _place(fac, slot, name, op, mood, where,
+               "自动：竖向正序最靠前的空位")
+        settled.add(name)
 
-        # ---- 自动交换（文档 §13）：竖向反序扫描，取首个满足心情闸的目标 ----
-        dorm, target, slot = _auto_swap_target(world, protected, mood)
-        if target is None:
-            _skip(name, "", (
-                f"（{name} 心情 {mood} 想入宿，但宿舍全满、锁定区之外没有可交换的人 "
-                f"→ 这一班不动）"))
+    # ================= 相 2：换人（最小堆 + 定点） =================
+    while queue:
+        mood, name, op, where = _pop()
+        if name in blacklist:
+            settled.add(name)
             continue
-        _swap(dorm, slot, target, name, op, mood, where,
-              "自动（宿舍全满 ⇒ 按竖向反序取首个心情严格高于候选的目标）")
+        if op is not None:
+            mood = op.mood
+        if mood >= MOOD_MAX:
+            settled.add(name)
+            continue
+        # 换出的心情下限＝**队里"除她以外"候选的最低心情**：被换出去的人不该比还在排队的人
+        # 更该进宿舍，否则她下一轮又会被换回来（来回打转）。⚠️ 不能算上她自己 ——
+        # 被换出者会插回队列，用 `min(全部)` 会拿她自己的心情当门槛，把她自己挡在门外。
+        others = [row[0] for row in queue if row[1] != name]
+        ceiling = min(others) if others else None
+        fac, slot, victim = _best_swap_victim(world, mood, protected=protected,
+                                              ceiling=ceiling)
+        if fac is None:
+            # 定点达成：锁定区外没人比她更满（且不比排队的候选更该进宿舍）⇒ 她这一班进不去
+            _skip(name, "", (
+                f"（{name} 心情 {mood} 想入宿，但宿舍全满、锁定区之外没有合适的可换对象 "
+                f"→ 这一班不动）"))
+            settled.add(name)
+            continue
+        _swap(fac, slot, victim, name, op, mood, where,
+              "自动：宿舍全满 ⇒ 换出锁定区外心情最小、且不低于候选的那位")
+        settled.add(name)
     return events
 
 
 def _leave_previous_facility(world: BaseLayout, name: str) -> None:
-    """把该干员从原设施里摘掉（挂件位/宿舍都适用；不在任何设施里就什么都不做）。"""
+    """把该干员从原设施里摘掉（挂件位/宿舍都适用；不在任何设施里就什么都不做）。
+
+    ⚠️ 摘人**留空洞、不左移**（`models.remove_occupant`）：位次是这个项目的正式概念
+    （手动台账、`slots` 导出都按位次对齐），左移会让"第 3 位"变成另一个人。
+    ⚠️ 它**不动手动台账**：台账只由 `store/session.py` 的编辑入口维护。
+    """
     for f in world.facilities:
-        for i, o in enumerate(list(f.operators)):
-            if o.name == name:
-                del f.operators[i]
-                world.invalidate_index()   # 成员变了 ⇒ 名字索引作废
-                return
+        if f.slot_of(name) is not None:
+            remove_occupant(f, name)
+            world.invalidate_index()   # 成员变了 ⇒ 名字索引作废
+            return
 
 
 def mood_skill_summary(op: Operator):
