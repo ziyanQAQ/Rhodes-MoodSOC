@@ -51,11 +51,6 @@ from data.paths import MAA_SAMPLE, RES as DATA_RES  # noqa: E402
 SAMPLE = MAA_SAMPLE          # 冷启动自载的示例排班（`resources/…`，见 data/paths.py）
 STEP_FINE = Decimal("0.25")      # 方向键/微调步长（15 分钟）
 
-# 注：「宿舍01」↔ `IdleToDormEntry.dorm` 的翻译、以及 `IdleToDormEntry` → 下拉标签，
-#     语义在 `store/session.py`（`_dorm_index_of` / `_idle_label_of`）——程序接口要用同一套；
-#     这里只 re-export 供界面与测试按老名字取用。
-from store.session import _dorm_index_of, _idle_label_of  # noqa: E402,F401
-
 # 播放速度：单位是 **模拟秒 / 真实秒（s/s）** —— `1x` 就是实时（1 秒推进 1 模拟秒）。
 # 24h 周期在 1x 下要放 24 小时，所以档位往上给到"4 小时/秒"（＝14400x）。
 PLAY_SPEEDS = ("1x", "60x", "600x", "3600x", "14400x")
@@ -1199,9 +1194,8 @@ class MoodSocApp(tk.Tk):
     def _idle_entry_list(self):
         """把界面的逐次设置转成 `[IdleToDormEntry, ...]`（口径在 `Session.idle_entry_list()`）。
 
-        **只列改过默认的**（勾掉不参与的、或指定了目标的人）；没人改过就返回 `None`
-        （＝全都参与、全自动）。目标标签 → 引擎字段的翻译也只有那一处：
-        `宿舍01` = 放进那间宿舍的空位（`dorm=1`），人名 = 与那位满心情的宿舍干员互换。
+        **只列改过默认的**（勾掉"参与"的人）；没人改过就返回 `None`。
+        ⚠️ 三层解耦后这里只剩"参不参与" —— 手动入宿走**布局编辑**（看板 / 「干员与心情」）。
         """
         return self.session.idle_entry_list()
 
@@ -1209,19 +1203,19 @@ class MoodSocApp(tk.Tk):
                      traj=None):
         """给设置框算**按时间排序的逐次表** → `[group, ...]`。
 
-        `group = (标题, (周期, 班次), [(干员, 心情, 位置, 参与, 换谁, [可选目标…]), ...], 起, 止)`。
+        `group = (标题, (周期, 班次), [(干员, 心情, 位置, 参与, 说明, []), ...], 起, 止)`。
 
         为什么按"**换班执行点** → 周期"展开：心情跨班、跨内部换班、跨周期连续，所以**每一次**
-        "谁没满、谁在宿舍"都不一样 —— 候选与「换谁」的可选项都得按那一刻算。
+        "谁没满、谁在宿舍"都不一样。
         长班（> 12h）的内部换班点在标题里带 `（12h 内部换班）`，与班初各占一组，
         但**共用同一份逐人设置**（改任一组会同步影响同班其他执行点）。只列**真的有候选**的那几次。
         """
-        # 候选与可选目标全在 `Session.idle_groups()`（**与程序接口同一份**）；
+        # 候选与"引擎这一刻的安排"全在 `Session.idle_groups()`（**与程序接口同一份**）；
         # 界面只做两件"视图的事"：把心情值格式化、把组头时刻按初始时间点渲染。
         out = []
         for title, scope, rows, t0, t1 in self.session.idle_groups(cycles=cycles, entries=entries):
-            shown = [(n, theme.fmt_mood(m), where, use, target, options)
-                     for n, m, where, use, target, options in rows]
+            shown = [(n, theme.fmt_mood(m), where, use, note, options)
+                     for n, m, where, use, note, options in rows]
             out.append((f"{title}（{self.clock_text(t0)}–{self.clock_text(t1)}）",
                         scope, shown, t0, t1))
         return out
@@ -1231,25 +1225,22 @@ class MoodSocApp(tk.Tk):
         return self.session.idle_count()
 
     def _sync_idle_label(self):
-        """工具栏右侧的当前状态：`未开启` / `已开启 · 6 次（自动）`。"""
+        """工具栏右侧的当前状态：`未开启` / `已开启 · 6 次`（手动入宿不算在这里，它在布局里）。"""
         if not self.idle_to_dorm.get():
             self.idle_detail.configure(text="未开启", fg=theme.MUTED)
             return
         self.idle_detail.configure(fg=theme.TEXT)
-        has_target = any(t for _u, t in self.idle_entries.values())
-        self.idle_detail.configure(
-            text=f"已开启 · {self._idle_count()} 次"
-                 + ("（含手动设置）" if has_target else "（自动）"))
+        self.idle_detail.configure(text=f"已开启 · {self._idle_count()} 次")
 
     def _idle_status(self) -> str:
         """状态栏那一句口径。"""
         if not self.idle_to_dorm.get():
             return "闲置入宿：未开启"
         return (f"闲置入宿：已开启（每个换班执行点把该班没出现在任何设施、心情未满的干员"
-                f"安排进宿舍：{self._idle_count()} 次；空位优先，全满则按竖向反序换出锁定区外首个心情严格更高者；"
-                f"锁定 {self.idle_protected_slots()} 个位置"
+                f"安排进宿舍：{self._idle_count()} 次；空位优先，全满则换出锁定区外"
+                f"心情最接近的那位；锁定 {self.idle_protected_slots()} 个位置"
                 + (f"、黑名单 {len(self.idle_blacklist())} 人" if self.idle_blacklist() else "")
-                + "）")
+                + "；手动入宿请看板 / 「干员与心情」）")
 
     def edit_idle_to_dorm(self):
         """（旧入口，现等价于）打开设置中心的「闲置入宿」分区。"""
@@ -1260,12 +1251,14 @@ class MoodSocApp(tk.Tk):
                            blacklist: Optional[Sequence[str]] = None):
         """「闲置入宿」设置落地（设置中心里**每次改动**都会调它）。
 
-        参数：总开关 / 逐次设置 `{(周期, 班次, 干员): (参与, 目标标签)}` /
-        **锁定位置数**（文档 §5）/ **黑名单**（文档 §6；`None` = 不动）。
+        参数：总开关 / 逐次设置 `{(周期, 班次, 干员): 参不参与}` /
+        **锁定位置数** / **黑名单**（`None` = 不动）。
         返回**新的分组表**：改动会影响后面每一次的候选，所以面板要按新表重建。
         """
         self.session.idle_to_dorm = bool(enabled)
-        self.session.idle_entries = dict(entries)
+        # ⚠️ 面板给的整份状态里可能有 `True`（参与）—— 只留**改过默认的**（`False`）：
+        #    `idle_globals` 的语义是"这些人不参与"，记一堆 `True` 会污染增量指纹与导出。
+        self.session.idle_entries = {k: v for k, v in dict(entries).items() if not v}
         if protected_slots is not None:
             self.session.idle_protected_slots = max(0, int(protected_slots))
         if blacklist is not None:

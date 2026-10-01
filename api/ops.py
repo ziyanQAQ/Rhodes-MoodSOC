@@ -454,18 +454,19 @@ def op_set_entry_events(session: Session, args: dict) -> dict:
 def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
     """「闲置入宿」：**每个换班执行点**把"这一班完全没出现在任何设施、心情未满"的干员安排进宿舍。
 
-    口径＝用户文档《闲置入宿完整逻辑》（见 `mood_soc.rules.apply_idle_to_dorm`）：
-    有连续空位就直接住进去；全满后按竖向反序扫描锁定区外位置，取首个心情严格大于候选的住户；
-    ⚠️ **不设班次数量门槛**（第二版 §2：1 个班次也执行）。
+    口径（三层解耦：**手动编辑 > 自动入宿 > 导入布局**，见 `mood_soc.rules.apply_idle_to_dorm`）：
+    竖向正序填空床；全满后取**心情最低**的候选，换出"锁定区外、心情 ≥ 她、心情最大"的住户。
+    ⚠️ **不设班次数量门槛**（1 个班次也执行）。
 
     - `enabled`：总开关；
-    - `protected_slots`：**锁定位置数**（文档 §5，默认 5）：按竖向正序（位次优先、宿舍序号其次）
-      锁前 N 个位置，自动交换不换锁定区里的人（锁定区的空位照样能入住）；
-    - `blacklist`：**黑名单**（文档 §6）：永远不能通过闲置入宿进宿舍的人（可被换出、可被点名）；
-    - `per_operator`：逐人设置，几种写法——
-      `{"虎狼丸": "甲"}`（点名与甲互换）/ `{"跃跃": false}`（不参与）/
-      `[{"name": "虎狼丸", "target": "宿舍01"}]`（放进那间的下一个连续位）/
-      `[{"name": "虎狼丸", "dorm": 1, "slot": 3, "cycle": 2, "shift": 3}]`（精确到宿舍+位次）。
+    - `protected_slots`：**锁定位置数**（默认 5）：按竖向正序（位次优先、宿舍序号其次）
+      锁前 N 个位置，自动入宿不换锁定区里的人（锁定区的空位照样能入住）；
+    - `blacklist`：**黑名单**：永远不能通过闲置入宿进宿舍的人（可被换出）；
+    - `per_operator`：逐人设置，**只有一种含义** —— `{"跃跃": false}`（这一位不参与）/
+      `[{"name": "跃跃", "enabled": false, "cycle": 2, "shift": 3}]`（限定某几次）。
+      ⚠️ **旧写法已作废**：`target` / `dorm` / `slot` / `swap_with`（手动指定位置、手动点名）
+      读得进来但**被忽略**，另回一条 `notes`。要在某一刻把某人放进某个宿舍位次，请走**布局编辑**：
+      `load_json` 的 `facilities[].slots` 写死该位次，或 `set_slots`（见那两个 op）。
     """
     _require_session(session)
     if "enabled" in args:
@@ -475,47 +476,58 @@ def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
     if args.get("blacklist") is not None:
         session.idle_blacklist = [str(n) for n in (args["blacklist"] or [])]
     per = args.get("per_operator")
+    notes: List[str] = []
     if per is not None:
-        globals_: Dict[str, Tuple[bool, Optional[str]]] = {}
-        entries: Dict[Tuple[int, int, str], Tuple[bool, Optional[str]]] = {}
+        globals_: Dict[str, bool] = {}
+        entries: Dict[Tuple[int, int, str], bool] = {}
+        legacy = ("target", "swap_with", "swapWith", "dorm", "dormIndex", "slot", "slotIndex")
         items: Sequence = list(per.items()) if isinstance(per, dict) else list(per)
         for item in items:
-            if isinstance(item, tuple):                     # 字典写法 {名字: 目标}
+            if isinstance(item, tuple):                     # 字典写法 {名字: 值}
                 name, value = item[0], item[1]
-                use, target, cyc, shf = True, None, None, None
                 if isinstance(value, bool):
-                    use = value
-                elif isinstance(value, str):
-                    target = value.strip() or None
+                    use, cyc, shf = value, None, None
+                elif isinstance(value, str) or value is None:
+                    notes.append(f"per_operator[{name}] 的「手动点名/指定位置」写法已作废"
+                                 f"（{value!r}）—— 手动入宿请改用布局编辑（facilities[].slots）")
+                    use, cyc, shf = True, None, None
                 elif isinstance(value, dict):
                     use = bool(value.get("enabled", True))
-                    target = value.get("target") or value.get("swap_with") or value.get("dorm")
                     cyc = value.get("cycle")
                     shf = value.get("shift")
-            else:                                           # 数组写法 [{name,...}]
+                    if any(value.get(k) is not None for k in legacy):
+                        notes.append(f"per_operator[{name}] 的 target/swap_with/dorm/slot 已作废"
+                                     f"（手动入宿请改用布局编辑）")
+                else:
+                    raise ValueError(f"per_operator[{name!r}] 格式无法识别：{value!r}")
+            else:                                           # 数组写法 [{name, ...}]
                 if not isinstance(item, dict) or not item.get("name"):
                     raise ValueError(f"per_operator 数组里每项都要有 name：{item!r}")
                 name = item["name"]
                 use = bool(item.get("enabled", True))
-                target = item.get("target") or item.get("swap_with")
-                if item.get("dorm") is not None:
-                    target = f"宿舍{int(item['dorm']):02d}"
-                    if item.get("slot") is not None:        # 精确「宿舍NN·第M位」
-                        target += f"·第{int(item['slot'])}位"
                 cyc, shf = item.get("cycle"), item.get("shift")
-            if cyc is None and shf is None:
-                globals_[str(name)] = (use, target)
-            else:
-                entries[(int(cyc or 1), int(shf or 1), str(name))] = (use, target)
+                if any(item.get(k) is not None for k in legacy):
+                    notes.append(f"per_operator[{name}] 的 target/swap_with/dorm/slot 已作废"
+                                 f"（手动入宿请改用布局编辑）")
+            # ⚠️ 只记**改过默认**的（`use is False`）：`idle_globals` 的语义就是"这些人不参与"，
+            #    记一堆 `True` 会污染增量指纹与导出（`Session.idle_entry_list` 也只收 False）。
+            if not use:
+                if cyc is None and shf is None:
+                    globals_[str(name)] = False
+                else:
+                    entries[(int(cyc or 1), int(shf or 1), str(name))] = False
         session.idle_globals = globals_
         session.idle_entries = entries
     session.recompute()
-    return {"enabled": session.idle_to_dorm,
-            "protected_slots": int(session.idle_protected_slots),
-            "blacklist": list(session.idle_blacklist),
-            "effective": _idle_effective(session),
-            "count": session.idle_count() if session.idle_to_dorm else 0,
-            "groups": [_idle_group_dict(g) for g in session.idle_groups()]}
+    out = {"enabled": session.idle_to_dorm,
+           "protected_slots": int(session.idle_protected_slots),
+           "blacklist": list(session.idle_blacklist),
+           "effective": _idle_effective(session),
+           "count": session.idle_count() if session.idle_to_dorm else 0,
+           "groups": [_idle_group_dict(g) for g in session.idle_groups()]}
+    if notes:
+        out["notes"] = notes
+    return out
 
 
 def _idle_effective(session: Session) -> bool:
@@ -528,20 +540,26 @@ def _idle_effective(session: Session) -> bool:
 
 
 def _idle_group_dict(group: tuple) -> dict:
-    """一组逐次表 → API 的 JSON（含**换班执行点**的标题/起止时刻，供调用方渲染）。"""
+    """一组逐次表 → API 的 JSON（含**换班执行点**的标题/起止时刻，供调用方渲染）。
+
+    `target` / `options` 恒为 `null` / `[]`：三层解耦后手动入宿归**布局编辑**
+    （看板 / 「干员与心情」写班次快照 + 手动台账），这里不再提供二次选择。
+    """
     title, scope, rows, t0, t1 = group
     return {"title": title, "scope": list(scope),
             "start": _num(t0), "end": _num(t1),
             "rows": [{"name": n, "mood": _num(m), "where": w,
-                      "use": u, "target": tg, "options": opts}
-                     for n, m, w, u, tg, opts in rows]}
+                      "use": u, "target": None, "options": []}
+                     for n, m, w, u, _tg, _opts in rows]}
 
 
 def op_idle_to_dorm_groups(session: Session, args: dict) -> dict:
-    """只读：当前设置下的逐次入宿表（带候选与可选目标），供调用方做交互。
+    """只读：当前设置下的逐次入宿表（候选 + 「这一位参不参与」），供调用方做交互。
 
     ⚠️ **一个换班执行点一组**（班初 + 长班的每个内部换班点）；同班各执行点**共用一份**
     逐人设置（组里的 `scope` 相同 = `[周期, 班次]`），所以改一组会影响同班其他组。
+    ⚠️ 每行的 `target` / `options` 恒为 `null` / `[]`（三层解耦后这里不再有手动位置/点名；
+    手动入宿＝**布局编辑**，见 `set_idle_to_dorm` 的说明），字段保留只为兼容旧调用方。
     """
     _require_session(session)
     groups = session.idle_groups(cycles=args.get("cycles"))

@@ -444,28 +444,20 @@ class IdleToDormEntry:
     默认（不写 `cycle`/`shift`）= 对该干员的**所有**班次/周期生效；
     写了就只在对应的那几次生效（更具体的优先，见 `IdleToDormConfig.entry_for`）。
 
-    - `enabled`：这一位参不参与（`False` = 永远不动他）。
-    - `swap_with`：**手动点名**要互换的那位（文档 §11：对象必须那一刻真的在某间**可用宿舍**里，
-      可以在锁定位置、也可以是黑名单干员；不看满心情 / 挂件 / 阵营；只有"她心情**严格大于**
-      候选"才换）。
-    - `dorm` / `slot`：**手动指定位置**（文档 §10，优先于 `swap_with`）。`dorm` 是 1 基的
-      **宿舍序号**（第 1 间 = `1`，界面写作「宿舍01」）；`slot` 是 1 基**位次**
-      （`None` = 那间宿舍的"下一个连续位"）。
-      ⚠️ 位次语义是**精确**的：正好是下一个连续位 → 直接入住（**可进锁定区**）；
-      在它**之后** → 跳过这一位（会留空洞，**不回退**自动）；那个位置有人 → 过"严格心情闸"
-      后与她互换（**可进锁定区**）；位次越界 / 宿舍不存在 / 宿舍被禁用 → 跳过并记原因。
+    - `enabled`：这一位参不参与（`False` = 永远不动她，与黑名单同效、但只对这一刻）。
     - `cycle` / `shift`：**1 基**的周期序号 / 班次序号（`None` = 不限）。
-      为什么要有这两维：心情跨班跨周期连续，所以"这一刻谁没满、谁在宿舍且满了"**每次都不同**，
-      候选与可交换对象都不一样（实测示例排班 3 个周期的闲置入宿事件分别落在 12/18h、24/42h、66h）。
+
+    ⚠️ **2026-10 三层解耦后只剩"参不参与"**：曾经的 `swap_with`（手动点名）/ `dorm` / `slot`
+    （手动指定位置）**已作废** —— "手动入宿"归**手动编辑逻辑**：在**看板 / 「干员与心情」**里
+    把干员放进某个宿舍位次，写的是**那一班的布局 + 手动台账**（`models.ManualLedger`，
+    自动入宿从此不占那些位次、不换那些人）。旧写法（JSON / API 里的 `target`、`dorm`、
+    `slot`、`swap_with`）**读得进来但被忽略**，只回一条 note，不再有第二种手动入口。
     """
 
     name: str = ""
     enabled: bool = True
-    swap_with: Optional[str] = None
     cycle: Optional[int] = None
     shift: Optional[int] = None
-    dorm: Optional[int] = None      # 1 基宿舍序号（指定"放进哪一间宿舍的空位"）
-    slot: Optional[int] = None      # 1 基位次；None = 那间最靠前的空位
 
     def matches(self, name: str, cycle: Optional[int] = None,
                 shift: Optional[int] = None) -> bool:
@@ -503,21 +495,21 @@ class IdleToDormConfig:
 
     它是一类**班次开始时的布局事件**（与 `entry_events` 同层，不改"每小时速率"公式）：
     把"这一班完全没有出现在任何设施里、心情还没满"的干员安排进宿舍 ——
-    有连续空位就直接住进去；全满后按竖向反序扫描锁定区外位置，
-    与首个心情严格高于候选的住户互换。
+    竖向正序填空床；全满后取**心情最低**的候选，换出"锁定区外、心情 ≥ 她、心情最大"的住户。
 
-    口径＝用户文档《闲置入宿完整逻辑》（见 `rules.apply_idle_to_dorm` 的说明）：
+    口径（三层解耦：**手动编辑 > 自动入宿 > 导入布局**，见 `rules.apply_idle_to_dorm`）：
 
     - `enabled`：**默认 `True`＝默认就结算**（用户口径："闲置入宿默认是开启的"）。
       没写这个键 ⇒ 开；**显式写 `false` ⇒ 关**（显式配置永远优先）。
       调用方显式开关（CLI / 界面勾选 / `apply_idle_to_dorm(enabled=...)`）同样优先于它。
     - `protected_slots`：**锁定位置数**（文档 §5），默认 `5`。按**竖向正序**（位次优先、
-      宿舍序号其次）锁前 N 个位置：自动交换不换锁定区里的人，锁定区的**空位**照样能入住。
+      宿舍序号其次）锁前 N 个位置：自动入宿不换锁定区里的人，锁定区的**空位**照样能入住。
       运行时钳位到 `[0, 当前可用宿舍的总位置数]`（超了按总数生效、不报错）。
     - `blacklist`：**黑名单**（文档 §6）：永远不能**通过闲置入宿进宿舍**的干员 ——
-      不进初始队列、不进队尾、不出现在手动设置列表里、手动指定位置/点名也不执行；
-      **但**排班自带的她照旧在宿舍里、照旧能被换出、能被别人点名换出（这不是"保护位次"）。
-    - `per_operator`：逐个干员的参与 / 手动位置 / 手动点名（见 `IdleToDormEntry`）。
+      不进初始队列、不出现手动设置里；**但**排班自带的她照旧在宿舍里、照旧能被换出。
+    - `per_operator`：逐个干员的**"参不参与"**（见 `IdleToDormEntry`）。
+      ⚠️ **手动入宿不在这里**：要在某个时刻把某人放进某个位次，用**看板 / 「干员与心情」**
+      （写布局快照 + 手动台账）。旧写法 `swap_with` / `dorm` / `slot` / `target` 会被忽略。
     - **不设班次数量门槛**（文档 §2 第二版）：1 个、2 个以及 3 个以上班次都执行闲置入宿。
       每个真实班次的班初都会执行；班次时长超过 `12h` 时，班内每个**严格位于班末之前**的
       `12h` 整数倍（`store.schedule.execution_offsets`）也会执行一次内部换班。
@@ -553,15 +545,17 @@ def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
     ```json
     "idle_to_dorm": true
     "idle_to_dorm": {"enabled": true, "protected_slots": 5, "blacklist": ["某人"],
-                     "per_operator": {"虎狼丸": "甲", "跃跃": false}}
-    "idle_to_dorm": {"per_operator": [{"name": "虎狼丸", "swap_with": "甲"}]}
-    "idle_to_dorm": {"per_operator": [{"name": "虎狼丸", "dorm": 1, "slot": 3}]}
+                     "per_operator": {"跃跃": false}}
+    "idle_to_dorm": {"per_operator": [{"name": "跃跃", "enabled": false}]}
     ```
 
-    `per_operator` 支持三种写法：`{"名字": "交换对象"}`、`{"名字": false}`（不参与）、
-    或数组 `[{"name": ..., "enabled": ..., "swap_with": ..., "cycle": 2, "shift": 3,
-    "dorm": 1, "slot": 3}]`。数组写法里可以带 `cycle` / `shift`**限定只在哪几次生效**
-    （1 基序号；不写 = 不限）、`dorm` / `slot`**手动指定位置**（1 基；见 `IdleToDormEntry`）。
+    `per_operator` 只表达**"参不参与"**：`{"名字": false}`、数组
+    `[{"name": ..., "enabled": ..., "cycle": 2, "shift": 3}]`（`cycle`/`shift` 是 1 基序号，
+    限定"只在哪几次生效"；不写 = 不限）。
+
+    ⚠️ **旧写法会被忽略**（读得进来、不报错、也不再生效）：`{"名字": "某人"}`（手动点名）、
+    `swap_with` / `dorm` / `slot` / `target`（手动指定位置/点名）—— 那三件事现在归
+    **手动编辑逻辑**：在**看板 / 「干员与心情」**里把人放进某个位次（写布局快照 + 手动台账）。
 
     顶层还有两个全局字段（文档 §5/§6，都可省）：
     `protected_slots`（锁定位置数，默认 `5`）、`blacklist`（黑名单，默认空）。
@@ -606,28 +600,19 @@ def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
         if isinstance(value, bool):
             entries.append(IdleToDormEntry(name=str(name), enabled=value))
             continue
-        if isinstance(value, str):
-            entries.append(IdleToDormEntry(name=str(name), enabled=True,
-                                           swap_with=value.strip() or None))
-            continue
-        if value is None:
+        if isinstance(value, str) or value is None:
+            # 旧写法：`{"名字": "交换对象"}` = 手动点名 —— 已作废，按"参与、全自动"收下
             entries.append(IdleToDormEntry(name=str(name)))
             continue
         if not isinstance(value, dict):
             raise ValueError(f"per_operator[{name!r}] 格式无法识别：{value!r}")
-        target = value.get("swap_with", value.get("swapWith"))
         cyc = value.get("cycle", value.get("cycleIndex"))
         shf = value.get("shift", value.get("shiftIndex"))
-        dorm = value.get("dorm", value.get("dormIndex"))
-        slot = value.get("slot", value.get("slotIndex"))
         entries.append(IdleToDormEntry(
             name=str(value.get("name", name)),
             enabled=bool(value.get("enabled", True)),
-            swap_with=(str(target).strip() or None) if target is not None else None,
             cycle=(int(cyc) if cyc is not None else None),
-            shift=(int(shf) if shf is not None else None),
-            dorm=(int(dorm) if dorm is not None else None),
-            slot=(int(slot) if slot is not None else None)))
+            shift=(int(shf) if shf is not None else None)))
     return IdleToDormConfig(
         enabled=(None if raw.get("enabled") is None else bool(raw["enabled"])),
         protected_slots=(5 if protected is None else protected),

@@ -551,6 +551,10 @@ class Trajectory:
     `idle_states`：**闲置入宿逐位候选**的那一份宿舍态（`{段起点: {候选名: dorm_state}}`），
     供界面「闲置入宿」逐次表逐行取用（`idle_state_at`）—— 候选是依次处理的，排在后面的人
     看到的宿舍已经不是班初那份了（前面的人会被换出去）。
+
+    `idle_notes`：**引擎在每个执行点上实际把谁安排到了哪**（`{段起点: {候选名: 说明}}`），
+    供逐次表的「说明」列只读显示（"进了宿舍#2 第 1 位" / "宿舍全满、没有合适的可换对象"）。
+    ⚠️ 它是**布局事件文字**的一种索引，与 `marks` 同源（`Mark.kind == "idle"` 那些行）。
     """
     names: List[str]
     times: List[Decimal]
@@ -560,6 +564,8 @@ class Trajectory:
     marks: List[Mark] = field(default_factory=list)
     segments: List[Tuple[Decimal, Decimal, "BaseLayout"]] = field(default_factory=list)
     idle_states: Dict[Decimal, Dict[str, dict]] = field(default_factory=dict)
+    #: `{段起点: {候选名: 说明}}` —— 引擎在每个执行点上**实际把谁安排到了哪**（逐次表只读说明）
+    idle_notes: Dict[Decimal, Dict[str, str]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ 查询
     @property
@@ -597,6 +603,21 @@ class Trajectory:
         if seg is None:
             return None
         return self.idle_states.get(seg[0], {}).get(name)
+
+    def idle_note_at(self, name: str, t) -> Optional[str]:
+        """某一刻引擎**实际把某位候选安排到了哪**（逐次表「说明」列的只读来源）。
+
+        取"这个时刻所在**段**"的那份索引（键是段起点，与 `idle_state_at` 同一口径）。
+        取不到（没开闲置入宿 / 她不是候选）返回 `None`。
+        """
+        seg = self._segment(t)
+        if seg is None:
+            return None
+        note = self.idle_notes.get(seg[0], {}).get(name)
+        if not note:
+            return None
+        # 事件文字自带一层全角括号（`（…）`）；逐次表的「说明」列自己不加括号 ⇒ 这里剥掉
+        return note[1:-1] if note.startswith("（") and note.endswith("）") else note
 
     def mood_at(self, name: str, t) -> Decimal:
         """时刻 t 的心情（节点之间线性插值；超界取端点值）。
@@ -1088,6 +1109,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     series: Dict[str, List[Decimal]] = {n: [moods[n]] for n in names}
     marks: List[Mark] = []
     seg_worlds: List[BaseLayout] = []
+    idle_notes: Dict[Decimal, Dict[str, str]] = {}
     idle_states: Dict[Decimal, Dict[str, dict]] = {}
 
     # —— 心情指定事件：换算成**绝对时刻** → `{绝对时刻: {干员: 值}}` ——
@@ -1135,6 +1157,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             marks = [m for m in prev.marks if m.t < t_cut and m.kind != "redface"]
             seg_worlds = [w for (a, _b, w) in prev.segments if a < t_cut]
             idle_states = {t: v for t, v in prev.idle_states.items() if t < t_cut}
+            idle_notes = {t: v for t, v in prev.idle_notes.items() if t < t_cut}
         else:
             times = [ZERO]
             series = {n: [moods[n]] for n in names}
@@ -1211,10 +1234,15 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             # 逐位候选各留一份"轮到她的那一刻"的宿舍态 → 界面逐次表逐行取用
             # （面板不能拿班末那份 `world_at` 或排班快照当"她那一刻的世界"）。
             per_cand: Dict[str, dict] = {}
+            per_note: Dict[str, str] = {}
             for ev in apply_idle_to_dorm(world, enabled=True, idle=idle_moods,
                                          scope=(cycle_no, idx + 1), trace=per_cand):
                 marks.append(Mark(t0, "idle", ev.detail))
+                if ev.owner:
+                    per_note[ev.owner] = ev.detail
             idle_states[t0] = per_cand
+            if per_note:
+                idle_notes[t0] = per_note
         # 本段**实际生效**的那份布局 → `Trajectory.world_at(t)`（界面看板 / API `layout_at` 都读它）。
         # ⚠️ 闲置入宿 / 位置互换会**就地改这份副本**（`world` 是"本段这份"，每段重建，不再跨周期复用），
         #    而**段内**还可能再改它（`restore_back=False` 的「等她回满再换」）：快照要留在**段首**，
@@ -1306,7 +1334,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     traj = Trajectory(names=names, times=times, moods=series, schedule=schedule,
                       cycles=cycles, marks=marks,
                       segments=[(a, b, w) for (a, b, *_rest), w in zip(segments, seg_worlds)],
-                      idle_states=idle_states)
+                      idle_states=idle_states, idle_notes=idle_notes)
     for n in names:
         for a, b in traj.red_face_spans(n):
             marks.append(Mark(a, "redface", n))
