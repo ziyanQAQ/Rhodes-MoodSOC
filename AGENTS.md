@@ -422,6 +422,10 @@ python scripts/verify_skills.py --report                      # 重写 resources
 python scripts/verify_idle.py                                 # 全绿 → 退出码 0
 python scripts/verify_idle.py -v                              # 打印每一条通过项
 
+# 模块边界自检（七模块：谁可以写谁的数据；见 documents/14-架构总览.md §9）
+python scripts/verify_modules.py                              # 全绿 → 退出码 0
+python scripts/verify_modules.py --list                       # 只列"现状待办"（跨模块写白名单）
+
 # 测试
 .venv/Scripts/python.exe -m unittest discover -s tests -v
 ```
