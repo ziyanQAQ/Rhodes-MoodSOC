@@ -36,7 +36,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from data.skills_data import DEFAULT_OPERATORS
 from mood_soc.battery import to_decimal
 from mood_soc.config import MOOD_MAX, FacilityType
-from mood_soc.models import IdleToDormEntry, normalize_entry_when
+from mood_soc.models import IdleToDormEntry, normalize_entry_when, read_manual
 from mood_soc.rules import mood_skill_summary
 
 from .layout import build_base_layout
@@ -273,13 +273,29 @@ class Session:
 
         ⚠️ 为什么不只用 `id(world)`：改练度（`set_training`）之类是**就地改**干员对象的，
         对象身份不变 —— 只比身份会以为"这一段没变"，于是拿旧轨迹当种子、数值静默出错。
-        摘要按内容算（房间/等级/进驻者/练度/副手），一次重算只算几遍，代价可忽略。
+        摘要按内容算（房间/等级/进驻者/练度/副手/**容量/氛围/位次/手动台账**），
+        一次重算只算几遍，代价可忽略。
+
+        ⚠️ **摘要必须覆盖"引擎读得到的每一个输入"**：漏一项 ⇒ 只改那一项时切点落错位置、
+        复用旧前缀、**给出旧结果**。曾经漏掉的就是下面这五项（实测：单班 2 小时只改宿舍
+        氛围 1000→5000，增量给 9.8、全量给 13.0）。加字段时先问一句
+        "`build_base_layout` 会读它吗"，会读就得进摘要。
         """
         return tuple(
             (f.display_name, int(getattr(f, "level", 0) or 0), bool(getattr(f, "enabled", True)),
              tuple((o.name, int(getattr(o, "elite", 0) or 0), int(getattr(o, "level", 0) or 0))
                    for o in f.operators),
-             tuple(o.name for o in f.deputies))
+             tuple(o.name for o in f.deputies),
+             # ---- 下面五项是 2026-10 补进摘要的（漏它们 ⇒ 增量重算静默复用旧前缀）
+             int(getattr(f, "capacity", 0) or 0),
+             getattr(f, "atmosphere", None),
+             # 位次：同样几个人排在别的格子上，`slots` 空洞形状也变了（`operators` 是**紧凑**的，
+             # 看不出空洞），而位次会影响闲置入宿的锁定区与手动台账的语义
+             tuple((int(i), o.name, int(getattr(o, "elite", 0) or 0),
+                    int(getattr(o, "level", 0) or 0))
+                   for i, o in sorted(f.slot_map().items())),
+             tuple(sorted(read_manual(f).slots)),      # 手动钉住的位次
+             tuple(sorted(read_manual(f).names)))      # 手动放进去的人
             for f in world.facilities)
 
     def _segment_signatures(self, cycles: int) -> list:
