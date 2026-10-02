@@ -633,32 +633,28 @@ class Session:
     def _remove_from_slots(self, names: Sequence[str]) -> int:
         """把这些人从**所有班次**的进驻位上摘掉（返回动过几个班次）。
 
-        ⚠️ 布局里的 `operators` 有两种写法：**名字字符串**（`["泡泡", "火神"]`）与
-        **带心情的对象**（`[{"name": "泡泡", "mood": 10}]`，场景 JSON 允许）——
-        两种都要认。曾经直接 `n not in wanted`，遇到对象写法会 `TypeError: unhashable type: 'dict'`
+        ⚠️ 布局里的占位有两种写法：`operators`（紧凑）与 `slots`（有位次空洞）——
+        **必须按位次读**（`_seat_specs` 认 `slots` 优先），只读 `operators` 会在
+        `slots` 型设施上**摘不动人**（她一边在名单里、一边还在岗，破坏不变式）。
+        ⚠️ 干员 spec 可能是**名字字符串**，也可能是**带心情/练度的对象**
+        （`{"name": "泡泡", "mood": 10}`，场景 JSON 允许）—— 两种都要认。
+        曾经直接 `n not in wanted`，遇到对象写法会 `TypeError: unhashable type: 'dict'`
         （2026-09 由"面板行序"用例暴露出来）。
         """
         if self.schedule is None or not names:
             return 0
         wanted = set(names)
 
-        def _op_name(item) -> str:
-            if isinstance(item, str):
-                return item
-            if isinstance(item, dict):
-                return str(item.get("name") or "").strip()
-            return str(item)
-
         touched = 0
         for i in range(len(self.schedule.shifts)):
             facs = self.facilities_of(i)
             hit = False
             for f in facs:
-                ops = f.get("operators") or []
-                kept = [n for n in ops if _op_name(n) not in wanted]
-                if len(kept) != len(ops):
+                specs = _seat_specs(f)
+                kept = [s for s in specs if _spec_name(s) not in wanted]
+                if len(kept) != len(specs):
                     hit = True
-                    f["operators"] = kept
+                    _write_seats(f, kept)
             if hit:
                 self.schedule = self.schedule.replaced_shift(i, facs)
                 touched += 1
@@ -874,11 +870,23 @@ class Session:
         占位按**位次**给出：有空洞时 `slots`（数组长度 = 到过的最大位次，空槽为 `""`），
         没有空洞时仍是紧凑的 `operators`。调用方拿到的是一份**独立副本**，改完要
         `replace_facilities` 写回。
+
+        ⚠️ **两种写法互斥、不再无条件塞一个空的 `operators`**：`slots` 型设施过去会同时拿到
+        `slots`（真的）与 `operators: []`（假的），而读的人大多只读后者 ⇒ 静默漏人
+        （练度 / 填池 / 进名单 / 面板表格都中过这一枪）。读位次请用 `_seat_specs`
+        或 `models.facility_occupancy`，别再自己 `f.get("operators")`。
         """
         if self.schedule is None:
             return []
-        return [dict(f, operators=list(f.get("operators", [])))
-                for f in self.schedule.shifts[shift_index].facilities]
+        out: List[dict] = []
+        for f in self.schedule.shifts[shift_index].facilities:
+            copy = dict(f)
+            if isinstance(copy.get("slots"), (list, tuple)):
+                copy["slots"] = list(copy["slots"])          # 位次数组：独立副本
+            else:
+                copy["operators"] = list(copy.get("operators") or [])
+            out.append(copy)
+        return out
 
     # ---------------------------------------------------------------- 心情
     def imported_moods(self) -> Dict[str, Decimal]:
@@ -933,9 +941,12 @@ class Session:
             facs = self.facilities_of(idx)
             touched = False
             for f in facs:
-                new_ops = []
-                for spec in f.get("operators", []):
-                    name = spec if isinstance(spec, str) else spec.get("name")
+                new_ops: List[object] = []
+                for spec in _seat_specs(f):        # ⚠️ 按位次读（`slots` 优先），不是只读 operators
+                    name = _spec_name(spec)
+                    if not name:                   # 空槽：原样留空，别把人挪进来
+                        new_ops.append("")
+                        continue
                     if wanted is not None and name not in wanted:
                         new_ops.append(spec)
                         continue
@@ -950,7 +961,7 @@ class Session:
                     if (e, lv) != old:
                         changed += 1
                         touched = True
-                f["operators"] = new_ops
+                _write_seats(f, new_ops)
             if touched:
                 self.schedule = self.schedule.replaced_shift(idx, facs)
         if changed:
@@ -1005,31 +1016,65 @@ class Session:
         pool = list(getattr(self.loaded, "pool", []) or [])
         if self.schedule is None or not pool:
             return 0
-        wanted = range(len(self.schedule.shifts)) if shift_index is None else [shift_index]
+        wanted = (list(range(len(self.schedule.shifts)))
+                  if shift_index is None else [shift_index])
         used = set()
         for idx in wanted:
             for f in self.schedule.shifts[idx].world.facilities:
                 for o in f.operators:
                     used.add(o.name)
+
+        def _take():
+            """按池的顺序取下一个没用过的人（池空了 → `None`），顺带按满练口径转 spec。
+
+            ⚠️ 旧实现的守卫是 `len(used) < len(pool)`（"已就位总人数" vs "池大小"）——
+            两者根本不是一回事：场内已有 2 人、池里 2 人时它**一个都不填**，
+            却仍然 `replaced_shift` 一遍（还往 slots 型设施里塞了一个空 `operators`）。
+            这里只认"池里还有没有没用过的人"。
+            """
+            for p in pool:
+                if p["name"] not in used:
+                    used.add(p["name"])
+                    if int(p.get("elite", 2)) != 2 or int(p.get("level", 30)) != 30:
+                        return {"name": p["name"], "elite": int(p.get("elite", 2)),
+                                "level": int(p.get("level", 30))}
+                    return p["name"]
+            return None
+
         filled = 0
         for idx in wanted:
             facs = self.facilities_of(idx)
+            touched = False
             for f in facs:
                 cap = self._capacity_of(f)
-                ops = list(f.get("operators", []))
-                while len(ops) < cap and len(used) < len(pool):
-                    cand = next((p for p in pool if p["name"] not in used), None)
-                    if cand is None:
+                if cap <= 0:
+                    continue
+                specs = _seat_specs(f)          # ⚠️ 按位次读（`slots` 优先）
+                changed_here = False
+                # ① 先填**空位**（含中间空洞，竖向正序）：位次是正式概念，别跳过空位往后面放人
+                for i in range(min(len(specs), cap)):
+                    if specs[i]:
+                        continue
+                    spec = _take()
+                    if spec is None:
                         break
-                    used.add(cand["name"])
-                    spec = cand["name"]
-                    if int(cand.get("elite", 2)) != 2 or int(cand.get("level", 30)) != 30:
-                        spec = {"name": cand["name"], "elite": int(cand.get("elite", 2)),
-                                "level": int(cand.get("level", 30))}
-                    ops.append(spec)
+                    specs[i] = spec
                     filled += 1
-                f["operators"] = ops
-            self.schedule = self.schedule.replaced_shift(idx, facs)
+                    touched = changed_here = True
+                # ② 还有空容量就从尾巴续着放
+                placed = sum(1 for s in specs if s)
+                while placed < cap:
+                    spec = _take()
+                    if spec is None:
+                        break
+                    specs.append(spec)
+                    placed += 1
+                    filled += 1
+                    touched = changed_here = True
+                if changed_here:
+                    _write_seats(f, specs)
+            if touched:
+                self.schedule = self.schedule.replaced_shift(idx, facs)
         if filled:
             self.recompute()
         return filled
@@ -1175,36 +1220,57 @@ def _same_moods(a: Dict[str, Decimal], b: Dict[str, Decimal],
 
 
 # ---------------------------------------------------------------- 布局写入原语
-def _seat_values(fac: dict) -> List[str]:
-    """设施描述 dict → **按位次对齐的值列表**（空槽写 `""`）。
+def _spec_name(spec) -> str:
+    """干员 spec（`"名字"` 或 `{"name": ..., "elite": ...}` 对象）→ 名字。"""
+    if isinstance(spec, str):
+        return spec
+    if isinstance(spec, dict):
+        return str(spec.get("name") or "")
+    return str(spec or "")
+
+
+def _seat_specs(fac: dict) -> List[object]:
+    """设施描述 dict → **按位次对齐的 spec 列表**（空槽写 `""`；spec 保留对象写法）。
 
     有 `slots` 用 `slots`（空槽 = `null`/`""`），否则用紧凑的 `operators`（位次 = 下标）。
     ⚠️ "所有干员名都排在前面"是导入数据的常态，所以紧凑列表在这里就是"从第 1 位起连续"。
+    ⚠️ **`slots` 优先于 `operators`**（`models.facility_occupancy` 的口径）：只读
+    `operators` 会在"留过空洞"的设施上**静默漏掉全部住户** —— 练度（`set_training`）、
+    填池（`fill_from_pool`）、进名单（`_remove_from_slots`）三条写入口都这么失效过。
     """
     raw = fac.get("slots")
-    values = raw if raw is not None else fac.get("operators") or []
-    return [str(n) if n else "" for n in values]
+    if raw is None:
+        raw = fac.get("operators") or []
+    return [s if s else "" for s in raw]
 
 
-def _write_seats(fac: dict, values: Sequence[str]) -> None:
-    """把**按位次对齐的值列表**写回设施描述（`_seat_values` 的逆）。
+def _seat_values(fac: dict) -> List[str]:
+    """`_seat_specs` 的**名字版**（空槽写 `""`）—— 手动台账与容量裁剪都按名字算。"""
+    return [_spec_name(s) for s in _seat_specs(fac)]
+
+
+def _write_seats(fac: dict, values: Sequence[object]) -> None:
+    """把**按位次对齐的 spec 列表**写回设施描述（`_seat_specs` 的逆）。
 
     写法（Q25/Q32 的裁决）：**尾部没有空槽 ⇒ 紧凑的 `operators`**（老文件、老读法不受影响）；
     只要**中间或开头留了空洞** ⇒ `slots`（真正的空槽写 `null`）。
 
+    ⚠️ **两份写法互斥**：先把 `slots` 与 `operators` **都**摘掉，再写其中一份。
+    只 pop 一份的话，过时的那份会被 `facility_occupancy` 优先读走 ⇒
+    **"改人看着成功、世界一点没变"**（修过的 bug：`set_slots` 在曾留空洞的设施上是静默 no-op）。
     ⚠️ **不裁剪尾部空槽**：`[null, null, "丙"]` 这种前面留空必须原样写下来 —— 位次是正式的
     概念，裁掉头部空洞会让"第 3 位的丙"变成"第 1 位的丙"（手动台账、`dorm_state.reach` 全跟着错）。
     内容全空时按紧凑写法写空数组。
     """
-    values = [str(v) if v else "" for v in values]
+    values = [v if v else "" for v in values]
+    fac.pop("slots", None)
+    fac.pop("operators", None)
     reached = [i for i, v in enumerate(values) if v]
     if not reached:
-        fac.pop("slots", None)
         fac["operators"] = []
         return
     width = reached[-1] + 1
     trimmed = values[:width]
-    fac.pop("operators", None)
     if any(not v for v in trimmed):
         fac["slots"] = [v or None for v in trimmed]
     else:
@@ -1255,8 +1321,10 @@ def _trim_to_capacity(fac: dict, capacity: int) -> dict:
 
     ⚠️ **只丢空位、不丢人**：越界格子里还住着人时**保留**（那正是"超容量"这种布局问题，
     要交给自检报出来，不能在用户没看见的时候把人悄悄删掉 —— 曾经的实现就是那样）。
+    ⚠️ 用 `_seat_specs`（带对象写法）而不是 `_seat_values`（只有名字）：否则裁一次容量
+    就把这批人的练度 `{"elite": 1, "level": 30}` 悄悄丢成纯名字。
     """
-    values = _seat_values(fac)
+    values = _seat_specs(fac)
     if len(values) <= capacity:
         return fac
     drop = [i for i in range(capacity, len(values)) if not values[i]]
