@@ -92,5 +92,5 @@
 - 可变体建议：自动生成多组 `operbox`（用于压力测试）或不同 `rotation` 值用于策略对比。
 
 **注意事项**
-- 本文件给出的是示例与注释，实际生产使用时请以 [contracts/plan-compute-v4.schema.json](../contracts/plan-compute-v4.schema.json#L1-L400) 为准。
+- 本文件给出的是示例与注释，实际生产使用时请以 [contracts/plan-compute-v4.schema.json](../contracts/plan-compute-v4.schema.json#L1-L400) 为准（`contracts/` 在 **v3 仓库**，本仓库外）。
 - 严格遵守 schema 的 `additionalProperties: false` 规则，避免在 payload 中插入非 schema 字段（但 machine wrapper 的 `meta` 可放在 wrapper 顶层）。
