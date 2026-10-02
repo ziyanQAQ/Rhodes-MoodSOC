@@ -368,6 +368,6 @@ printf '%s\n' '{"id":1,"method":"plan.compute","params":{"schema_version":4,"lay
   | target/release/arknights-infra-v3 serve
 ```
 
-本页字段即由该方式在 `data/fixtures/rotation_243.json` + 429 条目满练 Box 上产生（三档轮换：3/3/2 班，`maa.plans` 与 `shifts` 数量一致）。
+本页字段即由该方式在 `data/fixtures/rotation_243.json`（**v3 仓库**，本仓库外） + 429 条目满练 Box 上产生（三档轮换：3/3/2 班，`maa.plans` 与 `shifts` 数量一致）。
 
 注意：**debug 构建在 `plan.compute` 路径上会栈溢出**（stderr 打印 `thread 'main' has overflowed its stack`，无任何 stdout 输出；与 Box 规模无关，最小 1 名干员亦可复现）。核对输出请使用 `--release` 构建；`eval` 等其它命令的 debug 行为未在本页范围内验证。该现象与 JSON 结构无关，但排查时容易被误认为“没有输出”。

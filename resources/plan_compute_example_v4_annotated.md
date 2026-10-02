@@ -1,6 +1,6 @@
 # plan_compute_v4 示例与字段注释
 
-参考 schema: [contracts/plan-compute-v4.schema.json](../contracts/plan-compute-v4.schema.json#L1-L400)
+参考 schema: [contracts/plan-compute-v4.schema.json](../contracts/plan-compute-v4.schema.json#L1-L400)（**v3 仓库**，本仓库外）
 
 **示例 JSON**
 
@@ -88,7 +88,7 @@
 **使用建议与适配（给其他 AI / 下游系统）**
 - 人类可读文档：使用本文件 `plan_compute_example_v4_annotated.md` 作为字段字典。
 - 机器友好方案：不要在热路径中使用字符串匹配或按名字路由；输入层应由预处理器将字符串 ID 映射为内部整数 ID（`OperatorId` 等）。
-- 传输格式：对于需要字段描述的场景，推荐同时发送两部分：`meta`（字段描述）和 `payload`（符合 schema 的真实数据）。详见 `plan_compute_example_v4_machine.json`。
+- 传输格式：对于需要字段描述的场景，推荐同时发送两部分：`meta`（字段描述）和 `payload`（符合 schema 的真实数据）。详见 `plan_compute_example_v4_machine.json`（**v3 仓库 / 未入库**）。
 - 可变体建议：自动生成多组 `operbox`（用于压力测试）或不同 `rotation` 值用于策略对比。
 
 **注意事项**
