@@ -120,6 +120,9 @@ WRITE_ENTRY_OWNER = {
     "_apply_clock": "时间轴", "_on_cycles": "时间轴", "on_cycles_changed": "时间轴",
     # —— 布局 ——
     "op_set_slots": "布局", "op_set_room_level": "布局", "_apply_facilities": "布局",
+    # 2026-10：显式上锁 / 解锁的两个 op（它们只调 `Session` 的锁原语，不直接写字段，
+    #          所以 C1 本来不会抓；按"登记在案"的惯例一并列出）
+    "op_set_seat_lock": "布局", "op_clear_seat_locks": "布局",
     # 2026-10：看板只做展示 ⇒ `on_room_left`（点房间头改等级）已删，登记一并撤掉；
     #           `on_slot_left` 保留（界面不再绑定，但它是"手动入宿写进布局"的程序化入口）
     "on_slot_left": "布局",
