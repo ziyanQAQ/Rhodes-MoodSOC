@@ -1415,7 +1415,11 @@ def _seat_specs(fac: dict) -> List[object]:
     填池（`fill_from_pool`）、进名单（`_remove_from_slots`）三条写入口都这么失效过。
     """
     raw = fac.get("slots")
-    if raw is None:
+    # ⚠️ **只有列表型 `slots` 才是"按位次的占位"**：数字型 `slots` 是**历史的容量覆盖**
+    #    （v4 蓝图的 `dorm_beds` 也走它，见 `models.facility_occupancy` 与
+    #    `store.layers.build_base_layout`），当占位数组迭代会直接 `TypeError`
+    #    —— 旧实现只判 `is None`，是个潜伏 bug：一旦有人对"数字 slots"的设施调它就炸。
+    if not isinstance(raw, (list, tuple)):
         raw = fac.get("operators") or []
     return [s if s else "" for s in raw]
 
@@ -1451,6 +1455,31 @@ def _write_seats(fac: dict, values: Sequence[object]) -> None:
         fac["slots"] = [v or None for v in trimmed]
     else:
         fac["operators"] = list(trimmed)
+
+
+# ---------------------------------------------------------------- 公开的位次读写（给 ui/ 与脚本用）
+def seat_specs(fac: dict) -> List[object]:
+    """设施描述 → **按位次对齐的 spec 列表**（空槽 `""`；spec 保留对象写法）。
+
+    ⚠️ 这是 `ui/` 与脚本该用的**公开**入口：位次口径只有一套（**`slots` 优先**），
+    而 `_seat_specs` 是下划线名、不该被 UI import（见 `tests/test_layers.py` 的分层意图）。
+    """
+    return _seat_specs(fac)
+
+
+def seat_values(fac: dict) -> List[str]:
+    """`seat_specs` 的**名字版**（空槽 `""`）—— 界面表格按它逐格渲染。"""
+    return _seat_values(fac)
+
+
+def write_seats(fac: dict, values: Sequence[object]) -> None:
+    """把**按位次对齐的 spec 列表**写回设施描述（`seat_specs` 的逆）。
+
+    两种写法（紧凑 `operators` / 带空洞 `slots`）**互斥**，且**不左移**（空洞原样保留）。
+    `ui/batch.py` 的写回**必须**走它：否则会同时留下旧的 `slots` 与新写的 `operators`，
+    而 `models.facility_occupancy` 里 `slots` 优先 ⇒ **改动静默失效**（修过的 bug）。
+    """
+    _write_seats(fac, values)
 
 
 def _write_manual(fac: dict, *, raw_slots=(), raw_names=(), touched: Optional[int] = None) -> None:
@@ -1568,4 +1597,6 @@ def _trim_to_capacity(fac: dict, capacity: int) -> dict:
 __all__ = [
     "Session", "Validation", "ValidationIssue",
     "DEFAULT_OPERATORS",
+    # 位次读写的公开入口（`ui/` 与脚本用；位次口径只有一套：`slots` 优先）
+    "seat_specs", "seat_values", "write_seats",
 ]

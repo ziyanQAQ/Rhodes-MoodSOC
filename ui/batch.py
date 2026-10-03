@@ -40,6 +40,7 @@ from mood_soc.battery import to_decimal
 from mood_soc.config import (MOOD_MAX, MOOD_MIN, OUTPUT_ROOM_TYPES, OUTPUT_SLOT_TOTAL,
                             facility_max_level, facility_slots)
 from mood_soc.scenario import DEFAULT_OPERATOR_LEVEL
+from store.session import seat_specs, seat_values, write_seats   # 位次口径只有一套：`slots` 优先
 
 from ui import theme
 from ui.board import facility_tag
@@ -838,14 +839,23 @@ class BatchMixin:
         for i, shift in enumerate(self._schedule.shifts):
             facs = self._draft.get(i)
             if facs is None:
-                facs = [dict(f, operators=list(f.get("operators", [])))
-                        for f in shift.facilities]
+                # 工作副本口径与 `_sync_facilities` 一致：**按位次的名字列表**（空串＝空槽），
+                # 且**不留** `slots`（否则两种写法并存、`slots` 优先 ⇒ 摘人静默失效）。
+                facs = []
+                for f in shift.facilities:
+                    fac = dict(f)
+                    fac.pop("slots", None)
+                    fac["operators"] = seat_values(f)
+                    facs.append(fac)
             hit = False
             for f in facs:
-                ops = [n for n in f.get("operators", []) if n != name]
-                if len(ops) != len(f.get("operators", [])):
+                ops = list(f.get("operators", []))
+                # ⚠️ 摘人**留洞、不左移**：位次是正式概念 —— 把后面的人往前挪会让
+                #    "第 3 位"变成"第 2 位"，而手动台账与锁定区都按位次判。
+                kept = ["" if n == name else n for n in ops]
+                if kept != ops:
                     hit = True
-                    f["operators"] = ops
+                    f["operators"] = kept
             if hit:
                 self._draft[i] = facs
                 moved += 1
@@ -1178,18 +1188,22 @@ class BatchMixin:
         for f in shift.facilities:
             fac = dict(f)
             # 干员可能是字符串，也可能是带练度的对象 `{"name": ..., "elite": ...}`
-            # （上一轮改过练度就是这样存的）→ 这里统一成"名字列表 + self._elite"
-            specs = list(f.get("operators", []))
+            # （上一轮改过练度就是这样存的）→ 这里统一成"名字列表 + self._elite"。
+            # ⚠️ **位次一律按位次读**（`seat_specs` 里 `slots` 优先）：只读 `operators`
+            #    会在"留过空洞"的设施上读成**空房间** —— 显示为空、写回也失效（修过的 bug）。
+            #    工作副本统一成"**按位次对齐的名字列表**"（空串＝这一格空着、**不左移**），
+            #    并把过时的 `slots` 摘掉；出口 `value()` 用 `write_seats` 收敛回唯一一种
+            #    正式写法（紧凑 `operators` / 带空洞 `slots`）。
             names = []
-            for spec in specs:
+            for spec in seat_specs(f):
                 if isinstance(spec, dict):
-                    name = str(spec.get("name", ""))
+                    name = str(spec.get("name") or "")
                     if name:
                         self._elite[name] = int(spec.get("elite", 2))
                 else:
-                    name = str(spec)
-                if name:
-                    names.append(name)
+                    name = str(spec or "")
+                names.append(name)
+            fac.pop("slots", None)
             fac["operators"] = names
             self._fac_names.append(fac)
         for op in shift.world.all_operators():           # 练度预填（默认 E2 满练）
@@ -1840,8 +1854,20 @@ class BatchMixin:
             return None
         self._collect_moods()
         # 干员改动：所有被改过的班次（下标 → 布局），调用方逐班 `replaced_shift`
-        changes = {i: [dict(f, operators=[self._op_spec(n) for n in f.get("operators", []) if n])
-                       for f in facs] for i, facs in self._draft.items()}
+        # ⚠️ **出口必须用 `write_seats` 收敛写法**（旧实现有两个真 bug）：
+        #    ① `dict(f, operators=[...])` 会把**旧的 `slots` 一起留下**，而
+        #       `models.facility_occupancy` 里 `slots` 优先 ⇒ 面板上的改动**静默失效**；
+        #    ② `if n` 会把**空洞丢掉**（后面的人往前挪），与"位次不左移"的口径冲突。
+        #    工作副本里的 `f["operators"]` 是"按位次对齐的名字列表"（见 `_sync_facilities`）。
+        changes = {}
+        for i, facs in self._draft.items():
+            out = []
+            for f in facs:
+                fac = dict(f)
+                write_seats(fac, [self._op_spec(n) if n else ""
+                                  for n in f.get("operators", [])])
+                out.append(fac)
+            changes[i] = out
         moods = {n: v for n, v in self._moods.items()
                  if Decimal(str(self._imported.get(n, MOOD_MAX))) != v}
         return changes, moods, list(self._events), self._detached_out()

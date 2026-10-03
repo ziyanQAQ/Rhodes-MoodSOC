@@ -791,6 +791,42 @@ def test_facility_auto_name():
           str(raw_facs))
 
 
+def test_seat_io_roundtrip():
+    print("布局位次的**公开**读写（`seat_specs` / `seat_values` / `write_seats`）")
+    from store.session import seat_specs, seat_values, write_seats
+
+    holey = {"type": "宿舍", "level": 1, "capacity": 5, "slots": ["甲", None, "乙"]}
+    compact = {"type": "宿舍", "level": 1, "capacity": 5, "operators": ["甲", "乙"]}
+
+    check("读：`slots` 优先 —— 位次空洞按位次给出（空槽是空串）",
+          seat_values(holey) == ["甲", "", "乙"], str(seat_values(holey)))
+    check("读：紧凑写法按「下标＝位次」给出",
+          seat_values(compact) == ["甲", "乙"], str(seat_values(compact)))
+    check("读：spec 保留对象写法（练度不被拍成名字）",
+          seat_specs({"operators": [{"name": "甲", "elite": 1}]})
+          == [{"name": "甲", "elite": 1}],
+          str(seat_specs({"operators": [{"name": "甲", "elite": 1}]})))
+    # ⚠️ 数字型 `slots` 是**容量覆盖**（历史写法，v4 蓝图的 `dorm_beds` 走它），不是占位数组 ——
+    #    旧实现只判 `is None`，一旦有人对"数字 slots"的设施调它就 `TypeError`（潜伏 bug，
+    #    面板遍历**所有**设施时暴露出来）。
+    numeric = {"type": "宿舍", "level": 1, "slots": 5, "operators": ["甲"]}
+    check("读：数字型 `slots` 当**容量覆盖**、不当占位数组（当占位迭代会 TypeError）",
+          seat_values(numeric) == ["甲"], str(seat_values(numeric)))
+
+    out = dict(holey)
+    write_seats(out, ["甲", "", "乙", "丙"])
+    check("写：有空洞 ⇒ 写 `slots`（空槽 null），且**不左移**",
+          out.get("slots") == ["甲", None, "乙", "丙"] and "operators" not in out,
+          str(out))
+    out2 = dict(holey)
+    write_seats(out2, ["甲", "乙"])
+    check("写：没有空洞 ⇒ 回到紧凑 `operators`，且**旧的 `slots` 被摘掉**（两种写法互斥）",
+          out2.get("operators") == ["甲", "乙"] and "slots" not in out2, str(out2))
+    # ⚠️ 这两条就是 `ui/batch.py` 那个"显示为空 + 写回静默失效"的根因：
+    #    面板过去只读 `operators`（`slots` 型读成空），写回又用 `dict(f, operators=…)`
+    #    把旧 `slots` 留着（`slots` 优先 ⇒ 改动被吞）。现在两边都走这一套公开函数。
+
+
 def test_capacity_shrink_keeps_people():
     print("容量变小时：只丢越界的**空位**与标记，住着人的格子保留（交给自检报超容量）")
     from store.session import Session
