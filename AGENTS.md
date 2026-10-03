@@ -400,7 +400,7 @@ documents/
     ⇒ **名单优先**：摘人 + **留洞不左移** + **解该位的锁** + 记一条进 `LoadedSchedule.notes`。
     ⚠️ **进驻事件也尊重锁**：M15a 的"位置也一起互换"（`restore_back=False`）遇锁**只换心情、不换位置**
     —— 这样"手动锁永不被动"才**没有例外**。
-    ⚠️ 改这一块**必须跑 `scripts/verify_idle.py`（123 条）+ 全量 `unittest`**。
+    ⚠️ 改这一块**必须跑 `scripts/verify_idle.py`**（当前 128 条）**+ 全量 `unittest`**。
 
 28. **给未命名设施补名**（2026-10）：`store.layout.build_base_layout` 对 `name` 为空的设施
     自动补 `{类型标签}#{同类型序号}`（`宿舍` → `宿舍#1`；**一律带序号**，单间也带；
