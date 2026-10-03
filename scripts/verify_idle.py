@@ -689,6 +689,38 @@ def test_seat_lock_primitives():
     check("全部解锁 ⇒ 动过 1 个班次、台账清空",
           n == 1 and "manual" not in raw(), f"n={n} fac={raw()}")
 
+    # —— 手动锁优先于**进驻事件**（用户裁决 Q-A=(a)：只换心情、不换位置）——
+    #    入驻事件在 `restore_back=False` 时会顺手对调两人的位置，而它过去**绕过台账**
+    #    ⇒ 手动钉住的人/位次会被它挪走。"手动锁＝第 1 层、永不被动"要没有例外。
+    from mood_soc.rules import _position_of, _swap_positions
+    s3 = Session()
+    s3.load_data({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                  "operators": [{"name": "甲", "mood": "20"},
+                                                {"name": "乙", "mood": "10"}]}]})
+    s3.idle_to_dorm = False
+    s3.recompute()
+    s3.set_seat_lock(0, 0, 1)                      # 锁住"乙"所在的第 2 位
+    w3 = s3.schedule.shifts[0].world
+    op_a, op_b = w3.get_operator("甲"), w3.get_operator("乙")
+    note = _swap_positions(w3, op_a, op_b)
+    check("手动锁住的位次：进驻事件只换心情、**不换位置**", "不对调" in note, note)
+    check("位置确实没动（甲 仍在第 1 位、乙 仍在第 2 位）",
+          _position_of(w3, op_a)[1] == 0 and _position_of(w3, op_b)[1] == 1,
+          f"{_position_of(w3, op_a)} / {_position_of(w3, op_b)}")
+
+    s4 = Session()
+    s4.load_data({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                  "operators": [{"name": "甲", "mood": "20"},
+                                                {"name": "乙", "mood": "10"}]}]})
+    s4.idle_to_dorm = False
+    s4.recompute()
+    w4 = s4.schedule.shifts[0].world
+    op4a, op4b = w4.get_operator("甲"), w4.get_operator("乙")
+    note4 = _swap_positions(w4, op4a, op4b)
+    check("没有手动锁时照旧对调（这条规则只保护锁住的位次）",
+          "位置也对调" in note4 and _position_of(w4, op4a)[1] == 1,
+          note4)
+
 
 def test_capacity_shrink_keeps_people():
     print("容量变小时：只丢越界的**空位**与标记，住着人的格子保留（交给自检报超容量）")

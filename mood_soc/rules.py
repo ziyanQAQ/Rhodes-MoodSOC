@@ -698,14 +698,24 @@ def _position_of(world: BaseLayout, op: Operator):
 
 
 def _swap_positions(world: BaseLayout, a: Operator, b: Operator) -> str:
-    """把两名干员的**位置**互换（就地）。返回人类可读说明（换不了时为空串）。
+    """把两名干员的**位置**互换（就地）。返回人类可读说明（换不了时返回**一句原因**）。
 
     走 `models.set_seat`（空洞的唯一写入口），所以 `_slots` 位次映射不会失配。
+
+    ⚠️ **手动锁优先于进驻事件**（用户裁决 2026-10，Q-A）：两人的位置里只要**任何一个**
+    是"手动锁住"的（位次被钉住 `pins_slot`，或那个人被钉住 `pins_name`），就
+    **只换心情、不换位置** —— 进驻事件的本职是"换心情"，位置对调只是 `restore_back=False`
+    的附加效果，不该推翻"手动锁＝第 1 层、永不被动"这条不变式。
     """
     fa, ia = _position_of(world, a)
     fb, ib = _position_of(world, b)
     if fa is None or fb is None:
         return ""
+    for fac, idx, op in ((fa, ia, a), (fb, ib, b)):
+        led = read_manual(fac)
+        if led.pins_slot(idx) or led.pins_name(op.name):
+            return (f"（位置**不对调**：{op.name} 所在的 {fac.display_name} "
+                    f"第 {idx + 1} 位是你手动锁住的）")
     set_seat(fa, ia, b)
     set_seat(fb, ib, a)
     world.invalidate_index()             # 成员换了房间 ⇒ 名字索引作废（见 `models._name_index`）
