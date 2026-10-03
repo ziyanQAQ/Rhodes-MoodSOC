@@ -601,12 +601,18 @@ def test_session_write_paths():
     fac = s.schedule.shifts[0].facilities[0]
     check("清空第 2 位 ⇒ 写 `slots` 且第 2 格是 null",
           fac.get("slots") == ["甲", None, "丙"], str(fac))
-    check("手动台账记下位次与人",
-          fac.get("manual") == {"slots": [0, 2], "names": ["丙", "甲"]}, str(fac.get("manual")))
+    check("手动台账记下**整段**位次与人（含被清空的那一位 ⇒ 保持空着）",
+          fac.get("manual") == {"slots": [0, 1, 2], "names": ["丙", "甲"]}, str(fac.get("manual")))
     w = s.schedule.shifts[0].world.facilities[0]
     check("引擎侧的位次映射保留空洞",
           {i: o.name for i, o in w.slot_map().items()} == {0: "甲", 2: "丙"},
           str({i: o.name for i, o in w.slot_map().items()}))
+    # ⚠️ 2026-10 改口径：`set_slots` 与 `set_facility_slots` 统一成"**清空即上锁**"。
+    #    这条断言就是那个口径的**回归网**：旧实现下被清空的第 2 位不进台账，
+    #    自动入宿会立刻把它填上（而文档写的是"手动清空的位次保持空着"）。
+    #    `next_open_slot()` 会跳过"已被手动钉住的位次"，所以下一个空位应当是第 4 位（0 基 3）。
+    check("清空的那一位不再算可入住（下一个空位是第 4 位）",
+          w.next_open_slot() == 3, f"next_open_slot={w.next_open_slot()}")
 
     s.set_facility_slots(0, 0, [None, "丁"])
     fac = s.schedule.shifts[0].facilities[0]
@@ -615,6 +621,23 @@ def test_session_write_paths():
     check("台账跟着更新（甲 被写掉、丁 被标为手动）",
           "甲" not in fac["manual"]["names"] and "丁" in fac["manual"]["names"],
           str(fac["manual"]))
+
+    # ⚠️ 清空**最后一位**也要上锁：`_write_seats` 会裁掉尾部空槽，若台账的位次上界跟着
+    #    "占位数组长度"算，这一格会连"位次"一起消失，"清空即上锁"落不到它身上（修过的 bug）。
+    #    位次上界必须是**容量**。
+    s2 = Session()
+    s2.load_data({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                  "operators": ["甲", "乙", "丙"]}]})
+    s2.idle_to_dorm = False
+    s2.recompute()
+    s2.set_slots(0, 0, ["甲", "乙", ""])
+    fac2 = s2.schedule.shifts[0].facilities[0]
+    check("清空**末位** ⇒ 那一格仍留在台账里（位次上界＝容量，不是占位数组长度）",
+          fac2.get("manual") == {"slots": [0, 1, 2], "names": ["乙", "甲"]},
+          str(fac2.get("manual")))
+    check("而且它的裁决是 keep（自动入宿不许填第 3 位）",
+          s2.schedule.shifts[0].world.facilities[0].next_open_slot() == 3,
+          f"next_open_slot={s2.schedule.shifts[0].world.facilities[0].next_open_slot()}")
 
 
 def test_capacity_shrink_keeps_people():

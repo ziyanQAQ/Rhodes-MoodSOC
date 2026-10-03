@@ -816,9 +816,13 @@ class Session:
         （"清空第 1 位"不会把后面的人往前挪），导出时写成 `slots: ["", …]`。
 
         **手动编辑逻辑**：调用方传进来的整份列表都被当作"人写的"——
-        每个填入的位次与被写进去的那位一起记进手动台账（`models.mark_manual`），
-        原来那份台账整份作废。自动入宿从此不占这些位次、不换这些人。
-        导入**不打标**（只有这个入口与 `set_facility_slots` 会打）。
+        传进来的**整段位次**（**含被清空的那些**）与被写进去的人一起记进手动台账
+        （`_write_manual`，原来那份台账整份作废）。自动入宿从此不占这些位次、不换这些人；
+        **手动清空的位次从此"保持空着"**（2026-10 与 `set_facility_slots` 统一了这条口径，
+        见 `04-特殊机制.md` 第 30 条）。导入**不打标**（只有这个入口与 `set_facility_slots` 会打）。
+
+        ⚠️ 传空列表（`[]`）＝**清空整间房**：位次"到过的长度"塌成 0，于是**一个位次都不上锁**
+        —— 相当于把整间房交还给自动入宿。要"锁住一整间空房"，请逐位用 `set_seat_lock`。
         """
         facs = self.facilities_of(shift_index)
         if not (0 <= facility_index < len(facs)):
@@ -826,8 +830,12 @@ class Session:
         names = [str(n) if n else "" for n in operators]
         fac = dict(facs[facility_index])
         _write_seats(fac, names)
+        # ⚠️ `touched=len(names)` ⇒ **清空即上锁**。只把"有名字的位次"记进台账的话，
+        #    手动清空的格子会被自动入宿立刻填上 —— 而文档（`04` 第 30 条 / AGENTS 坑 17）
+        #    写的是"手动清空的位次**保持空着**"：旧实现在这条上与文档相反，且两条写入口
+        #    （`set_slots` 解锁 / `set_facility_slots` 上锁）口径不一致。
         _write_manual(fac, raw_slots=[i for i, n in enumerate(names) if n],
-                      raw_names=[n for n in names if n])
+                      raw_names=[n for n in names if n], touched=len(names))
         facs[facility_index] = fac
         self.replace_facilities(shift_index, facs)
 
@@ -1301,8 +1309,14 @@ def _write_manual(fac: dict, *, raw_slots=(), raw_names=(), touched: Optional[in
       · 写了名字的进 `names`＝"这个人是人放的"；
       · 同一份数据里**已经被写掉的人**（不再出现在 `values` 里）从 `names` 摘掉；
       · 台账空了就把 `manual` 键删掉（导出保持干净）。
+
+    ⚠️ **位次的上界是"容量"，不是"占位数组的长度"**：`_write_seats` 会**裁掉尾部空槽**
+    （`["甲","乙",""]` → `["甲","乙"]`），若 `limit` 跟着数组长度算，"清空最后一个有人位"
+    就连那一位都不存在了 ⇒ **"清空即上锁"落不到它身上**（实测过）。容量才是"这一位还能不能
+    存在"的正式上界（`_capacity_of_dict` 与 `Facility.capacity` 同一套规则）。
     """
-    limit = len(_seat_values(fac)) if touched is None else min(int(touched), len(_seat_values(fac)))
+    cap = max(_capacity_of_dict(fac), len(_seat_values(fac)))
+    limit = cap if touched is None else min(int(touched), cap)
     slots = {int(i) for i in raw_slots if 0 <= int(i) < limit}
     slots |= set(range(limit)) if touched is not None else set()
     names = {str(n) for n in raw_names if n}
