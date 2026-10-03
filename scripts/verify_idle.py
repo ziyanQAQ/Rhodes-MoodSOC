@@ -680,8 +680,8 @@ def test_seat_lock_primitives():
           _seat_verdict(world(), 1)[0] == SEAT_SWAPPABLE,
           str(_seat_verdict(world(), 1)))
 
-    check("查某人被锁在哪：丙 在 第 1 班/第 1 间/第 3 位",
-          s.locked_seats_of("丙") == [(0, 0, "宿舍", 2)], str(s.locked_seats_of("丙")))
+    check("查某人被锁在哪：丙 在 第 1 班/第 1 间/第 3 位（设施名是**补名**后的 `宿舍#1`）",
+          s.locked_seats_of("丙") == [(0, 0, "宿舍#1", 2)], str(s.locked_seats_of("丙")))
     check("乙 已被解锁 ⇒ 查不到", s.locked_seats_of("乙") == [],
           str(s.locked_seats_of("乙")))
 
@@ -758,6 +758,37 @@ def test_detached_vs_lock():
     check("导入：它也会出现在 `summary()` 里（状态栏与接口都拿得到）",
           "名单优先" in (s2.loaded.summary() if s2.loaded else ""),
           s2.loaded.summary() if s2.loaded else "")
+
+
+def test_facility_auto_name():
+    print("设施**补名**（未命名设施 → `{类型标签}#{同类型序号}`；锁的稳定键靠它）")
+    from store.session import Session
+
+    s = Session()
+    s.load_layout({"facilities": [
+        {"type": "宿舍", "level": 1, "capacity": 5, "operators": ["甲"]},
+        {"type": "宿舍", "level": 1, "capacity": 5, "operators": ["乙"]},
+        {"type": "制造站", "level": 3, "operators": ["丙"]},
+        {"type": "宿舍", "level": 1, "capacity": 5, "name": "宿舍#2", "operators": ["丁"]},
+    ]}, hours=1)
+    w = s.schedule.shifts[0].world
+    check("未命名设施一律补名（**单间也带序号**），且跳过用户显式起的名字",
+          [f.display_name for f in w.facilities]
+          == ["宿舍#1", "宿舍#3", "制造站#1", "宿舍#2"],
+          str([f.display_name for f in w.facilities]))
+    # 补名的**目的**：`_seat_key` 永远走稳定键 `(类型, 实例名)`，不再退到"世界下标"
+    # —— 后者在布局增删设施时会让**锁定区与手动锁保护到别的房间**。
+    keys = [_seat_key(w, f) for f in w.facilities]
+    check("同类型多间各自拿到唯一稳定键（锁定区/手动锁不会互相顶掉）",
+          keys[0] == (FacilityType.DORMITORY, "宿舍#1")
+          and keys[1] == (FacilityType.DORMITORY, "宿舍#3")
+          and len(set(keys)) == len(keys), str(keys))
+    # 补名的**代价边界**：只写模型对象 ⇒ 导出（原样吐 `s.facilities`）与往返对比一字不变
+    raw_facs = s.schedule.shifts[0].facilities
+    check("补名**不写回布局 dict**（导出与「导出→再导入」的往返对比不受影响）",
+          all("name" not in f for f in raw_facs[:3])
+          and raw_facs[3].get("name") == "宿舍#2",
+          str(raw_facs))
 
 
 def test_capacity_shrink_keeps_people():

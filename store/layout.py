@@ -122,6 +122,15 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
     validate=True 时做容量/房间数自检，有问题抛 ValueError
     （默认 False：历史场景可能刻意超容量，不破坏既有用法）。
     """
+    # ① 先收集"用户**显式**起的名字"（按类型）—— 补名要跳过它们，否则同类型两间会同名，
+    #    而 `rules._seat_key` 拿 `(类型, 实例名)` 当稳定键 ⇒ 锁定区 / 手动锁会互相顶掉
+    #    （正是 `_seat_key` 注释里警告过的那个坑）。
+    taken = {}
+    for f in data.get("facilities", []):
+        nm = str(f.get("name") or "").strip()
+        if nm:
+            taken.setdefault(parse_facility_type(f["type"]), set()).add(nm)
+    counters = {}
     facilities = []
     for f in data.get("facilities", []):
         ftype = parse_facility_type(f["type"])
@@ -155,6 +164,24 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
             slots=int(override) if override is not None else None,
             enabled=bool(f.get("enabled", True)),
         )
+        # ② **补名**：`name` 为空 ⇒ 填 `{中文类名}#{同类型序号}`（序号跳过已被占用的名字，
+        #    一律带序号 —— 单间也带，这样"同类型只有 1 间"的小布局同样稳定）。
+        #    ⚠️ **只写模型对象、不写回 `f`**：导出（`export_schedule` 原样吐 `s.facilities`）
+        #    与"导出 → 再导入"的往返对比**一字不变**。
+        #    收益：`rules._seat_key` 从此永远走稳定键 `(类型, 实例名)`，不再退到"世界下标"
+        #    —— 后者在布局增删设施时会让**锁定区与手动锁保护到别的房间**。
+        #    ⚠️ 有意接受的副作用：`display_name` 从"宿舍"变成"宿舍#1" ⇒ 界面标签、
+        #    `layout_at` 的 `name` 字段、错误与自检文案都跟着变细（4 间宿舍不再无法区分）。
+        if not facility.name:
+            seq = counters.get(ftype, 0)
+            while True:
+                seq += 1
+                cand = f"{facility.label}#{seq}"
+                if cand not in taken.setdefault(ftype, set()):
+                    break
+            taken[ftype].add(cand)
+            counters[ftype] = seq
+            facility.name = cand
         if isinstance(f.get("slots"), (list, tuple)):
             facility._slots = port          # 显式位次：位次 → 干员（空槽不在映射里）
         facility._manual = build_manual_ledger(f.get("manual"))
