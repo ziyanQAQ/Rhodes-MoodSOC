@@ -689,6 +689,17 @@ def test_seat_lock_primitives():
     check("全部解锁 ⇒ 动过 1 个班次、台账清空",
           n == 1 and "manual" not in raw(), f"n={n} fac={raw()}")
 
+    # `manual=False`：只改布局、**不打手动标**（API 的口径；"改布局"与"上锁"的解耦口）
+    s7 = Session()
+    s7.load_data({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                  "operators": ["甲", "乙"]}]})
+    s7.idle_to_dorm = False
+    s7.recompute()
+    s7.set_slots(0, 0, ["甲", "", "丙"], manual=False)
+    fac7 = s7.schedule.shifts[0].facilities[0]
+    check("`manual=False`：布局照改（留洞）但**台账一个字都不写**",
+          fac7.get("slots") == ["甲", None, "丙"] and "manual" not in fac7, str(fac7))
+
     # —— 手动锁优先于**进驻事件**（用户裁决 Q-A=(a)：只换心情、不换位置）——
     #    入驻事件在 `restore_back=False` 时会顺手对调两人的位置，而它过去**绕过台账**
     #    ⇒ 手动钉住的人/位次会被它挪走。"手动锁＝第 1 层、永不被动"要没有例外。

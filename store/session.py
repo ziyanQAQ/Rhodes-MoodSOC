@@ -886,7 +886,7 @@ class Session:
         self.schedule = self.schedule.with_start_clock(clock)
 
     def set_slots(self, shift_index: int, facility_index: int,
-                  operators: Sequence[str]) -> None:
+                  operators: Sequence[str], manual: bool = True) -> None:
         """改某个班次某间房的**进驻干员**（`operators` 里的空串 = 该位留空）。
 
         ⚠️ 位次语义：`operators[i]` 写的就是**第 i+1 位**。空串**留空洞、不左移**
@@ -898,6 +898,9 @@ class Session:
         **手动清空的位次从此"保持空着"**（2026-10 与 `set_facility_slots` 统一了这条口径，
         见 `04-特殊机制.md` 第 30 条）。导入**不打标**（只有这个入口与 `set_facility_slots` 会打）。
 
+        `manual=False`：**只改布局、不打手动标**（API 用；默认 `True` 保持既有行为）——
+        "改布局"与"上锁"是两件事，这个开关是它们的解耦口。
+
         ⚠️ 传空列表（`[]`）＝**清空整间房**：位次"到过的长度"塌成 0，于是**一个位次都不上锁**
         —— 相当于把整间房交还给自动入宿。要"锁住一整间空房"，请逐位用 `set_seat_lock`。
         """
@@ -907,22 +910,25 @@ class Session:
         names = [str(n) if n else "" for n in operators]
         fac = dict(facs[facility_index])
         _write_seats(fac, names)
-        # ⚠️ `touched=len(names)` ⇒ **清空即上锁**。只把"有名字的位次"记进台账的话，
-        #    手动清空的格子会被自动入宿立刻填上 —— 而文档（`04` 第 30 条 / AGENTS 坑 17）
-        #    写的是"手动清空的位次**保持空着**"：旧实现在这条上与文档相反，且两条写入口
-        #    （`set_slots` 解锁 / `set_facility_slots` 上锁）口径不一致。
-        _write_manual(fac, raw_slots=[i for i, n in enumerate(names) if n],
-                      raw_names=[n for n in names if n], touched=len(names))
+        if manual:
+            # ⚠️ `touched=len(names)` ⇒ **清空即上锁**。只把"有名字的位次"记进台账的话，
+            #    手动清空的格子会被自动入宿立刻填上 —— 而文档（`04` 第 30 条 / AGENTS 坑 17）
+            #    写的是"手动清空的位次**保持空着**"：旧实现在这条上与文档相反，且两条写入口
+            #    （`set_slots` 解锁 / `set_facility_slots` 上锁）口径不一致。
+            _write_manual(fac, raw_slots=[i for i, n in enumerate(names) if n],
+                          raw_names=[n for n in names if n], touched=len(names))
         facs[facility_index] = fac
         self.replace_facilities(shift_index, facs)
 
     def set_facility_slots(self, shift_index: int, facility_index: int,
-                           slots: Sequence[Optional[str]]) -> None:
+                           slots: Sequence[Optional[str]], manual: bool = True) -> None:
         """**带空洞的逐位写入**（界面的看板/表格走这条）：`slots[i]` = 第 i+1 位的干员名或 `None`。
 
         与 `set_slots` 的区别是**不动没提到的位次**：传进来的每一位按原样写
         （`None`/空串 = 该位留空），后面的位次与它们的手动标记保持原样。
-        手动台账：这些位次被标成"人写的"，写了名字的连人一起标（`_write_manual`）。
+        手动台账：这些位次被标成"人写的"（含被清空的 ⇒ "保持空着"），写了名字的连人一起标。
+
+        `manual=False`：只改布局、不打手动标（与 `set_slots` 同一个开关）。
         """
         facs = self.facilities_of(shift_index)
         if not (0 <= facility_index < len(facs)):
@@ -936,8 +942,9 @@ class Session:
                 merged.append("")
             merged[i] = value
         _write_seats(fac, merged)
-        _write_manual(fac, raw_slots=[i for i, n in enumerate(merged) if n],
-                      raw_names=[n for n in merged if n], touched=len(slots))
+        if manual:
+            _write_manual(fac, raw_slots=[i for i, n in enumerate(merged) if n],
+                          raw_names=[n for n in merged if n], touched=len(slots))
         facs[facility_index] = fac
         self.replace_facilities(shift_index, facs)
 
