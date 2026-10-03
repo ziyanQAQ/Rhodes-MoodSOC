@@ -106,6 +106,8 @@ SESSION_METHOD_OWNER = {
     # —— 编排 ——
     "load_paths": "编排", "load_data": "编排", "load_layout": "编排",
     "_sync_from_schedule": "编排", "recompute": "编排", "recompute_inputs": "编排",
+    # 2026-10：导入装配时解决"名单里的人却占着位置"（名单优先：摘人 + 解该位锁）
+    "_resolve_imported_detached": "编排",
     "compute_trajectory": "编排", "adopt": "编排", "closure": "编排",
     "_world_digest": "编排", "_segment_signatures": "编排",
     "describe": "编排", "settings_dict": "编排", "status_text": "编排",

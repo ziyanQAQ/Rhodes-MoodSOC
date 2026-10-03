@@ -154,7 +154,7 @@ class Session:
         self.schedule = ld.schedule
         self.initial_moods.clear()
         self.mood_events.clear()
-        self._sync_from_schedule()
+        self._sync_from_schedule(from_import=True)
         self.recompute()
         return ld
 
@@ -188,7 +188,7 @@ class Session:
         self.schedule = ld.schedule
         self.initial_moods.clear()
         self.mood_events.clear()
-        self._sync_from_schedule()
+        self._sync_from_schedule(from_import=True)
         if not apply_file_settings:
             # 换心情（进驻事件）：本入口默认**关**，且不继承文件里的逐班覆盖。
             self.entry_events = False
@@ -234,14 +234,25 @@ class Session:
         self.loaded = LoadedSchedule(schedule=self.schedule)
         self.initial_moods.clear()
         self.mood_events.clear()
-        self._sync_from_schedule()
+        self._sync_from_schedule(from_import=True)
         self.recompute()
 
-    def _sync_from_schedule(self) -> None:
-        """把排班自带（场景 JSON 顶层）的设置同步到会话（导入后调一次）。"""
+    def _sync_from_schedule(self, *, from_import: bool = False) -> None:
+        """把排班自带（场景 JSON 顶层）的设置同步到会话（导入后调一次）。
+
+        `from_import=True`（三条 `load_*` 传 `True`）时额外做一件事：**名单优先** ——
+        文件里同时写了 `detached` 与"这个人占着某个位次"时（老文件、手改文件都可能），
+        把她从位置上摘掉、**并解除那位次的锁**，再往导入摘要里记一条（`LoadedSchedule.notes`）。
+
+        ⚠️ **为什么导入"让步"、交互层却"拒绝"**：交互层拒绝是为了**不让用户造出**
+        "锁着 + 在名单里"这个自相矛盾的状态（见 `set_detached`）；而导入是**数据**，
+        报错会让老文件直接打不开 —— 两边口径不同是有意的（Q6 的 (d3) + (i)）。
+        """
         if self.schedule is None:
             return
         self.detached = list(getattr(self.schedule, "detached", []) or [])
+        if from_import and self.detached:
+            self._resolve_imported_detached()
         cfg = self.schedule.entry_config()
         self.entry_events = bool(cfg.enabled)
         self.entry_swap_with = cfg.swap_with
@@ -265,6 +276,57 @@ class Session:
                 self.idle_globals[e.name] = bool(e.enabled)
             else:
                 self.idle_entries[(e.cycle or 1, e.shift or 1, e.name)] = bool(e.enabled)
+
+    def _resolve_imported_detached(self) -> List[str]:
+        """导入时解决"名单里的人却占着某个位次"（**名单优先**）；返回一句人类可读的说明。
+
+        做两件事：
+        ① 把她从**所有班次**的位置上摘掉（**留空洞、不左移** —— 位次是正式概念，
+           与 `set_detached` 那条路的"紧凑化"不同：这里动的是**导入进来的原始数据**，
+           不该顺手把别人的位次挪一格）；
+        ② **解除那些位次的锁** —— 她都不在那儿了，留一个"锁住这一格"的锁只会让自动入宿
+           永远填不进它（用户会看到"这一格空着却没人住"），语义上也说不通。
+
+        ⚠️ 这也是**行为变化**：在此之前**导入根本不摘人**（摘人只发生在显式调 `set_detached`
+        的时候），于是一份同时带 `detached` 与占位的文件会让"她在名单里 ↔ 她在岗算速率"
+        自相矛盾（`bench_names()` 把她列进"不在基建"，而引擎按在岗算）。
+        """
+        names = set(self.detached)
+        hit_names: List[str] = []
+        touched = 0
+        for i in range(len(self.schedule.shifts)):
+            facs = self.facilities_of(i)
+            hit = False
+            for f in facs:
+                specs = _seat_specs(f)
+                kept: List[object] = []
+                cleared = False
+                for idx, spec in enumerate(specs):
+                    who = _spec_name(spec)
+                    if who and who in names:
+                        if who not in hit_names:
+                            hit_names.append(who)
+                        # 先解这一位的锁（`_set_lock` 要按"摘人之前"的占位找她是谁），
+                        # 再把这一格留成空洞。
+                        if f.get("manual"):
+                            _set_lock(f, idx, False)
+                        kept.append("")
+                        cleared = True
+                    else:
+                        kept.append(spec)
+                if cleared:
+                    hit = True
+                    _write_seats(f, kept)
+            if hit:
+                self.schedule = self.schedule.replaced_shift(i, facs)
+                touched += 1
+        if not hit_names:
+            return []
+        note = (f"不在基建名单优先：{'、'.join(hit_names)} 同时出现在位置上 ⇒ 已从 "
+                f"{touched} 个班次里摘掉并解除该位次的锁")
+        if self.loaded is not None:
+            self.loaded.notes.append(note)
+        return [note]
 
     # ================================================================ 重算
     @staticmethod
@@ -630,12 +692,27 @@ class Session:
 
         `recompute=False`（默认）：只改状态、**不重算**（导入路径随后自己会算一次）；
         只想改名单就要新结果时传 `recompute=True`。
+
+        ⚠️ **手动锁优先（用户裁决 2026-10，Q6）**：名单里的人若**已被手动锁在某个位次**上，
+        本方法**拒绝执行**并抛 `ValueError`（消息里写明她被锁在第几班哪一间的第几位）。
+        理由：手动锁的目的就是"把干员放回基建内"，所以"锁着 ↔ 在名单里"这个状态**不允许被
+        造出来** —— 与其造出来再挑一个赢家（选哪个都会让人意外），不如让用户先解锁。
+        （**导入**那条路不拒绝、而是"**名单优先**"地摘人 + 解锁，见 `_resolve_imported_detached`。）
         """
         out: List[str] = []
         for n in (names or []):
             n = str(n).strip()
             if n and n not in out:
                 out.append(n)
+        blocked = [(n, seats) for n, seats in
+                   ((n, self.locked_seats_of(n)) for n in out) if seats]
+        if blocked:
+            detail = "；".join(
+                f"{n} 已被手动锁在 " + "、".join(
+                    f"第 {si + 1} 班 {label} 第 {slot + 1} 位"
+                    for si, _fi, label, slot in seats)
+                for n, seats in blocked)
+            raise ValueError(f"无法加入「不在基建」名单：{detail}。请先在「闲置入宿」里解锁。")
         self.detached = out
         if self.schedule is None:
             return

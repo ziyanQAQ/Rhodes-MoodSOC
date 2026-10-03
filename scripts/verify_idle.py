@@ -722,6 +722,44 @@ def test_seat_lock_primitives():
           note4)
 
 
+def test_detached_vs_lock():
+    print("「不在基建」名单与手动锁的冲突（交互拒绝 / 导入名单优先）")
+    from store.session import Session, _seat_values
+
+    # ① 交互层：她已被手动锁住 ⇒ **拒绝**加入名单（不让"锁着 ↔ 在名单里"这个状态被造出来）
+    s = Session()
+    s.load_layout({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                   "operators": ["甲", "乙"]}]}, hours=1)
+    s.set_detached(["丙"])
+    check("没被锁的人照常可以进名单", s.detached == ["丙"], str(s.detached))
+    s.set_seat_lock(0, 0, 1)                        # 锁住"乙"所在的第 2 位
+    err = ""
+    try:
+        s.set_detached(["乙"])
+    except ValueError as exc:
+        err = str(exc)
+    check("被锁的人加不进去（抛 ValueError，消息写明她在第几班哪一间第几位）",
+          "已被手动锁在" in err and "第 2 位" in err, err or "（没有抛异常）")
+    check("拒绝之后名单没被改坏", s.detached == ["丙"], str(s.detached))
+
+    # ② 导入层：文件里同时写 `detached` 与"她占着位置" ⇒ **名单优先**（摘人 + 解该位锁 + 记一条）
+    s2 = Session()
+    s2.load_layout({"detached": ["甲"], "facilities": [
+        {"type": "宿舍", "level": 1, "capacity": 5, "operators": ["甲", "乙"],
+         "manual": {"slots": [0], "names": ["甲"]}}]}, hours=1)
+    fac = s2.schedule.shifts[0].facilities[0]
+    check("导入：名单里的人被从位置上摘掉，且**留洞、不左移**",
+          _seat_values(fac) == ["", "乙"], str(fac))
+    check("导入：她那位次的锁也一并解除（不留一把锁着空格的锁）",
+          "manual" not in fac, str(fac))
+    check("导入：名单本身照旧", s2.detached == ["甲"], str(s2.detached))
+    note = (getattr(s2.loaded, "notes", None) or [""])[0]
+    check("导入：记了一条（用户看得见，不是静默让步）", "名单优先" in note, note)
+    check("导入：它也会出现在 `summary()` 里（状态栏与接口都拿得到）",
+          "名单优先" in (s2.loaded.summary() if s2.loaded else ""),
+          s2.loaded.summary() if s2.loaded else "")
+
+
 def test_capacity_shrink_keeps_people():
     print("容量变小时：只丢越界的**空位**与标记，住着人的格子保留（交给自检报超容量）")
     from store.session import Session

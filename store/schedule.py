@@ -464,10 +464,15 @@ class LoadedSchedule:
     pool: List[dict] = field(default_factory=list)
     initial_global: Dict[str, Decimal] = field(default_factory=dict)
     reports: List[object] = field(default_factory=list)
+    #: 装配之后才发现的问题（不在任何一份文件的报告里，例如"名单里的人却占着位置"这类
+    #: **跨字段冲突**：它是 `Session` 在 `_sync_from_schedule` 里解决掉的，不属于某一份文件）。
+    notes: List[str] = field(default_factory=list)
 
     def summary(self) -> str:
         """一行导入摘要（状态栏用）。"""
-        return "；".join(r.summary() for r in self.reports)
+        parts = [r.summary() for r in self.reports]
+        parts.extend(str(n) for n in self.notes)
+        return "；".join(p for p in parts if p)
 
 
 def load_schedule_from_imports(imports: Sequence[Any],
