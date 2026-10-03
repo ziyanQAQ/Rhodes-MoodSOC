@@ -700,6 +700,23 @@ def test_seat_lock_primitives():
     check("`manual=False`：布局照改（留洞）但**台账一个字都不写**",
           fac7.get("slots") == ["甲", None, "丙"] and "manual" not in fac7, str(fac7))
 
+    # ⚠️ **对称的拒绝**：'既在名单、又坐在位上、还被锁住' 是自相矛盾的状态，
+    #    交互层两个方向都不许把它造出来（可达路径：`remove_from_slots=False` 之后再锁）。
+    s8 = Session()
+    s8.load_layout({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                    "operators": ["甲", "乙"]}]}, hours=1)
+    s8.set_detached(["甲"], remove_from_slots=False)   # 只进名单、不摘位置
+    err8 = ""
+    try:
+        s8.set_seat_lock(0, 0, 0)                      # 锁"甲"所在的那一位
+    except ValueError as exc:
+        err8 = str(exc)
+    check("上锁那一位的人已在名单里 ⇒ **也拒绝**（与 set_detached 的拒绝对称）",
+          "已在「不在基建」名单里" in err8, err8 or "（没有抛异常）")
+    check("拒绝之后台账没被写坏",
+          "manual" not in s8.schedule.shifts[0].facilities[0],
+          str(s8.schedule.shifts[0].facilities[0]))
+
     # —— 手动锁优先于**进驻事件**（用户裁决 Q-A=(a)：只换心情、不换位置）——
     #    入驻事件在 `restore_back=False` 时会顺手对调两人的位置，而它过去**绕过台账**
     #    ⇒ 手动钉住的人/位次会被它挪走。"手动锁＝第 1 层、永不被动"要没有例外。

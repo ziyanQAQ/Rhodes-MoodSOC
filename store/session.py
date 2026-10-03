@@ -961,6 +961,9 @@ class Session:
 
         ⚠️ 位次必须在**容量**内（越界抛 `ValueError`）；容量为 0 的设施（活动室）没有可锁的位。
         ⚠️ 与"改动布局"无关：本方法**不碰** `slots`/`operators` 的占位（谁坐在哪不变）。
+        ⚠️ **上锁那一位的人若已在「不在基建」名单里 ⇒ 拒绝**（与 `set_detached` 的拒绝对称）：
+        "既在名单、又坐在位上、还被锁住"是自相矛盾的状态，两边都不许把它造出来
+        （可达路径：`set_detached(names, remove_from_slots=False)` 之后再锁那一位）。
         """
         facs = self.facilities_of(shift_index)
         if not (0 <= facility_index < len(facs)):
@@ -969,6 +972,13 @@ class Session:
         cap = _capacity_of_dict(fac)
         if not (0 <= int(slot) < cap):
             raise ValueError(f"该设施没有第 {int(slot) + 1} 位（容量 {cap}）")
+        if locked:
+            seats = _seat_values(fac)
+            who = seats[int(slot)] if int(slot) < len(seats) else ""
+            if who and who in set(self.detached):
+                raise ValueError(
+                    f"无法上锁：{who} 已在「不在基建」名单里（第 {int(slot) + 1} 位）。"
+                    "请先把她移出名单，或先把这一位的人换掉。")
         _set_lock(fac, int(slot), bool(locked))
         facs[facility_index] = fac
         self.replace_facilities(shift_index, facs)
