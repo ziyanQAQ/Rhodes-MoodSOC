@@ -909,6 +909,8 @@ class Session:
             raise ValueError(f"第 {shift_index + 1} 班没有第 {facility_index + 1} 间房")
         names = [str(n) if n else "" for n in operators]
         fac = dict(facs[facility_index])
+        if manual:
+            self._reject_detached_seats(names, shift_index, facility_index)
         _write_seats(fac, names)
         if manual:
             # ⚠️ `touched=len(names)` ⇒ **清空即上锁**。只把"有名字的位次"记进台账的话，
@@ -941,12 +943,35 @@ class Session:
             while len(merged) <= i:
                 merged.append("")
             merged[i] = value
+        if manual:
+            self._reject_detached_seats(merged, shift_index, facility_index)
         _write_seats(fac, merged)
         if manual:
             _write_manual(fac, raw_slots=[i for i, n in enumerate(merged) if n],
                           raw_names=[n for n in merged if n], touched=len(slots))
         facs[facility_index] = fac
         self.replace_facilities(shift_index, facs)
+
+    def _reject_detached_seats(self, values: Sequence[str], shift_index: int,
+                               facility_index: int) -> None:
+        """**不许把「不在基建」名单里的人手动安排到在用位次上**。
+
+        否则"**既在名单、又坐在位上、还被锁住**"这个自相矛盾的状态就被造出来了 ——
+        与 `set_detached` / `set_seat_lock` 的拒绝是同一条口径（三处一起守住才会没有例外）。
+
+        ⚠️ **只在本入口要打手动标（`manual=True`）时校验**：`manual=False` 只是改布局，
+        而那份"名单 ∧ 在位"的状态是 `set_detached(..., remove_from_slots=False)` **明确允许**的
+        （API 文档里就这么写的），不该在别处被顺手禁掉。
+        """
+        wanted = set(self.detached)
+        hits = [(i, n) for i, n in enumerate(values) if n and n in wanted]
+        if not hits:
+            return
+        detail = "、".join(f"第 {i + 1} 位 {n}" for i, n in hits)
+        raise ValueError(
+            f"无法手动安排：{detail} 已在「不在基建」名单里"
+            f"（第 {shift_index + 1} 班 第 {facility_index + 1} 间房）。"
+            "请先把她移出名单（「不在基建」名单与「手动锁在基建内」不能同时成立）。")
 
     def set_seat_lock(self, shift_index: int, facility_index: int, slot: int,
                       locked: bool = True) -> None:

@@ -833,6 +833,24 @@ def test_detached_vs_lock():
           "名单优先" in (s2.loaded.summary() if s2.loaded else ""),
           s2.loaded.summary() if s2.loaded else "")
 
+    # ③ 同一族的第三条口径：**手动安排**（`set_slots` / `set_facility_slots`，`manual=True`）
+    #    也不许把名单里的人放到在用位次上 —— 三处一起守，"名单 ∧ 在位 ∧ 被锁"才真没入口。
+    s9 = Session()
+    s9.load_layout({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                    "operators": ["乙"]}]}, hours=1)
+    s9.set_detached(["甲"], remove_from_slots=False)
+    err9 = ""
+    try:
+        s9.set_slots(0, 0, ["甲", "乙"])
+    except ValueError as exc:
+        err9 = str(exc)
+    check("手动安排名单里的人 ⇒ **拒绝**（否则又造出「名单 ∧ 在位 ∧ 被锁」）",
+          "已在「不在基建」名单里" in err9, err9 or "（没有抛异常）")
+    s9.set_slots(0, 0, ["甲", "乙"], manual=False)
+    check("`manual=False` 时不拦（那份「名单 ∧ 在位」是 remove_from_slots=False 明确允许的）",
+          "manual" not in s9.schedule.shifts[0].facilities[0],
+          str(s9.schedule.shifts[0].facilities[0]))
+
 
 def test_facility_auto_name():
     print("设施**补名**（未命名设施 → `{类型标签}#{同类型序号}`；锁的稳定键靠它）")
