@@ -320,14 +320,52 @@ def op_set_slots(session: Session, args: dict) -> dict:
     """改某班次某间房的**进驻干员**（`operators: []` = 清空这间房）。
 
     `shift_index` / `facility_index` 都是 **1 基**（与界面上看到的顺序一致）。
+
+    `manual`（默认 `true`）：这次改动的**整段位次**要不要记进「手动台账」＝**上锁**
+    （自动入宿从此不占这些位次、不换这些人；被清空的位次**保持空着**）。
+    传 `manual: false` ＝"**我只改布局、不上锁**"：这一位仍然交给自动入宿调度。
+    ⚠️ 默认 `true` 是为了**不改变既有调用方的行为**；要"改布局"与"上锁"分开就用显式的
+    `set_seat_lock` / `clear_seat_locks`。
     """
     _require_session(session)
     _require(shift_index=args.get("shift_index"), facility_index=args.get("facility_index"))
     ops = args.get("operators")
     if ops is None:
         raise ValueError("缺少必填参数：operators（数组，可为空数组表示清空）")
-    session.set_slots(int(args["shift_index"]) - 1, int(args["facility_index"]) - 1, ops)
+    session.set_slots(int(args["shift_index"]) - 1, int(args["facility_index"]) - 1, ops,
+                      manual=bool(args.get("manual", True)))
     return session.describe()
+
+
+def op_set_seat_lock(session: Session, args: dict) -> dict:
+    """给**某班某房的某一位**单独上锁 / 解锁（**不动**这一位坐的是谁）。
+
+    参数 `shift_index` / `facility_index` / `slot` 都是 **1 基**（`slot` = 第几位）；
+    `locked` 默认 `true`。
+
+    · `locked=true`：该位次进手动台账 ⇒ 自动入宿既不占它、也不换里面的人；
+      **该位是空的，效果就是"保持空着"**。
+    · `locked=false`：把该位次摘掉，**并且**把这一位的人从"手动放的人"里一起去掉 ——
+      否则裁决点第 1 层会继续按名字护着她，用户会以为"解锁没生效"。
+    """
+    _require_session(session)
+    _require(shift_index=args.get("shift_index"), facility_index=args.get("facility_index"),
+             slot=args.get("slot"))
+    session.set_seat_lock(int(args["shift_index"]) - 1, int(args["facility_index"]) - 1,
+                          int(args["slot"]) - 1, bool(args.get("locked", True)))
+    return session.describe()
+
+
+def op_clear_seat_locks(session: Session, args: dict) -> dict:
+    """**全部解锁**（逃生门）：整份清掉手动台账，返回动过几个班次。
+
+    `shift_index` 缺省＝**这份排班的所有班次**（1 基）；传了就只清那一班。
+    它连 `names`（"这个人是我手动放的"）**一起清** —— 只清位次的话裁决点仍会按名字护着人。
+    """
+    _require_session(session)
+    si = args.get("shift_index")
+    n = session.clear_seat_locks(None if si is None else int(si) - 1)
+    return {"cleared_shifts": n}
 
 
 def op_set_room_level(session: Session, args: dict) -> dict:
@@ -872,6 +910,9 @@ OPERATIONS = {
     "set_timeline": op_set_timeline,
     "set_slots": op_set_slots,
     "set_room_level": op_set_room_level,
+    # 2026-10：显式的"上锁/解锁"（手动入宿与自动入宿解耦的唯一控制面）
+    "set_seat_lock": op_set_seat_lock,
+    "clear_seat_locks": op_clear_seat_locks,
     "set_moods": op_set_moods,
     "set_initial_moods": op_set_initial_moods,
     "set_mood_at": op_set_mood_at,

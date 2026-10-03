@@ -56,6 +56,9 @@ python -m api.cli --op load_schedule --args @layout.json --then '{"op":"moods"}'
 """
 from __future__ import annotations
 
-PROTOCOL_VERSION = 4
+#: 线协议版本。**4 → 5（2026-10）**：新增 `set_seat_lock` / `clear_seat_locks` 两个 op，
+#: 并给 `set_slots` 加了 `manual` 参数（信封形状没变 ⇒ 老调用方照旧可用，但**能力表变了**，
+#: 所以按项目先例升一号：v1.0→v1.1 加 op 时也是 3→4）。调用方用 `capabilities` 判断。
+PROTOCOL_VERSION = 5
 
 __all__ = ["PROTOCOL_VERSION"]
