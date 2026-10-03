@@ -152,6 +152,9 @@ APPLY_CALLBACK_OWNER = {
     "apply_batch": "布局",            # ⚠️ 实际三合一（布局+心情+名册），第 3 步拆开
     "apply_idle_to_dorm": "自动化",
     "apply_entry_event": "自动化",
+    # 2026-10：设置中心「闲置入宿」页 ③ 手动入宿编辑器的落地口（写的是布局 + 手动台账：
+    #          `Session.set_facility_slots` / `set_seat_lock`）⇒ 归「布局」
+    "apply_manual_dorm": "布局",
     "apply_start_clock": "时间轴",
     "apply_shift_hours": "时间轴",
 }

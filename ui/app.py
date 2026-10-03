@@ -1212,6 +1212,86 @@ class MoodSocApp(tk.Tk):
         """（旧入口，现等价于）打开设置中心的「闲置入宿」分区。"""
         return self.open_settings("idle")
 
+    def apply_manual_dorm(self, req: dict) -> str:
+        """**手动入宿编辑器**（设置中心「闲置入宿」页的 ③ 子面板）的落地口。
+
+        `req` ＝ `{"shifts": [班次下标…], "facility_index": 设施下标,
+                   "slot_names": {位次: 人名或 ""}?, "locks": {位次: True/False}?,
+                   "dorm_names": {设施下标: 显示名}?}`。
+
+        语义（工单 Q5=(i)）：**改动落到 `shifts` 里的每一个班次**（勾选＝编辑便利，数据格式不变）；
+        `facility_index` 是设施**下标**（写入口吃这个，`dorm_names` 只用于文案）。
+
+        写入口**只有** `Session.set_facility_slots`（放人 / 清空：`""` = 留空，**摆位即上锁**）
+        与 `Session.set_seat_lock`（只动锁）—— 不绕过它们自己改 dict。
+        返回一句**结果文案**（面板内那一行与状态栏都用它）；随后走**异步重算**。
+
+        ⚠️ `set_facility_slots` / `set_seat_lock` 对"名单里的人"会抛 `ValueError`（坑 27：
+        不许造出「不在基建 ∧ 在位 ∧ 被锁」）：这里**逐班逐格接住**，写不下的记进文案，
+        不让一次拒绝把整屏改动回滚成异常。
+        """
+        shifts = [int(i) for i in req.get("shifts") or ()]
+        if self.schedule is None or not shifts:
+            return "没有可写的班次（先导入排班并勾上至少一个班次）。"
+        fac_index = int(req.get("facility_index"))
+        names = {int(k): str(v) for k, v in (req.get("slot_names") or {}).items()}
+        locks = {int(k): bool(v) for k, v in (req.get("locks") or {}).items()}
+        room = (req.get("dorm_names") or {}).get(fac_index)
+        label = str(room or f"第 {fac_index + 1} 间")
+        if names or locks:
+            self._layout_sig = None            # 布局改了 → 看板的"未变则不刷"签名作废
+        done, refus = [], []
+        for i in shifts:
+            if not (0 <= i < len(self.schedule.shifts)):
+                continue
+            # —— ① 放人 / 清空：`set_facility_slots` 的 `slots` 是**按位次对齐的整段**
+            #    （`slots[0]` 就是第 1 位），所以未提到的位次必须按原值回填 ——
+            #    只传"改掉的那几个"会把名字写到第 1 位上（实测踩到）。
+            if names:
+                merged = self._manual_seats(shift=i, fac_index=fac_index,
+                                            changes=names)
+                try:
+                    self.session.set_facility_slots(i, fac_index, merged, manual=True)
+                    done.append(i)
+                except ValueError as exc:
+                    refus.append(f"第 {i + 1} 班 {exc}")
+            # —— ② 逐位上锁 / 解锁（只动锁，不动这一位坐的是谁）——
+            if locks:
+                hit = False
+                for slot, on in sorted(locks.items()):
+                    try:
+                        self.session.set_seat_lock(i, fac_index, slot, locked=on)
+                        hit = True
+                    except ValueError as exc:
+                        refus.append(f"第 {i + 1} 班 {exc}")
+                if hit:
+                    done.append(i)
+        self.recompute_async()                     # 与其它面板一致：编辑走异步重算
+        uniq = sorted(set(done))
+        n_cell = len(names) + len(locks)
+        head = (f"手动入宿：{label} 改了 {n_cell} 格，落到 "
+                + ("、".join(f"第 {i + 1} 班" for i in uniq) if uniq else "0 个班次"))
+        tail = ("；未落地：" + "；".join(refus)) if refus else ""
+        self._status_after_recalc = head + tail
+        return head + tail
+
+    def _manual_seats(self, shift: int, fac_index: int, changes: dict) -> list:
+        """把这次改动摊成 `set_facility_slots` 要的**按位次对齐的整段**。
+
+        `changes` ＝ `{位次: 人名或 ""}`：未提到的位次按**当前值**回填（`None`/`""` = 留空），
+        位次越界就补空槽。⚠️ 不能只传"改掉的那几个"：那个写入口的 `slots[0]` 就是第 1 位。
+        """
+        try:
+            facs = self.session.facilities_of(shift)
+            current = list(seat_values(facs[fac_index]))
+        except (IndexError, KeyError, TypeError):
+            current = []
+        while len(current) < (max(changes) + 1 if changes else 0):
+            current.append("")
+        for slot, name in changes.items():
+            current[int(slot)] = str(name or "")
+        return current
+
     def apply_idle_to_dorm(self, enabled: bool, entries: dict,
                            protected_slots: Optional[int] = None,
                            blacklist: Optional[Sequence[str]] = None):

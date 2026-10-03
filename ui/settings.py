@@ -46,6 +46,7 @@ from typing import Dict, List, Optional
 from . import theme
 from .batch import BatchPanel
 from .dialogs import EntryEventPanel, IdleToDormPanel, TimelinePanel
+from .schedule import all_operator_names      # 转发自 store.schedule（选人候选全表）
 from store.session import MAX_CYCLES
 
 # (分区键, 标题, 一句话说明)
@@ -409,11 +410,31 @@ class SettingsDialog(tk.Toplevel):
                                 groups_provider=app.idle_groups,
                                 protected_slots=app.idle_protected_slots(),
                                 blacklist=app.idle_blacklist(),
-                                all_names=app.idle_name_pool())
+                                all_names=app.idle_name_pool(),
+                                # —— ③ 手动入宿编辑器：只读数据源 + 唯一写入口 + 解锁的两件工具 ——
+                                state_provider=app.session.manual_dorm_editor_state,
+                                on_manual=app.apply_manual_dorm,
+                                locked_probe=self._shift_has_manual,
+                                operator_names=all_operator_names(app.schedule.operator_names()),
+                                session=app.session,
+                                on_after=app.recompute_async)
         # ⚠️ 重算是**异步**的（`app.recompute_async`）：面板拿到的那份 `groups` 是改动前的，
         #    真正的新表要等结果落地 —— 注册一个落地回调按新轨迹重建（弱引用，面板销毁即失效）。
         app.add_recalc_listener(panel.refresh_from_provider)
         return panel
+
+    def _shift_has_manual(self, shift_index: int) -> bool:
+        """这一班有没有**手动入宿台账**（「全部解锁」按钮据此决定亮不亮）。
+
+        ⚠️ 只读：`manual_dorm_editor_state` 里任一格的 `locked` 为真 ⇒ 这一班有台账
+        （判据与 `Session.set_seat_lock` / `Clear_seat_locks` 逐字同一份）。
+        """
+        try:
+            state = self.app.session.manual_dorm_editor_state(int(shift_index))
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return any(bool(seat.get("locked"))
+                   for dorm in state.get("dorms", ()) for seat in dorm.get("seats", ()))
 
     # ------------------------------------------------------------------ 杂务
     def _center(self, parent) -> None:

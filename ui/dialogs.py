@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from decimal import Decimal, InvalidOperation
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import List, Optional, Sequence
 
 from mood_soc import entry_target_kind
@@ -29,6 +29,10 @@ MOOD_MAX_TEXT = Decimal("24")
 
 # 表格行的上下留白（「闲置入宿」那一张分组表用）
 ROW_PAD = 1
+
+# 「闲置入宿」页逐次表的**最小可视高度**：上面的 ③ 手动入宿子面板也要占地方，
+# 所以这里给个下限（再小就只看得见两三行；面板仍可滚动）。
+MIN_TABLE_H = 190
 
 
 def parse_mood(text) -> Optional[Decimal]:
@@ -625,9 +629,9 @@ class IdleToDormMixin:
 
     | 层 | 谁 | 本面板管不管 |
     |---|---|---|
-    | ① 手动编辑 | 看板 /「干员与心情」把某人放进某个宿舍位次（写班次快照 + 手动台账） | **不管**（本面板只读地提示） |
+    | ① 手动编辑 | 看板 /「干员与心情」/ 本页的**③ 手动入宿**子面板把某人放进某个宿舍位次（写班次快照 + 手动台账） | **管**：`③ 手动入宿`（选班次 → 选宿舍 → 逐位选人 + `☑ 锁`） |
     | ② 自动入宿 | 竖向正序填空床 → 全满则取**心情最低**的候选，换出"锁定区外、心情 ≥ 她、心情最大"的住户 | 本面板显示它这一刻打算安排谁 |
-    | ③ 全局配置 | 总开关 / 锁定位置数 / 黑名单 / 逐人"不参与" | **本面板的全部控件** |
+    | ③ 全局配置 | 总开关 / 锁定位置数 / 黑名单 / 逐人"不参与" | ① ② 与 ④ 那张逐次表 |
 
     | 控件 | 落到引擎 |
     |---|---|
@@ -635,6 +639,7 @@ class IdleToDormMixin:
     | ② 锁定位置数 | `IdleToDormConfig.protected_slots`（按竖向正序锁前 N 个位置） |
     | ② 黑名单 | `IdleToDormConfig.blacklist`（永远不能**通过闲置入宿进宿舍**的人） |
     | 每行的「参与」 | `per_operator[(周期,班次,干员)].enabled` |
+    | ③ 手动入宿的每格 | `facilities[].slots` + `manual`（`set_facility_slots` / `set_seat_lock`） |
 
     **逐次表**按时间排（第 1 周期第 1 班 → …），**一个换班执行点一组**：真实班初一组，
     长班（> 12h）的每个**内部换班点**各一组（标题带 `（12h 内部换班）`）；组内只放那一刻
@@ -642,8 +647,9 @@ class IdleToDormMixin:
     或为什么没安排）。⚠️ **同班各执行点共用同一份逐人设置**：组里的 `(周期, 班次, 干员)`
     键相同 ⇒ 改任一组会同步影响同班其他执行点。
 
-    ⚠️ **手动入宿不在这里**（2026-10 解耦）：要在某一刻把某人放进某个位次，请用**看板**或
-    「干员与心情」里的位置列 —— 那写的是**布局本身**，自动入宿从此不占那些位次、不换那些人。
+    ⚠️ **手动入宿现在就在这一页**（**③ 手动入宿**子面板，2026-10）：选班次 → 选宿舍 →
+    逐位选人 + `☑ 锁`；「干员与心情」的位置列与看板仍是另一条入口（写的都是同一份台账）。
+    两者都**只写布局 + 手动台账**，自动入宿从此不占那些位次、不换那些人。
 
     ⚠️ 改动会**实时生效**：每次改动 / 改锁定数 / 改黑名单都会回调 `on_change(状态)` ——
     调用方（`ui.app`）把它套进模拟重算并返回**新的分组表**，本面板据此重建表格。
@@ -658,13 +664,21 @@ class IdleToDormMixin:
                         on_change=None, note: str = "", table_height="auto",
                         page_height: int = 0, groups_provider=None,
                         protected_slots: int = 5, blacklist: Sequence = (),
-                        all_names: Sequence = ()):
+                        all_names: Sequence = (), state_provider=None,
+                        on_manual=None, locked_probe=None, operator_names: Sequence = (),
+                        session=None, on_after=None):
         """把状态收好并建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
 
         `groups_provider`：无参可调用，返回**当前**分组表（设置中心传 `app.idle_groups`）。
         异步重算落地后由 `refresh_from_provider()` 用它取新表 —— 见那个方法。
         `protected_slots` / `blacklist`：全局口径的初值（来自 `Session`）。
         `all_names`：可以加入黑名单的干员名（下拉的候选池）。
+        `state_provider` / `on_manual` / `locked_probe` / `operator_names`：
+        **手动入宿编辑器**（④ 区）要的四样 ——
+        `state_provider(班次下标)` ← `Session.manual_dorm_editor_state`（只读数据源）；
+        `on_manual(请求)` ← `app.apply_manual_dorm`（唯一的写入口，返回一句结果文案）；
+        `locked_probe(班次下标)` → 这一班**有没有**手动台账（「全部解锁」用它决定按钮状态）；
+        `operator_names`：选人对话框的候选全表。
         """
         self.result = None
         # 表格高度：显式数字（独立对话框）或 "auto"（设置中心：吃内容区剩余高度）
@@ -685,21 +699,26 @@ class IdleToDormMixin:
         self._all_names = [str(n) for n in all_names]
         self.blacklist: List[str] = [str(n) for n in blacklist]
         self._protected_cache = max(0, int(protected_slots))
+        # —— 手动入宿编辑器（④ 区）的状态 ——
+        self._state_provider = state_provider
+        self._on_manual = on_manual
+        self._locked_probe = locked_probe
+        self._op_names = [str(n) for n in operator_names]
+        self._session = session                 # 「全部解锁」直调 `clear_seat_locks` 用
+        self._on_after = on_after               # 解锁之后让宿主办一次异步重算
+        self._room_names: dict = {}        # {班次下标: {设施下标: 宿舍显示名}}
+        self._slot_btns: dict = {}         # {(班次下标, 设施下标, 位次): 人名按钮}
+        self._slot_locks: dict = {}        # 同上 → (☑ 锁 BooleanVar, 用户动过的单元素标记)
+        self._has_manual = False           # 正在看的那一班有没有手动台账（「全部解锁」按钮用）
         pad = dict(padx=theme.PAD)
 
-        tk.Label(self, text="闲置入宿 = 在每个换班执行点，把【这一班没出现在任何设施、心情还没满】"
-                            "的干员安排进宿舍恢复（班初一次；班长 >12h 时班内 12h 整数倍再来一次）。",
-                 bg=theme.BG, fg=theme.TEXT, justify="left", wraplength=660,
-                 font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(anchor="w", **pad,
-                                                               pady=(theme.PAD, 2))
         tk.Label(self,
-                 text="规则（三层：**手动编辑 > 自动入宿 > 导入布局**）：候选按【心情从低到高】处理 ——"
-                      "① 竖向正序有空位就住进去（锁定区的空位也算）；② 全满 → 换出【锁定区外、"
-                      "心情 ≥ 她、心情最大】的那位，剩下的人都比她更满就不动。\n"
-                      "⚠️ 手动入宿**不在这一页**：要把某人放进某个位次，请用主界面的**看板**或"
-                      "「干员与心情」的位置列（那写的是布局本身）。加工站 / 训练室的人、副手、"
-                      "上班与在宿舍的人都**不是候选**。",
-                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=640,
+                 text="闲置入宿 = 每个换班执行点，把【这一班没出现在任何设施、心情还没满】的干员安排进"
+                      "宿舍恢复（班初一次；班长 >12h 时班内 12h 整数倍再来一次）。候选按【心情从低到高】"
+                      "处理 —— 有空位就竖向正序住进去（含锁定区的空位）；全满则换出【锁定区外、"
+                      "心情 ≥ 她、心情最大】的那位。加工站 / 训练室的人、副手、上班与在宿舍的人"
+                      "都**不是候选**。",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=700,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
                                                                 pady=(0, theme.GAP))
 
@@ -750,7 +769,9 @@ class IdleToDormMixin:
         self._widgets.append(self.black_list)
         self._refresh_blacklist()
 
-        tk.Label(self, text="③ 逐次设置（从早到晚）：每行只有「参与」可改 —— 取消勾选＝这一位"
+        self._build_manual_dorm()
+
+        tk.Label(self, text="④ 逐次设置（从早到晚）：每行只有「参与」可改 —— 取消勾选＝这一位"
                             "**这次不参与**闲置入宿（她既不会自己住进去、也不会被换出）。"
                             "「说明」列是**只读的引擎结果**：她会被安排进哪间宿舍的第几号位、"
                             "或者为什么这一班没安排她。",
@@ -765,6 +786,393 @@ class IdleToDormMixin:
                      ).pack(anchor="w", **pad)
         self._sync()
 
+    # ====================================================== ④ 手动入宿编辑器
+    def _build_manual_dorm(self) -> None:
+        """**手动入宿编辑器**（本页最靠上的一层：手动编辑 > 自动入宿 > 导入布局）。
+
+        形态：`③ 手动入宿` 一块 LabelFrame，四行 ——
+
+        | 行 | 控件 | 语义 |
+        |---|---|---|
+        | ① | 三个班次 `☑` + 「全选 / 全不选」 | **改动会落到所有勾选的班次**（编辑便利，数据格式不变） |
+        | ② | 「正在看」下拉 | 只决定**显示哪一班**的宿舍与位次（默认＝第一个勾中的班） |
+        | ③ | 宿舍下拉 + 「全部解锁」 | 宿舍按**设施下标**索引（写入口吃这个）；解锁要确认一次 |
+        | ④ | `第 N 位` ＋ `人名按钮` ＋ `☑ 锁` | 点人名开 `ask_operator`（含「清空该位置」）；`☑` 走 `set_seat_lock` |
+
+        ⚠️ `☑ 锁` 的初值来自 `manual_dorm_editor_state` 的 `locked`（**只读显示**）；
+        用户动过的那些格子记在 `_slot_locks[...][1]` 里，刷新时**不许被旧值盖回去**。
+        """
+        box = tk.LabelFrame(self, text="③ 手动入宿（手动编辑 > 自动入宿；改动落到勾选的班次）",
+                            bg=theme.BG, fg=theme.TEXT, bd=1, relief="groove",
+                            labelanchor="nw", font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        box.pack(fill="x", padx=theme.PAD, pady=(0, theme.GAP))
+
+        self.shift_pick: List[tk.BooleanVar] = []
+        # ⚠️ 班次表来自**只读数据源**（`manual_dorm_editor_state` 的 `shifts`），
+        #    不借 `EntryEventPanel._shift_labels`（那是另一个类的东西，本面板没有）。
+        self._manual_shifts: List[tuple] = []
+        self._view_var = tk.StringVar(value="0")
+        self.manual_notice = tk.Label(box, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
+                                      justify="left", wraplength=740,
+                                      font=(theme.FONT_FAMILY, theme.FS_SMALL))
+        if not self._manual_state(0).get("shifts"):
+            tk.Label(box, text="（还没有导入排班：导入后可以在这里逐位安排宿舍）",
+                     bg=theme.BG, fg=theme.MUTED,
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
+                                                                    pady=(4, 6))
+            self.manual_msg = self.manual_notice
+            self.manual_notice.pack(fill="x", padx=theme.GAP, pady=(2, 6))
+            return
+        labels = [str(label) for _i, label in self._manual_shifts]
+        self._view_var.set("0")
+        # —— ① 班次多选 + 「正在看」+ 宿舍 + 「全部解锁」都挤在**一行**（纵向空间很紧）——
+        row1 = tk.Frame(box, bg=theme.BG)
+        row1.pack(fill="x", padx=theme.GAP, pady=(4, 0))
+        tk.Label(row1, text="班次", bg=theme.BG, fg=theme.TEXT,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(0, 4))
+        for i, label in enumerate(labels):
+            var = tk.BooleanVar(value=True)          # 默认全勾："改动落到所有班次"
+            ttk.Checkbutton(row1, text=f"{i + 1}", variable=var,
+                            command=self._on_shift_pick).pack(side="left")
+            self.shift_pick.append(var)
+        ttk.Button(row1, text="全选", width=5,
+                   command=lambda: self._set_all_shift_pick(True)).pack(side="left", padx=(4, 0))
+        ttk.Button(row1, text="全不选", width=6,
+                   command=lambda: self._set_all_shift_pick(False)).pack(side="left", padx=(2, 4))
+        tk.Label(row1, text="正在看", bg=theme.BG, fg=theme.TEXT,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+        self.view_combo = ttk.Combobox(row1, textvariable=self._view_var, state="readonly",
+                                       width=15, values=[labels[0]])
+        self.view_combo.pack(side="left", padx=(2, 6))
+        self.view_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_view_pick())
+        tk.Label(row1, text="宿舍", bg=theme.BG, fg=theme.TEXT,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(0, 4))
+        self.dorm_var = tk.StringVar()
+        self.dorm_combo = ttk.Combobox(row1, textvariable=self.dorm_var, state="readonly",
+                                       width=14, values=[])
+        self.dorm_combo.pack(side="left")
+        self.dorm_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_dorm_pick())
+        self.unlock_btn = ttk.Button(row1, text="全部解锁…", width=10,
+                                     command=self._clear_locks)
+        self.unlock_btn.pack(side="left", padx=(6, 0))
+
+        # —— ② 提示行（「改动落到哪些班次」+ 口径说明，**同一行**）——
+        # ⚠️ `set_facility_slots(manual=True)` 锁的是**传进来的整段位次**（`touched=len(slots)`），
+        #    所以放一个人，**整间宿舍的 ☑ 都会点亮** —— 这是已批准的口径（「摆位即上锁」），
+        #    界面必须把后果固定写出来（不管提示行说什么它都在），并给出怎么交还。
+        self.manual_notice.pack(fill="x", padx=theme.GAP, pady=(2, 4))
+        self._MANUAL_CAVEAT = ("改动过的宿舍整间归手动（☑ 全亮）；取消某几位的 ☑ = 把那几位"
+                               "交还自动入宿（人留在原位、可被换出）。")
+
+        self.slots_frame = tk.Frame(box, bg=theme.BG)
+        self.slots_frame.pack(fill="x", padx=theme.GAP, pady=(4, 6))
+        self.manual_msg = self.manual_notice
+        self._refresh_manual_state()
+        self._build_slots()
+
+    def _manual_state(self, shift_index: int) -> dict:
+        """取某一班的只读编辑数据（`manual_dorm_editor_state`）；没接数据源时给空壳。
+
+        ⚠️ 顺手把顶层 `shifts`（班次表）填进 `self._manual_shifts` —— 它是这份只读数据的
+        一部分，**不要**去借别的面板的 `_shift_labels`（曾 AttributeError）。
+        """
+        if self._state_provider is None:
+            return {"shift": int(shift_index), "dorms": [], "shifts": []}
+        state = self._state_provider(int(shift_index))
+        if state.get("shifts"):
+            self._manual_shifts = list(state["shifts"])
+        return state
+
+    def _checked_shifts(self) -> List[int]:
+        """勾上的班次下标（写入口的 `shift_index` 列表）。"""
+        return [i for i, v in enumerate(self.shift_pick) if bool(v.get())]
+
+    def _view_shift(self) -> int:
+        """**正在看**的那一班（下拉值的下标；越界/没勾就退回第一个勾中的班）。"""
+        try:
+            i = int(self._view_var.get())
+        except (TypeError, ValueError):
+            i = 0
+        return min(max(i, 0), max(0, len(self.shift_pick) - 1))
+
+    def _current_dorm(self):
+        """当前显示的那间宿舍的编辑数据（`dorm_var` 里存的是**设施下标**）。"""
+        state = self._manual_state(self._view_shift())
+        try:
+            want = int(self.dorm_var.get())
+        except (TypeError, ValueError):
+            want = -1
+        for d in state.get("dorms", []):
+            if int(d["index"]) == want:
+                return d
+        return None
+
+    def _on_shift_pick(self) -> None:
+        """勾/取消一个班次：刷新「正在看」下拉的候选 + 再刷一次显示与提示。"""
+        self._sync_view_choices()
+        self._refresh_manual_state()
+        self._build_slots()
+        self._emit_manual(None)
+
+    def _set_all_shift_pick(self, value: bool) -> None:
+        """「全选 / 全不选」（样板：`EntryEventPanel._set_all_shifts`）。"""
+        for var in self.shift_pick:
+            var.set(bool(value))
+        self._on_shift_pick()
+
+    def _sync_view_choices(self) -> None:
+        """「正在看」下拉的候选＝**勾上的**班次；当前值不在其中就退回第一个勾中的班。"""
+        labels = [str(label) for _i, label in self._manual_shifts]
+        checked = self._checked_shifts()
+        self.view_combo.configure(values=[labels[i] for i in checked if i < len(labels)])
+        if self._view_shift() not in checked:
+            self._view_var.set(str(checked[0] if checked else 0))
+
+    def _on_view_pick(self) -> None:
+        """换「正在看」的班次：只是**显示**换一班（写入口仍落在所有勾选的班上）。"""
+        self._refresh_manual_state()
+        self._build_slots()
+        self._emit_manual(None)
+
+    def _on_dorm_pick(self) -> None:
+        """换宿舍：重画这一间的位次（顺带把这间的显示名记进 `_room_names`）。"""
+        self._remember_room_names()
+        self._build_slots()
+
+    # ------------------------------------------------------------ 显示 / 刷新
+    def _remember_room_names(self) -> None:
+        """把当前这一班的宿舍显示名记下来（写入口只吃设施下标，显示要名字）。"""
+        state = self._manual_state(self._view_shift())
+        self._room_names[int(state.get("shift", self._view_shift()))] = {
+            int(d["index"]): str(d["name"]) for d in state.get("dorms", [])}
+
+    def _room_label(self, shift_index: int, facility_index: int) -> str:
+        """宿舍显示名；没记到就退回 `宿舍（第 N 间）`。"""
+        known = self._room_names.get(int(shift_index), {})
+        return known.get(int(facility_index)) or f"宿舍（第 {facility_index + 1} 间）"
+
+    def _refresh_manual_state(self, force: bool = False) -> bool:
+        """按 `manual_dorm_editor_state` 刷新下拉与 `☑ 锁`（**用户动过的格子不碰**）。
+
+        返回有没有变化。`force=False` 时：**面板还有没落地的编辑就直接返回** ——
+        异步重算落地后的刷新不能把用户刚写进去的值盖回旧的。
+        """
+        if not self.shift_pick:
+            return False
+        if not force and self._job is not None:
+            return False
+        self._sync_view_choices()
+        self._remember_room_names()
+        dorms = self._manual_state(self._view_shift()).get("dorms", [])
+        values = [str(d["index"]) for d in dorms]
+        labels = [f"{d['name']}（{d['capacity']} 位）" for d in dorms]
+        self._dorm_labels = labels
+        self.dorm_combo.configure(values=labels)
+        changed = False
+        if self.dorm_var.get() not in values:
+            self.dorm_var.set(values[0] if values else "")
+        self._has_manual = any(bool(s.get("locked"))
+                              for d in dorms for s in d.get("seats", []))
+        for d in dorms:
+            for seat in d.get("seats", []):
+                key = (self._view_shift(), int(d["index"]), int(seat["slot"]))
+                shown = self._slot_locks.get(key)
+                if shown is not None and not shown[1][0]:      # 用户动过的格子不动
+                    if bool(shown[0].get()) != bool(seat.get("locked")):
+                        shown[0].set(bool(seat.get("locked")))
+                        changed = True
+                self._room_names.setdefault(self._view_shift(), {})[
+                    int(d["index"])] = str(d["name"])
+        return changed
+
+    def _notice_text(self, message=None) -> str:
+        """提示行 = 「改动落到哪些班次」＋ 可选的即时反馈 ＋ **固定口径说明**（永远都在）。"""
+        if not self.shift_pick:
+            return ""
+        all_n = len(self.shift_pick)
+        chosen = self._checked_shifts()
+        if not chosen:
+            head = "⚠ 一个班次都没勾：改动无处落地，请先勾上至少一个班次。"
+        elif len(chosen) == all_n:
+            head = f"改动落到**全部 {all_n} 个班次**；「正在看」只决定显示哪一班。"
+        else:
+            which = "、".join(f"第 {i + 1} 班" for i in chosen)
+            head = f"改动落到勾选的 **{len(chosen)} 个班次**（{which}）。"
+        if message:
+            head = f"{head}　{message}"
+        return f"{head}　{self._MANUAL_CAVEAT}"
+
+    def _set_manual_msg(self, text: str) -> None:
+        """面板内那一行即时反馈（状态栏那句由 `app.apply_manual_dorm` 负责）。"""
+        try:
+            self.manual_msg.configure(text=self._notice_text(text))
+        except tk.TclError:
+            pass
+
+    def _emit_manual(self, message) -> None:
+        """刷新「改动落到勾选的 N 个班次」那一行 + 解锁按钮状态（+ 可选的即时反馈）。"""
+        if not self.shift_pick:
+            return
+        self.manual_notice.configure(text=self._notice_text(message))
+        chosen = self._checked_shifts()
+        unlocked = bool(self._has_manual or any(
+            (self._locked_probe(i) if self._locked_probe is not None else False) for i in chosen))
+        try:
+            self.unlock_btn.state(["!disabled"] if unlocked else ["disabled"])
+        except (tk.TclError, AttributeError):
+            self.unlock_btn.configure(state="normal" if unlocked else "disabled")
+        if message is not None:
+            self._set_manual_msg(message)
+
+    # ------------------------------------------------------------ 位次与锁
+    #: 逐位控件的每行格数：宿舍容量 5 ⇒ **一行放得下**（纵向空间要留给逐次表）
+    SLOT_COLS = 5
+
+    def _build_slots(self) -> None:
+        """重建当前宿舍的逐位控件：每格＝`第 N 位` ＋ `人名按钮` ＋ `☑ 锁`。"""
+        if not self.shift_pick:
+            return
+        for w in self.slots_frame.winfo_children():
+            w.destroy()
+        self._slot_btns = {}
+        self._slot_locks = {}
+        shift = self._view_shift()
+        dorm = self._current_dorm()
+        if dorm is None:
+            tk.Label(self.slots_frame, text="（这一班没有宿舍）", bg=theme.BG, fg=theme.MUTED,
+                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).grid(row=0, column=0, sticky="w")
+            self._emit_manual(None)
+            return
+        fac = int(dorm["index"])
+        seats = list(dorm.get("seats", []))
+        for i, seat in enumerate(seats):
+            slot = int(seat["slot"])
+            cell = tk.Frame(self.slots_frame, bg=theme.BG)
+            cell.grid(row=i // self.SLOT_COLS, column=i % self.SLOT_COLS, sticky="ew",
+                      padx=(0, 2), pady=1)
+            tk.Label(cell, text=f"第 {slot + 1} 位", bg=theme.BG, fg=theme.MUTED, width=4,
+                     anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+            btn = ttk.Button(cell, text=seat.get("name") or "（空）", width=6,
+                             command=lambda b=fac, s=slot: self._pick_slot(b, s))
+            btn.pack(side="left", padx=(1, 1))
+            var = tk.BooleanVar(value=bool(seat.get("locked")))
+            dirty = [False]              # 用户动过这一格没有（刷新时不许被旧值盖回去）
+            ttk.Checkbutton(cell, text="锁", variable=var,
+                            command=lambda k=(shift, fac, slot), d=dirty:
+                            self._on_seat_lock(k, d)).pack(side="left")
+            key = (shift, fac, slot)
+            self._slot_btns[key] = btn
+            self._slot_locks[key] = (var, dirty)
+        for col in range(self.SLOT_COLS):
+            self.slots_frame.columnconfigure(col, weight=1)
+        self._emit_manual(None)
+
+    def _set_slot_button(self, key, name: str) -> None:
+        """把某一格的人名按钮文字刷成 `name`（空 → `（空）`）。"""
+        btn = self._slot_btns.get(key)
+        if btn is None:
+            return
+        try:
+            btn.configure(text=name or "（空）")
+        except tk.TclError:
+            pass
+
+    def _pick_slot(self, facility_index: int, slot: int) -> None:
+        """点某一格的人名按钮 → `ask_operator`（`""` = 清空；`None` = 取消）。"""
+        shift = self._view_shift()
+        dorm = self._current_dorm()
+        current = ""
+        if dorm is not None:
+            for seat in dorm.get("seats", []):
+                if int(seat["slot"]) == int(slot):
+                    current = str(seat.get("name") or "")
+                    break
+        picked = ask_operator(self, self._op_names, current,
+                              title=f"手动入宿 · 第 {shift + 1} 班 "
+                                    f"{self._room_label(shift, facility_index)} 第 {slot + 1} 位")
+        self._write_slot(facility_index, slot, picked)
+
+    def _write_slot(self, facility_index: int, slot: int, picked) -> None:
+        """把选人结果交给写入口（`None` = 取消，什么都不做）。"""
+        if picked is None:
+            return
+        name = str(picked)
+        msg = self._request({"facility_index": int(facility_index),
+                             "slot_names": {int(slot): name}}, quiet=True)
+        key = (self._view_shift(), int(facility_index), int(slot))
+        if key in self._slot_btns:
+            self._set_slot_button(key, name)
+        if self._job is None:
+            self._set_manual_msg(msg)
+        self._refresh_manual_state()
+
+    def _on_seat_lock(self, key, dirty) -> None:
+        """勾/取消某一格的 `☑ 锁` → `set_seat_lock`；然后刷新解锁按钮状态。"""
+        dirty[0] = True
+        shift, fac, slot = key
+        locked = bool(self._slot_locks[key][0].get())
+        self._request({"shifts": [shift], "facility_index": fac,
+                       "locks": {slot: locked}}, quiet=True)
+        self._emit_manual(None)
+
+    def _clear_locks(self) -> None:
+        """「全部解锁…」：**问一次**（会连"这个人是我手动放的"一起清），再调 `clear_seat_locks`。
+
+        ⚠️ 勾了几个班次就清几个班次（只勾一个时走 `clear_seat_locks(shift_index)`）。
+        """
+        chosen = self._checked_shifts()
+        if not chosen:
+            messagebox.showinfo("全部解锁", "一个班次都没勾：请先勾上要解锁的班次。",
+                                parent=self.winfo_toplevel())
+            return
+        which = "、".join(f"第 {i + 1} 班" for i in chosen)
+        if not messagebox.askyesno(
+                "全部解锁",
+                f"要清掉【{which}】的**全部手动入宿台账**吗？\n\n"
+                "· 被 `☑ 锁` 钉住的位次会一起解锁，整间房交还给自动入宿；\n"
+                "· **连“这个人是我手动放的”也一起清**（台账里的 `names` 一并作废）——"
+                "那些位次上的人从此可被自动入宿换出；\n"
+                "· 位次上的**人名本身不动**（布局照旧），只是不再被人为钉住；\n"
+                "· 这一操作不可撤销（要反悔只能重新逐位安排）。",
+                parent=self.winfo_toplevel()):
+            return
+        session = self._session
+        if session is None:
+            return
+        touched = session.clear_seat_locks(None if len(chosen) > 1 else chosen[0])
+        if self._on_after is not None:
+            self._on_after()
+        msg = (f"已清掉 {touched} 个班次的手动台账（{len(chosen)} 个班次已解锁）。"
+               if touched else "这些班次本来就没有手动台账。")
+        self._refresh_manual_state(force=True)
+        self._build_slots()
+        self._emit_manual(msg)
+
+    # ------------------------------------------------------------ 写入口
+    def _request(self, req: dict, quiet: bool = False) -> str:
+        """把一次改动交给写入口，返回一句结果文案。
+
+        `req` 支持三种改法（可同时给，同一格以 `locks` 为准）：
+        `slot_names: {位次: 人名或 ""}`、`locks: {位次: True/False}`；都不给 `slot_names`/`locks`
+        而只给 `shifts` 时＝只按 `shifts` 落（当前实现不用这一支）。
+        `quiet=True` 时**不**刷新「改动落到几个班次」那行（调用方紧接着会刷）。
+        """
+        if not quiet:
+            self._emit_manual(None)
+        chosen = self._checked_shifts()
+        if not chosen:
+            return "⚠ 一个班次都没勾：改动无处落地。"
+        if self._on_manual is None:
+            return "（手动入宿编辑器没有接上写入口）"
+        payload = {"shifts": chosen, "facility_index": int(req["facility_index"])}
+        if req.get("slot_names"):
+            payload["slot_names"] = {int(k): str(v) for k, v in req["slot_names"].items()}
+        if req.get("locks"):
+            payload["locks"] = {int(k): bool(v) for k, v in req["locks"].items()}
+        if "dorm_names" in req:
+            payload["dorm_names"] = dict(req["dorm_names"])
+        return str(self._on_manual(payload) or "")
+
     def _resolve_table_height(self) -> int:
         """表格可视高度：没给就用**内容区剩余**（上面那些说明文字先量一遍）。
 
@@ -775,8 +1183,8 @@ class IdleToDormMixin:
             return self._table_h
         self.update_idletasks()
         used = sum(w.winfo_reqheight() for w in self.winfo_children())
-        # 表格之后还有一行说明（约 45px，wraplength 会折行）与内边距 → 留 96px
-        return max(220, self._page_h - used - 96)
+        # 表格之后还有一行说明（约 45px，wraplength 会折行）与内边距 → 留 82px
+        return max(MIN_TABLE_H, self._page_h - used - 82)
 
     # ------------------------------------------------------------ 表格
     def _build_table(self) -> None:
@@ -798,10 +1206,10 @@ class IdleToDormMixin:
         self._fill_table()
         self.vs.refresh()          # 行建完 → 立刻重算滚动区间（别等几何事件）
         tk.Label(self, text="「说明」列是引擎在那一刻**实际做的安排**（她进了哪间宿舍的第几号位、"
-                            "与谁互换、或者为什么没安排）。要手动指定位置 / 点名换人，请用主界面的"
-                            "**看板**或「干员与心情」的位置列 —— 那写的是布局本身（手动编辑层，"
+                            "与谁互换、或者为什么没安排）。要手动指定位置，用上面的 **③ 手动入宿**"
+                            "（或「干员与心情」的位置列 / 看板）—— 那写的是布局本身（手动编辑层，"
                             "优先级高于自动入宿）。",
-                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=640, anchor="w",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=700, anchor="w",
                  padx=theme.PAD).pack(anchor="w", pady=(2, 0))
 
     def _fill_table(self) -> None:
@@ -976,12 +1384,25 @@ class IdleToDormMixin:
 
         ⚠️ 它必须是绑定方法：`app.add_recalc_listener` 存的是 `weakref.WeakMethod`，
         面板销毁后回调自动失效；lambda 不行（会被立刻回收，而且强引用会吊住控件）。
+
+        ③ 手动入宿那块也在这里跟着刷新（锁态 / 人名的**只读显示**），
+        但**用户刚动过的格子不被覆盖**（`_refresh_manual_state` 里的 dirty 标记）。
         """
         if self._groups_provider is not None:
             self.refresh_groups(self._groups_provider())
+        # ⚠️ **逐位那几行要整块重建**：`set_facility_slots(manual=True)` 锁的是**整段位次**
+        #    （放一个人 ⇒ 同房间其它格子的 ☑ 也会亮起来）。只"改 var 的值"不重建的话，
+        #    界面上那几格的 ☑ 会停在旧样子（用户看到的就是"我改的这一位锁了、别的没锁"）。
+        if self.shift_pick and self.winfo_exists():
+            self._refresh_manual_state(force=True)
+            self._build_slots()
 
     def has_pending_edit(self) -> bool:
-        """面板有没有"还在防抖窗口里"的改动？（`app` 的异步重算据此决定"先别落地"）。"""
+        """面板有没有"还在防抖窗口里"的改动？（`app` 的异步重算据此决定"先别落地"）。
+
+        ⚠️ 手动入宿的改动**不走防抖**（一次点选就是一次写），所以这里只看逐次表那个任务；
+        但只要有任务在等，`_refresh_manual_state` 也会跟着推迟（别拿旧值盖用户刚写的格子）。
+        """
         return self._job is not None
 
     def _sync(self) -> None:
@@ -1020,13 +1441,18 @@ class IdleToDormPanel(tk.Frame, IdleToDormMixin):
                  on_change=None, note: str = "", table_height="auto",
                  page_height: int = 0, groups_provider=None,
                  protected_slots: int = 5, blacklist: Sequence = (),
-                 all_names: Sequence = ()):
+                 all_names: Sequence = (), state_provider=None, on_manual=None,
+                 locked_probe=None, operator_names: Sequence = (), session=None,
+                 on_after=None):
         super().__init__(master, bg=theme.BG)
         self._init_idle_body(master, enabled, groups, on_change=on_change, note=note,
                              table_height=table_height, page_height=page_height,
                              groups_provider=groups_provider,
                              protected_slots=protected_slots, blacklist=blacklist,
-                             all_names=all_names)
+                             all_names=all_names, state_provider=state_provider,
+                             on_manual=on_manual, locked_probe=locked_probe,
+                             operator_names=operator_names, session=session,
+                             on_after=on_after)
 
     def destroy(self) -> None:
         """销毁时取消还没跑的重建任务（否则会对着已销毁的控件报 invalid command name）。"""
