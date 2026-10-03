@@ -1013,6 +1013,41 @@ class Session:
             self.recompute()
         return touched
 
+    def manual_dorm_editor_state(self, shift_index: int) -> dict:
+        """「手动入宿」编辑器要的**只读**数据：宿舍 × 位次（谁在、锁没锁）。
+
+        → `{"shift": 下标, "label": 班次名, "shifts": [(下标, 标签), …],
+            "dorms": [{"index": 设施下标, "name": 显示名, "capacity": 容量,
+                       "seats": [{"slot": 0 基, "name": 人名或空串, "locked": bool}, …]}, …]}`
+
+        谁在用：设置中心「闲置入宿」页的**手动入宿**子面板（选班次 → 选宿舍 → 逐格选人 + ☑ 锁）。
+        ⚠️ `locked` 的判据与 `rules._seat_verdict` 第 1 层**逐字一致**（位次被钉 **或** 人被钉）；
+        `name` 是**补名之后**的 `display_name`（如 `宿舍#1`）。
+        """
+        if self.schedule is None:
+            return {"shift": 0, "label": "", "shifts": [], "dorms": []}
+        n = len(self.schedule.shifts)
+        i = min(max(int(shift_index), 0), n - 1)
+        shift = self.schedule.shifts[i]
+        dorms: List[dict] = []
+        for fi, fac in enumerate(shift.world.facilities):
+            if fac.ftype != FacilityType.DORMITORY:
+                continue
+            led = read_manual(fac)
+            mapping = fac.slot_map()
+            seats: List[dict] = []
+            for slot in range(int(fac.capacity)):
+                op = mapping.get(slot)
+                who = op.name if op is not None else ""
+                seats.append({"slot": slot, "name": who,
+                              "locked": bool(led.pins_slot(slot)
+                                             or (who and led.pins_name(who)))})
+            dorms.append({"index": fi, "name": fac.display_name,
+                          "capacity": int(fac.capacity), "seats": seats})
+        return {"shift": i, "label": shift.label,
+                "shifts": [(k, s.label) for k, s in enumerate(self.schedule.shifts)],
+                "dorms": dorms}
+
     def locked_seats_of(self, name: str) -> List[Tuple[int, int, str, int]]:
         """某人被**手动锁住**的位置 → `[(班次下标 0 基, 设施下标, 设施显示名, 位次 0 基), …]`。
 

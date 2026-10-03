@@ -717,6 +717,29 @@ def test_seat_lock_primitives():
           "manual" not in s8.schedule.shifts[0].facilities[0],
           str(s8.schedule.shifts[0].facilities[0]))
 
+
+def test_manual_dorm_editor_state():
+    print("「手动入宿」编辑器的只读数据（宿舍 × 位次：谁在、锁没锁）")
+    from store.session import Session
+
+    s = Session()
+    s.load_layout({"facilities": [
+        {"type": "宿舍", "level": 1, "capacity": 5, "operators": ["甲", "乙"]},
+        {"type": "制造站", "level": 3, "operators": ["丙"]}]}, hours=1)
+    s.set_seat_lock(0, 0, 2)                     # 锁第 3 位（空位）⇒ 应当"保持空着"
+    st = s.manual_dorm_editor_state(0)
+    check("只列宿舍（制造站不进编辑器）",
+          [d["name"] for d in st["dorms"]] == ["宿舍#1"],
+          str([d["name"] for d in st["dorms"]]))
+    seats = st["dorms"][0]["seats"]
+    check("逐格给出人名（空槽是空串）",
+          [x["name"] for x in seats] == ["甲", "乙", "", "", ""], str(seats))
+    check("锁标记与裁决点同口径（手动锁住的**空位**也标 locked）",
+          [x["locked"] for x in seats] == [False, False, True, False, False],
+          str([x["locked"] for x in seats]))
+    check("同时给出班次清单（编辑器要按班次切换）",
+          [k for k, _label in st["shifts"]] == [0], str(st["shifts"]))
+
     # —— 手动锁优先于**进驻事件**（用户裁决 Q-A=(a)：只换心情、不换位置）——
     #    入驻事件在 `restore_back=False` 时会顺手对调两人的位置，而它过去**绕过台账**
     #    ⇒ 手动钉住的人/位次会被它挪走。"手动锁＝第 1 层、永不被动"要没有例外。
