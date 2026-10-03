@@ -91,6 +91,8 @@ SESSION_METHOD_OWNER = {
     # —— 布局 ——
     "set_slots": "布局", "set_facility_slots": "布局", "set_room_level": "布局",
     "replace_facilities": "布局", "facilities_of": "布局",
+    # 2026-10：显式上锁 / 解锁（只改 `manual` 台账，不动占位）
+    "set_seat_lock": "布局", "clear_seat_locks": "布局", "locked_seats_of": "布局",
     # —— 心情 ——
     "set_initial_mood": "心情", "set_initial_moods": "心情", "set_mood_at": "心情",
     "clear_mood_events": "心情", "restore_imported_moods": "心情",

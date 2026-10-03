@@ -640,6 +640,56 @@ def test_session_write_paths():
           f"next_open_slot={s2.schedule.shifts[0].world.facilities[0].next_open_slot()}")
 
 
+def test_seat_lock_primitives():
+    print("显式上锁 / 解锁（逐位 + 全部解锁）")
+    from store.session import Session
+
+    s = Session()
+    s.load_data({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                 "operators": ["甲", "乙"]}]})
+    s.idle_to_dorm = False
+    s.recompute()
+
+    def world():
+        return s.schedule.shifts[0].world.facilities[0]
+
+    def raw():
+        return s.schedule.shifts[0].facilities[0]
+
+    check("起始：下一个空位是第 3 位", world().next_open_slot() == 2,
+          str(world().next_open_slot()))
+
+    s.set_seat_lock(0, 0, 2)                       # 锁一个**空位**
+    check("锁一个空位 ⇒ 位次进台账、不写人名",
+          raw().get("manual") == {"slots": [2], "names": []}, str(raw().get("manual")))
+    check("锁上之后它不再算可入住（下一个空位跳到第 4 位）",
+          world().next_open_slot() == 3, str(world().next_open_slot()))
+
+    s.set_seat_lock(0, 0, 2, locked=False)
+    check("解锁那个空位 ⇒ 空台账不留痕（`manual` 键整份消失）",
+          "manual" not in raw(), str(raw()))
+    check("又回到第 3 位可入住", world().next_open_slot() == 2,
+          str(world().next_open_slot()))
+
+    s.set_slots(0, 0, ["甲", "乙", "丙"])           # 手动放人 ⇒ 位次 0/1/2 全进锁
+    s.set_seat_lock(0, 0, 1, locked=False)         # 再解锁第 2 位（"乙" 那一格）
+    check("解锁**有人的**位次 ⇒ 位次与那个人名一起摘掉（只摘位次会被 pins_name 抵消）",
+          raw().get("manual") == {"slots": [0, 2], "names": ["丙", "甲"]},
+          str(raw().get("manual")))
+    check("被解锁的人不再受保护（裁决回到 swappable）",
+          _seat_verdict(world(), 1)[0] == SEAT_SWAPPABLE,
+          str(_seat_verdict(world(), 1)))
+
+    check("查某人被锁在哪：丙 在 第 1 班/第 1 间/第 3 位",
+          s.locked_seats_of("丙") == [(0, 0, "宿舍", 2)], str(s.locked_seats_of("丙")))
+    check("乙 已被解锁 ⇒ 查不到", s.locked_seats_of("乙") == [],
+          str(s.locked_seats_of("乙")))
+
+    n = s.clear_seat_locks()
+    check("全部解锁 ⇒ 动过 1 个班次、台账清空",
+          n == 1 and "manual" not in raw(), f"n={n} fac={raw()}")
+
+
 def test_capacity_shrink_keeps_people():
     print("容量变小时：只丢越界的**空位**与标记，住着人的格子保留（交给自检报超容量）")
     from store.session import Session

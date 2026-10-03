@@ -864,6 +864,81 @@ class Session:
         facs[facility_index] = fac
         self.replace_facilities(shift_index, facs)
 
+    def set_seat_lock(self, shift_index: int, facility_index: int, slot: int,
+                      locked: bool = True) -> None:
+        """给某个班次某间房的**某一位**单独上锁 / 解锁（**不动**这一位坐的是谁）。
+
+        这是「手动入宿」里**唯一只改锁、不改布局**的入口 —— 界面上那个 ☑ 走它。
+
+        · `locked=True`（上锁）：该位次进手动台账的 `slots` ⇒ 自动入宿**既不占它、也不换
+          里面的人**；若该位是空的，效果就是"这一格**保持空着**"。
+        · `locked=False`（解锁）：把该位次从 `slots` 摘掉，**并且**把这一位的人从 `names`
+          摘掉（否则裁决点第 1 层会继续按"这个人被钉住"把她护着，解锁看起来没生效）。
+
+        ⚠️ 位次必须在**容量**内（越界抛 `ValueError`）；容量为 0 的设施（活动室）没有可锁的位。
+        ⚠️ 与"改动布局"无关：本方法**不碰** `slots`/`operators` 的占位（谁坐在哪不变）。
+        """
+        facs = self.facilities_of(shift_index)
+        if not (0 <= facility_index < len(facs)):
+            raise ValueError(f"第 {shift_index + 1} 班没有第 {facility_index + 1} 间房")
+        fac = dict(facs[facility_index])
+        cap = _capacity_of_dict(fac)
+        if not (0 <= int(slot) < cap):
+            raise ValueError(f"该设施没有第 {int(slot) + 1} 位（容量 {cap}）")
+        _set_lock(fac, int(slot), bool(locked))
+        facs[facility_index] = fac
+        self.replace_facilities(shift_index, facs)
+
+    def clear_seat_locks(self, shift_index: Optional[int] = None) -> int:
+        """**全部解锁**（逃生门）：整份清掉手动台账。返回动过几个班次。
+
+        缺省＝**这份排班的所有班次**；传了 `shift_index` 就只清那一班。
+        用途很具体："我导入了一份带锁的排班，想把它**全部交还**给自动入宿"。
+
+        ⚠️ 它连 `names`（"这个人是我手动放的"）**一起清** —— 只清 `slots` 的话，
+        `_seat_verdict` 第 1 层仍会按 `pins_name` 把人钉住，用户会以为"解锁失败了"。
+        """
+        if self.schedule is None:
+            return 0
+        n = len(self.schedule.shifts)
+        wanted = list(range(n)) if shift_index is None else [int(shift_index)]
+        touched = 0
+        for i in wanted:
+            if not (0 <= i < n):
+                continue
+            facs = self.facilities_of(i)
+            hit = False
+            for f in facs:
+                if f.get("manual"):
+                    f.pop("manual", None)
+                    hit = True
+            if hit:
+                self.schedule = self.schedule.replaced_shift(i, facs)
+                touched += 1
+        if touched:
+            self.recompute()
+        return touched
+
+    def locked_seats_of(self, name: str) -> List[Tuple[int, int, str, int]]:
+        """某人被**手动锁住**的位置 → `[(班次下标 0 基, 设施下标, 设施显示名, 位次 0 基), …]`。
+
+        判据与 `rules._seat_verdict` 的第 1 层**逐字一致**：她所在的位次被钉住
+        （`ManualLedger.pins_slot`）**或**她的名字被钉住（`pins_name`）。空表 = 她没被锁在
+        任何地方。谁在用：`set_detached` 的拒绝提示、界面"她已被手动锁在 …"的文案。
+        """
+        out: List[Tuple[int, int, str, int]] = []
+        if self.schedule is None or not name:
+            return out
+        for i, shift in enumerate(self.schedule.shifts):
+            for fi, fac in enumerate(shift.world.facilities):
+                idx = fac.slot_of(name)
+                if idx is None:
+                    continue
+                led = read_manual(fac)
+                if led.pins_slot(idx) or led.pins_name(name):
+                    out.append((i, fi, fac.display_name, idx))
+        return out
+
     def set_room_level(self, shift_index: int, facility_index: int, level: int) -> None:
         """改某个班次某间房的等级（容量随之变化）。
 
@@ -1322,10 +1397,49 @@ def _write_manual(fac: dict, *, raw_slots=(), raw_names=(), touched: Optional[in
     names = {str(n) for n in raw_names if n}
     live = {v for v in _seat_values(fac) if v}
     names &= live
+    _put_manual(fac, slots, names)
+
+
+def _put_manual(fac: dict, slots, names) -> None:
+    """把 `(位次集合, 人名集合)` 写进设施描述的 `manual`；两个都空就把整份台账删掉。
+
+    ⚠️ **全项目只有这一个地方写 `fac["manual"]`**（两条布局写入口、逐位锁/解锁都走它），
+    这样"空台账不留痕"（导出保持干净）这条口径不会在别处被写漏。
+    """
+    slots = sorted({int(i) for i in slots})
+    names = sorted({str(n) for n in names if n})
     if slots or names:
-        fac["manual"] = {"slots": sorted(slots), "names": sorted(names)}
+        fac["manual"] = {"slots": slots, "names": names}
     else:
         fac.pop("manual", None)
+
+
+def _set_lock(fac: dict, slot: int, locked: bool) -> None:
+    """**只改某一位的锁** —— 不动这份名单的其它位次，也不动这一位坐的是谁。
+
+    · `locked=True`：该位次进 `slots`＝"这一位归人管"（自动入宿既不占它、也不换里面的人；
+      该位是空的，就是"保持空着"）。
+    · `locked=False`：把该位次从 `slots` 摘掉，**并且**把这一位的人从 `names` 摘掉 ——
+      否则 `_seat_verdict` 第 1 层会继续按 `pins_name` 把她钉住，"解锁"看起来没生效。
+
+    ⚠️ **上锁不往 `names` 里加人**：锁是"位置级"的意图；`names` 表达的是"这个人是我手动放的"，
+    由 `set_slots` / `set_facility_slots`（真写了人）产生 —— 别让"勾一个框"顺带改变
+    "这个人归我管"的语义（那会让"她以后换到别的位次也仍然被钉住"）。
+    """
+    led = dict(fac.get("manual") or {})
+    slots = {int(i) for i in (led.get("slots") or [])}
+    names = {str(n) for n in (led.get("names") or [])}
+    slot = int(slot)
+    seats = _seat_values(fac)
+    who = seats[slot] if 0 <= slot < len(seats) else ""
+    if locked:
+        slots.add(slot)
+    else:
+        slots.discard(slot)
+        if who:
+            names.discard(who)
+    names &= {v for v in seats if v}          # 已经被写掉的人不留名字标记
+    _put_manual(fac, slots, names)
 
 
 def _capacity_of_dict(fac: dict) -> int:
@@ -1366,9 +1480,11 @@ def _trim_to_capacity(fac: dict, capacity: int) -> dict:
         ledger["slots"] = [i for i in (ledger.get("slots") or []) if int(i) < capacity]
     out = {k: v for k, v in fac.items() if k not in ("slots", "operators")}
     _write_seats(out, keep)
-    if ledger and ledger["slots"]:
-        out["manual"] = {"slots": sorted(int(i) for i in ledger["slots"]),
-                         "names": sorted(str(n) for n in (ledger.get("names") or []))}
+    if ledger:
+        # ⚠️ **只有 `names` 的台账也要留下来**：旧实现的条件是"`ledger["slots"]` 非空"，
+        #    于是"手动放的人 + 该位次恰好没被锁"这份台账会在缩容时被整份丢掉
+        #    （等于悄悄把她解锁了）。空台账由 `_put_manual` 统一负责删键。
+        _put_manual(out, ledger["slots"], ledger.get("names") or ())
     return out
 
 
