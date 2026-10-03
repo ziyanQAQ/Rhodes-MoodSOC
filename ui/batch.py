@@ -71,9 +71,14 @@ NOTIFY_DEBOUNCE_MS = 500
 DETACHED_FI = -1
 DETACHED_ROOM = "不在基建"          # 该段的行首标签（表格「房间」列）
 DETACHED_TITLE = "不在工作设施、也不在宿舍（本班未排班）"     # 段首那一行
-#: 段首那句口径（写清楚"这一刻"与"整段"的区别，免得被当 bug）
-DETACHED_HINT = ("══ 本班没排到位置：这一刻她不消耗也不回复（心情不变）；"
-                 "若她在别的班有活，那些班照常算 ══")
+#: 段首那句口径（写清楚"这一刻"与"整段"的区别，免得被当 bug）。
+#: ⚠️ 表头那一行**只留这一句**（改前是 47 字 + 一句提示，白占一行高）；
+#: 完整解释挂在 `head_note` 的悬停提示上（`attach_hint` + `DETACHED_HINT_FULL`），
+#: 原文见 `documents/10-图形界面.md` §6.2。
+DETACHED_HINT = "不在基建：本班未排班，心情不变"
+#: 表头那行的**悬停提示**（鼠标停上去才显示；Tk 没有原生 tooltip，见 `attach_hint`）
+DETACHED_HINT_FULL = ("══ 本班没排到位置：这一刻她不消耗也不回复（心情不变）；"
+                      "若她在别的班有活，那些班照常算 ══")
 # 说明文字的最大换行宽度：**必须给**，否则一条长 tk.Label 会把设置中心的内容区撑宽
 # （实测「干员与心情」因此从 816px 涨到 1247px，超宽被裁）。口径说明都走这个值。
 HINT_WRAP = 700
@@ -127,6 +132,47 @@ def split_names(text: str) -> List[str]:
     if buf:
         out.append(buf)
     return out
+
+
+def attach_hint(widget, text: str) -> None:
+    """给控件挂一个**悬停说明**（Tk 没有原生 tooltip，这是最小的一份）。
+
+    为什么需要：这次精简把"纯解释性"的长句从**界面上**删掉了，但口径不能丢 ——
+    会影响读数解读的那半句（如"若她在别的班有活，那些班照常算"）改挂在悬停提示上。
+
+    ⚠️ 只用一个 `tk.Toplevel(overrideredirect=True)` 的 Label，**不抢焦点、不进 `_focusables`**
+    （`ui/settings.py` 的焦点环只收 Entry/Combobox/Button/Checkbutton/Scale 那几类）；
+    离开 / 销毁控件时无条件 `destroy()`（不留孤儿窗口）。
+    """
+    tip = {"win": None}
+
+    def _show(_event=None):
+        if tip["win"] is not None or not widget.winfo_exists():
+            return
+        win = tk.Toplevel(widget)
+        win.wm_overrideredirect(True)
+        try:
+            win.attributes("-topmost", True)
+        except tk.TclError:            # 某些窗口管理器不认这个属性；提示照样显示
+            pass
+        tk.Label(win, text=text, bg=theme.PANEL, fg=theme.TEXT, justify="left",
+                 wraplength=460, bd=1, relief="solid",
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack()
+        win.update_idletasks()
+        win.geometry(f"+{widget.winfo_rootx() + 8}+{widget.winfo_rooty() + 18}")
+        tip["win"] = win
+
+    def _hide(_event=None):
+        win, tip["win"] = tip["win"], None
+        if win is not None:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+
+    widget.bind("<Enter>", _show, add="+")
+    widget.bind("<Leave>", _hide, add="+")
+    widget.bind("<Destroy>", _hide, add="+")
 
 
 class BatchMixin:
@@ -356,8 +402,11 @@ class BatchMixin:
         box = tk.LabelFrame(self, text="房间等级（决定这间房能放几个人）", bg=theme.BG,
                             fg=theme.TEXT, font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1,
                             relief="groove", labelanchor="nw")
-        box.pack(fill="x", padx=theme.PAD, pady=(0, 4))
+        box.pack(fill="x", padx=theme.PAD, pady=(0, 2))
         grid = tk.Frame(box, bg=theme.BG)
+        #: 等级网格的容器（`test_二十二间房也不溢出` 直接量它的 `grid_info()` 行数；
+        #: 不再靠"谁是第一个孩子"去摸 —— 排版一动就摸错）
+        self.level_grid = grid
         grid.pack(fill="x", padx=theme.GAP, pady=(4, 2))
         for i, fac in enumerate(self._fac_names):
             world = self._schedule.shifts[self._shift_index].world.facilities[i]
@@ -384,16 +433,19 @@ class BatchMixin:
         self._sync_level_note(used)
 
     def _sync_level_note(self, used: int = None) -> None:
+        """这一行只写**两个会改变操作预期的数**：建造位占用 + "改等级会改变行数"。
+
+        完整口径（"制造站/贸易站/发电站共用 9 个上游建造位"）搬进
+        `documents/10-图形界面.md` §6.2。
+        """
         if used is None:
             used = sum(1 for i in range(len(self._fac_names))
                        if self._schedule.shifts[self._shift_index].world.facilities[i].ftype
                        in OUTPUT_ROOM_TYPES)
         over = used > OUTPUT_SLOT_TOTAL
-        self.level_note.configure(
-            text=f"制造站/贸易站/发电站已用 {used}/{OUTPUT_SLOT_TOTAL} 个建造位"
-                 + ("（超过上游上限！）" if over else "")
-                 + "　｜　改等级会立刻改变下面表格的行数",
-            fg=(theme.DANGER if over else theme.MUTED))
+        text = (f"建造位 {used}/{OUTPUT_SLOT_TOTAL}" + ("（超过上限！）" if over else "")
+                + "　｜　改等级会改变表格行数")
+        self.level_note.configure(text=text, fg=(theme.DANGER if over else theme.MUTED))
 
     def _on_level_change(self, fac_index: int, var) -> None:
         """改房间等级 → 写进工作副本 → 重建表格（容量变了，行数跟着变）。"""
@@ -406,15 +458,14 @@ class BatchMixin:
 
     # ================================================================ 心情区
     def _build_mood_bar(self) -> None:
-        box = tk.LabelFrame(self, text="心情（指定周期内任意时刻的心情；改哪一格＝那一刻给她这个值）",
-                            bg=theme.BG, fg=theme.TEXT,
+        box = tk.LabelFrame(self, text="心情", bg=theme.BG, fg=theme.TEXT,
                             font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1,
                             relief="groove", labelanchor="nw")
-        box.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, 4))
+        box.pack(fill="x", padx=theme.PAD, pady=(theme.GAP, 2))
 
         # —— 第一行：视图（哪一周期、哪一刻）——
         view = tk.Frame(box, bg=theme.BG)
-        view.pack(fill="x", padx=theme.GAP, pady=(4, 2))
+        view.pack(fill="x", padx=theme.GAP, pady=(2, 2))
         tk.Label(view, text="周期", bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
         self.view_cycle_var = tk.StringVar(value=str(self._view_cycle))
@@ -470,7 +521,7 @@ class BatchMixin:
         # 这一行同时兼职「跟随中」的提示（两句话互斥，不额外占高度 —— 内容区是定高的）
         self.mood_hint = tk.Label(box, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
                                   font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        self.mood_hint.pack(fill="x", padx=theme.GAP, pady=(0, 6))
+        self.mood_hint.pack(fill="x", padx=theme.GAP, pady=(0, 2))
         self._sync_anchor_note()
 
     # ---------------------------------------------------------------- 视图（周期 + 时刻）
@@ -957,9 +1008,9 @@ class BatchMixin:
         box = tk.LabelFrame(self, text="干员（只改上面选中的这一班）", bg=theme.BG,
                             fg=theme.TEXT, font=(theme.FONT_FAMILY, theme.FS_SMALL), bd=1,
                             relief="groove", labelanchor="nw")
-        box.pack(fill="x", padx=theme.PAD, pady=(0, 4))
+        box.pack(fill="x", padx=theme.PAD, pady=(0, 2))
         row = tk.Frame(box, bg=theme.BG)
-        row.pack(fill="x", padx=theme.GAP, pady=(4, 2))
+        row.pack(fill="x", padx=theme.GAP, pady=(2, 2))
         ttk.Button(row, text="批量粘贴名单…", command=self._paste_names).pack(side="left")
         ttk.Button(row, text="从池中依次填入", command=self._fill_from_pool).pack(
             side="left", padx=(6, 0))
@@ -978,12 +1029,11 @@ class BatchMixin:
                                   font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.pool_note.pack(fill="x", padx=theme.GAP)
         self._sync_pool_note()
-        tk.Label(box, text="「批量粘贴名单」＝一行一个（逗号/空格也行），按房间顺序依次填入；"
-                           "点表格里的干员名可以搜索更换。",
+        tk.Label(box, text="一行一个，按房间顺序填入",
                  bg=theme.BG, fg=theme.MUTED, anchor="w", justify="left",
                  wraplength=HINT_WRAP,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(fill="x", padx=theme.GAP,
-                                                               pady=(0, 6))
+                                                               pady=(0, 2))
 
     # ---------------------------------------------------------------- 干员池
     def _sync_pool_note(self) -> None:
@@ -991,9 +1041,7 @@ class BatchMixin:
         if not hasattr(self, "pool_note"):
             return
         if not self._pool:
-            self.pool_note.configure(
-                text="干员池：空（只有「v4 蓝图 + 干员池」那类文件会带池；"
-                     "MAA 排班与 v3 输出本身就带了人员安排）")
+            self.pool_note.configure(text="干员池：空（本排班没带干员池）")
             return
         names = "、".join(p["name"] for p in self._pool[:6])
         more = f" 等 {len(self._pool)} 名" if len(self._pool) > 6 else ""
@@ -1044,10 +1092,8 @@ class BatchMixin:
                                     font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.filter_note.pack(side="left", padx=(2, 0))
         # ⚠️ 这一行别写长：工具栏的**自然宽度**会顶到设置中心的内容区（超了就被裁）。
-        #    实测超过 ~816px 就红（2026-09 踩过一次）。完整说明写进 documents/10-图形界面.md。
-        tk.Label(bar, text="滚轮＝3 行　Shift＝整页　Ctrl＝10 行　PgUp/PgDn＝翻页",
-                 bg=theme.BG, fg=theme.MUTED,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="right")
+        #    实测超过 ~816px 就红（2026-09 踩过一次）。滚轮速度的完整说明写进
+        #    `documents/10-图形界面.md` §5 第 16 条（界面上不再写这一行）。
 
         body = tk.Frame(self, bg=theme.BG)
         body.pack(fill="both", expand=True, padx=theme.PAD, pady=(2, 0))
@@ -1064,10 +1110,12 @@ class BatchMixin:
                      font=(theme.FONT_FAMILY, theme.FS_SMALL, "bold")
                      ).grid(row=0, column=ci, sticky="nsew", padx=0, pady=2)
         # 通栏的第二行：口径说明（不参与列对齐，所以单独一个 Label 跨全部列）
+        # ⚠️ 只留一句短口径；完整解释（含"别的班照常算"）挂在**悬停提示**上（见 `attach_hint`）
         self.head_note = tk.Label(head, text=DETACHED_HINT, bg=theme.HEADER_BG,
                                   fg=theme.MUTED, anchor="w", padx=4,
                                   font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.head_note.grid(row=1, column=0, columnspan=len(TABLE_COLUMNS), sticky="ew")
+        attach_hint(self.head_note, DETACHED_HINT_FULL)
         self.canvas = tk.Canvas(body, bg=theme.PANEL, highlightthickness=0,
                                 height=self._table_height(),
                                 highlightbackground=theme.BORDER)
@@ -1327,7 +1375,7 @@ class BatchMixin:
         if not hasattr(self, "filter_note"):
             return
         if not self._filter_text():
-            self.filter_note.configure(text="（空＝全部；输名字或房间名即过滤）")
+            self.filter_note.configure(text="（空＝全部）")
             return
         n = len(self._visible_names())
         self.filter_note.configure(text=f"匹配 {n} 人　（Esc 清空）")
@@ -1650,11 +1698,15 @@ class BatchMixin:
             self._sync_head_note()
 
     def _sync_head_note(self) -> None:
-        """表头第二行的口径说明：有"位置对不上"的行就补一句（`⇄` 是什么意思）。"""
+        """表头第二行的口径说明：有"位置对不上"的行就补一句（`⇄` 是什么意思）。
+
+        ⚠️ 这一行**只有一句**（短）；完整解释在 `attach_hint` 的悬停提示里 ——
+        两个 Label 都写的话表头会占两行高（`TABLE_CHROME` 是按一行估的）。
+        """
         if self._where_mismatch:
             self.head_note.configure(
-                text=DETACHED_HINT + f"　｜　⇄ 位置以引擎为准（{len(self._where_mismatch)} 处，"
-                                     f"见「说明」列）", fg=theme.DANGER)
+                text=f"{DETACHED_HINT}　｜　⇄ 位置以引擎为准（{len(self._where_mismatch)} 处）",
+                fg=theme.DANGER)
         else:
             self.head_note.configure(text=DETACHED_HINT, fg=theme.MUTED)
 

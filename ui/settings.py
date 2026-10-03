@@ -50,19 +50,34 @@ from .schedule import all_operator_names      # 转发自 store.schedule（选�
 from store.session import MAX_CYCLES
 
 # (分区键, 标题, 一句话说明)
+# ⚠️ 说明**一律一行 ≤20 字**（页标题下面那一行）：纯解释性段落全删了、搬进
+# `documents/10-图形界面.md` §6.2 —— 那里是界面口径的正式落点，这里只留"这一页管什么"。
 PAGES = (
-    ("timeline", "时间轴", "周期多长、分几班、每班几小时、跑几个周期、从几点开始"),
-    ("batch", "干员与心情", "房间等级 · 每个位置放谁 · 练度(E0~E2) · 周期内任意时刻的心情"),
-    ("entry", "换心情", "进驻事件 M15a：进驻那一刻与谁互换心情"),
-    ("idle", "闲置入宿", "把没上班、没在宿舍、心情未满的干员安排进宿舍"),
+    ("timeline", "时间轴", "周期多长、分几班、每班几小时"),
+    ("batch", "干员与心情", "房间等级 · 放谁 · 练度 · 心情"),
+    ("entry", "换心情", "进驻那一刻与谁互换心情"),
+    ("idle", "闲置入宿", "没上班、没在宿舍、心情未满的人进宿舍"),
 )
 
 # 内容区固定高度：四个分区共用（切换时窗口不跳）。
-# 取"最高的那个分区"（干员与心情：等级区 + 心情区 + 干员区 + 表格 + 提示行）≈ 740。
-# 「干员与心情」的表格是**自动高度**（吃掉内容区的剩余），所以等级区排成几行都不怕。
-PAGE_H = 740
-# 窗口最小尺寸：内容区是固定尺寸排版，再小就会被裁（右侧房间等级那几档会看不见）
-MIN_W, MIN_H = 980, 700
+# 取"最高的那个分区"（干员与心情：等级区 + 心情区 + 干员区 + 表格 + 提示行）。
+# 窗口高 ≈ PAGE_H + 页标题/说明/页脚/内外边距（实测加价 **118**）⇒ 700 → 818。
+# ⚠️ 定这个值的判据（见 `_assert_fits` 与 `test_四个分区都装得进固定内容区`）：
+#    ① 四页**自然高度都 ≤ PAGE_H**（含"表格已被压到下限"那种最坏情况）；
+#    ② 「干员与心情」那张表**不许被压到下限** —— 它的"不伸缩部分"实测 656px，
+#       所以 `PAGE_H` 每降 1px 表格就矮 1px。实测三个候选：
+#       `700` → 表格 96px（`TABLE_H_MIN`，约 4 行）**且没有溢出**；
+#       `680` → 表格 80px（已低于 `TABLE_H_MIN`，`_fit_over` 4px，表格被自校正往下压）；
+#       `660` → 表格被压到 `TABLE_H_FLOOR`（64px，只看得见两行）。
+#       这一页的表格是唯一的操作面（"功能不许动"优先）⇒ 取 700；
+#       文字精简省下来的高度全给了这张表（改前 740 下它也只有 96px）。
+#    ③ 窗口高 = `PAGE_H` + 118 = 818（工单目标是"约 760"，实际按 ② 收敛到 818）。
+# 「干员与心情」的表格是**自动高度**（吃掉内容区的剩余），所以等级区排成几行都不怕；
+# 「闲置入宿」是**两栏**（③ 手动入宿 ∥ 逐次表），页高不再被两边相加顶起来。
+PAGE_H = 700
+# 窗口最小尺寸：内容区是固定尺寸排版，再小就会被裁（右侧房间等级那几档会看不见）。
+# ⚠️ `MIN_H` 不许高于默认窗口高，否则窗口一开就被撑大（现窗口高 818）。
+MIN_W, MIN_H = 980, 520
 # 分区标题/说明用同一套栅格：标签列宽、控件间距都从这里取，免得各页自己凑
 LABEL_W = 12
 NAV_W = 14
@@ -139,9 +154,12 @@ class SettingsDialog(tk.Toplevel):
         self.head = tk.Label(right, text="", bg=theme.BG, fg=theme.TEXT, anchor="w",
                              font=(theme.FONT_FAMILY, theme.FS_TITLE))
         self.head.pack(fill="x")
+        # 页说明**就一行**（`PAGES` 的第三个字段，≤20 字）：`FS_SMALL` 下自然高 23px，
+        # 与标题凑成"两行页头"（46px）。别再把口径说明写回这里 —— 长文在
+        # `documents/10-图形界面.md` §6.2。
         self.note = tk.Label(right, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
                              font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        self.note.pack(fill="x", pady=(0, theme.GAP))
+        self.note.pack(fill="x", pady=(0, 6))
         # `pack_propagate(False)`：内容区高度由 PAGE_H 说了算（子控件不会把它撑大）
         self.host = tk.Frame(right, bg=theme.BG, height=PAGE_H, width=760)
         self.host.pack(fill="both", expand=True)
@@ -198,7 +216,8 @@ class SettingsDialog(tk.Toplevel):
         title = next(t for k, t, _d in PAGES if k == key)
         desc = next(d for k, _t, d in PAGES if k == key)
         self.head.configure(text=title)
-        self.note.configure(text=desc + "　（改动立即生效）")
+        # ⚠️ 页题后面**不再挂**「（改动立即生效）」：那句只在页脚出现一次（原先重复 3 处）
+        self.note.configure(text=desc)
         self._focus_active()
         if key == "batch":
             # 刚切回「干员与心情」：补一次"现在这一刻"，免得勾了「跟随滑块」却停在旧时刻
@@ -313,7 +332,7 @@ class SettingsDialog(tk.Toplevel):
                                       [s.hours for s in app.schedule.shifts],
                                       app.schedule.cycle_hours, on_change=app.apply_shift_hours)
         self.timeline.pack(fill="x")
-        row, slot = setting_row(box, "周期数", "（连着跑几个周期，用来看这套排班能不能永动）")
+        row, slot = setting_row(box, "周期数")
         row.pack(fill="x", pady=(theme.GAP, 0))
         cb = ttk.Combobox(slot, textvariable=app.cycles_var, width=3, state="readonly",
                           values=tuple(str(i) for i in range(1, MAX_CYCLES + 1)))
@@ -321,8 +340,7 @@ class SettingsDialog(tk.Toplevel):
         cb.bind("<<ComboboxSelected>>", lambda _e: app.on_cycles_changed())
         # —— 初始时间点：周期从几点开始（如 01:00 ⇒ 1 点到第二天 1 点为一个周期）——
         # ⚠️ **纯显示口径**：滑块/看板/曲线上的时刻全按它渲染，引擎数值一字不变。
-        row, slot = setting_row(box, "初始时间点",
-                                "（周期的起点是几点；只改显示，不改数值）")
+        row, slot = setting_row(box, "初始时间点", "只改显示")
         row.pack(fill="x", pady=(6, 0))
         self.clock_var = tk.StringVar(value=theme.fmt_clock(app.schedule.start_clock))
         entry = ttk.Entry(slot, textvariable=self.clock_var, width=7)
@@ -438,8 +456,10 @@ class SettingsDialog(tk.Toplevel):
 
     # ------------------------------------------------------------------ 杂务
     def _center(self, parent) -> None:
+        # 默认尺寸＝**刚好装下内容区**（`PAGE_H` + 页头/页脚/边距 ≈ +120）；
+        # `MIN_H`（520）与这里的 620 都只是"拖小了也还能看"的兜底，不再参与默认尺寸。
         self.update_idletasks()
-        w = max(self.winfo_reqwidth(), 980)
+        w = max(self.winfo_reqwidth(), MIN_W)
         h = min(max(self.winfo_reqheight(), 620), 900)
         self.geometry(f"{w}x{h}")
         self.update_idletasks()

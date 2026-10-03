@@ -9,8 +9,9 @@
 """
 from __future__ import annotations
 
+import re
 import tkinter as tk
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from tkinter import messagebox, ttk
 from typing import List, Optional, Sequence
 
@@ -30,8 +31,12 @@ MOOD_MAX_TEXT = Decimal("24")
 # 表格行的上下留白（「闲置入宿」那一张分组表用）
 ROW_PAD = 1
 
-# 「闲置入宿」页逐次表的**最小可视高度**：上面的 ③ 手动入宿子面板也要占地方，
-# 所以这里给个下限（再小就只看得见两三行；面板仍可滚动）。
+# 「闲置入宿」页的两栏布局（③ 手动入宿 ∥ ④ 逐次表，见 `_init_idle_body`）：
+# 左栏固定这么宽（4 行逐位控件本来就不宽），右栏吃剩下的；
+# `IDLE_TABLE_H_INIT` 是表格的**初始可视高度**（建表格之前只能给个估值，
+# 见 `_resolve_table_height`）；建表之后由它自己的 `_fit_table_height()` 自校正。
+IDLE_MANUAL_W = 330
+IDLE_TABLE_H_INIT = 320
 MIN_TABLE_H = 190
 
 
@@ -48,6 +53,30 @@ def parse_mood(text) -> Optional[Decimal]:
     if v < MOOD_MIN_TEXT or v > MOOD_MAX_TEXT:
         return None
     return v
+
+
+# 「说明」列里那串心情小数的显示位数：引擎是 Decimal 精确运算，跨事件分割会留下
+# `20.10000000000000000000000001` 这类 28 位尾巴 —— 那是精度极限、不是算错，
+# 只在**显示边界**舍入（口径与 `ui.theme.fmt_mood` 一致：0.01 精度、去掉多余的 0）。
+_NOTE_NUM = re.compile(r"\d+\.\d{3,}")
+_NOTE_PLACES = Decimal("0.01")
+
+
+def _tidy_note(note) -> str:
+    """把「说明」列里那串 28 位心情小数截到 2 位（`20.1000…01` → `20.1`）。
+
+    ⚠️ 只动**小数点后 ≥3 位**的数字（`_NOTE_NUM`）：位次（`第 5 位`）与整点心情
+    （`心情 24`）不匹配、原样留着；`2` 位以内的正常值也不动。
+    """
+    text = (note or "").strip()
+    if not text:
+        return "—"
+
+    def _short(m: "re.Match") -> str:
+        v = Decimal(m.group(0)).quantize(_NOTE_PLACES, rounding=ROUND_HALF_UP)
+        return f"{v:f}".rstrip("0").rstrip(".")
+
+    return _NOTE_NUM.sub(_short, text)
 
 
 def _center(win: tk.Toplevel, parent: tk.Misc) -> None:
@@ -363,15 +392,7 @@ class EntryEventMixin:
         self._when_in = normalize_entry_when(when) or "full"
 
         pad = dict(padx=theme.PAD)
-        tk.Label(self, text="进驻事件 = 干员【进驻那一刻】的一次性心情跳变，不是每小时速率。",
-                 bg=theme.BG, fg=theme.TEXT, justify="left", wraplength=470,
-                 font=(theme.FONT_FAMILY, theme.FS_BODY)).pack(anchor="w", **pad, pady=(theme.PAD, 2))
-        tk.Label(self,
-                 text="典型例子：菲亚梅塔「患难之交」——进驻宿舍时与某人【互换心情】\n"
-                      "（她拿 24 换走对方的 6 点，对方反而变成 24）。\n"
-                      "它只发生在进驻瞬间，所以默认【不】结算，需要你在这里明确打开。",
-                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=470,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad, pady=(0, theme.GAP))
+        # —— 页内说明只留"会影响操作结果"的；整段口径原文见 documents/10-图形界面.md §6.2 ——
 
         # ① 总开关
         self.enabled = tk.BooleanVar(value=bool(enabled))
@@ -379,18 +400,21 @@ class EntryEventMixin:
                         variable=self.enabled, command=self._on_enabled).pack(anchor="w", **pad)
 
         holders = "、".join(current_holders) if current_holders else "（本排班里没有）"
-        tk.Label(self, text=f"触发者：{holders}。勾了「用」的班次才换心情；"
-                            f"「换谁」的两个口径自带范围：前一位进驻＝同一宿舍，"
-                            f"全基建最累的 / 具体干员＝基建任意位置。",
+        # ⚠️ 两行都**必须短**（`side="left"` 的标签不给 `wraplength` 会按整句要宽度）。
+        #    "触发者是谁"会影响预期（没这个人就什么都不会发生），所以留；
+        #    "勾了「用」的班次才换"是**会拦住操作**的口径，也留。其余搬文档。
+        tk.Label(self, text=f"触发者：{holders}　｜　仅对勾选「用」的班次生效",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=520,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad, pady=(2, 2))
+        tk.Label(self, text="「换谁」自带范围：前一位进驻＝同宿舍，其余＝基建任意位置",
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=520,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
-                                                               pady=(2, theme.GAP))
+                                                               pady=(0, theme.GAP))
 
         # ② 一张表：每个班次自己的「用 / 换谁 / 强制切换」（没有"全局值 + 例外"两层）
         self._build_shift_table()
 
-        tk.Label(self, text="「强制切换」勾上＝她没满心情就等她回满再换；不勾＝判定时没满就不换。\n"
-                            "对方心情是多少都照换（固定口径）；位置不变，只换心情。",
+        tk.Label(self, text="「强制切换」勾上＝等她回满再换；不勾＝判定时没满就不换",
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=520,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
                                                                pady=(theme.GAP, 0))
@@ -485,16 +509,13 @@ class EntryEventMixin:
             self.shift_force.append(force)
             self._shift_widgets.extend([chk, box_who, chk_force])
         bar = tk.Frame(box, bg=theme.BG)
-        bar.pack(fill="x", padx=theme.GAP, pady=(4, 2))
+        bar.pack(fill="x", padx=theme.GAP, pady=(4, 6))
         for text, value in (("全选", True), ("全不选", False)):
             btn = ttk.Button(bar, text=text, command=lambda v=value: self._set_all_shifts(v))
             btn.pack(side="left", padx=(0, 6))
             self._shift_widgets.append(btn)
-        tk.Label(box, text="第 1 班就是「默认口径」：其余班次只有和它不同时才单独记一笔，"
-                           "所以三班都一样时不会产生多余配置。",
-                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=500,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
-                                                                pady=(0, 6))
+        # （原先这里还有一段 49 字的"第 1 班就是默认口径…"：纯解释，已搬
+        #   `documents/10-图形界面.md` §6.2）
 
     def _set_all_shifts(self, value: bool) -> None:
         """表格下方的全选 / 全不选。"""
@@ -710,14 +731,12 @@ class IdleToDormMixin:
         self._slot_btns: dict = {}         # {(班次下标, 设施下标, 位次): 人名按钮}
         self._slot_locks: dict = {}        # 同上 → (☑ 锁 BooleanVar, 用户动过的单元素标记)
         self._has_manual = False           # 正在看的那一班有没有手动台账（「全部解锁」按钮用）
+        self._two_col = None               # 两栏容器 (左, 右, 容器)；单列宿主保持 None
         pad = dict(padx=theme.PAD)
 
-        tk.Label(self,
-                 text="闲置入宿 = 每个换班执行点，把【这一班没出现在任何设施、心情还没满】的干员安排进"
-                      "宿舍恢复（班初一次；班长 >12h 时班内 12h 整数倍再来一次）。候选按【心情从低到高】"
-                      "处理 —— 有空位就竖向正序住进去（含锁定区的空位）；全满则换出【锁定区外、"
-                      "心情 ≥ 她、心情最大】的那位。加工站 / 训练室的人、副手、上班与在宿舍的人"
-                      "都**不是候选**。",
+        # ⚠️ 这一行只留"谁会被安排"（会影响预期）；完整的候选/换人口径搬
+        #    `documents/10-图形界面.md` §6.2（原先这里是 174 字一段，白占 74px）。
+        tk.Label(self, text="没上班、没在宿舍、心情未满的人进宿舍",
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=700,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
                                                                 pady=(0, theme.GAP))
@@ -769,16 +788,31 @@ class IdleToDormMixin:
         self._widgets.append(self.black_list)
         self._refresh_blacklist()
 
-        self._build_manual_dorm()
+        # ================= ③ 手动入宿 ∥ ④ 逐次表：**左右并排** =================
+        # 为什么并排：这一页纵向最紧（改前自然高 728 > 内容区 740 的 98%），
+        # 而 ③ 只有 4 行逐位控件、④ 是一张要滚的表 —— 两栏各自用满高度，
+        # 省下的正好是"两者相加"的那一份（改前 152 + 192 = 344px）。
+        # ⚠️ 两栏都 `sticky="nsew"` + 行权 1 ⇒ 谁矮就自己留白，谁高就自己滚，
+        #    **不许**把对方顶出去（左栏 `pack_propagate(False)` 固定宽度；右栏吃剩余）。
+        cols = tk.Frame(self, bg=theme.BG)
+        cols.pack(fill="both", expand=True, **pad)
+        cols.columnconfigure(0, weight=0, minsize=IDLE_MANUAL_W)
+        cols.columnconfigure(1, weight=1)
+        cols.rowconfigure(0, weight=1)
+        left = tk.Frame(cols, bg=theme.BG, width=IDLE_MANUAL_W)
+        left.grid(row=0, column=0, sticky="nsew")
+        left.pack_propagate(False)
+        right = tk.Frame(cols, bg=theme.BG)
+        right.grid(row=0, column=1, sticky="nsew", padx=(theme.GAP, 0))
+        self._two_col = (left, right, cols)
 
-        tk.Label(self, text="④ 逐次设置（从早到晚）：每行只有「参与」可改 —— 取消勾选＝这一位"
-                            "**这次不参与**闲置入宿（她既不会自己住进去、也不会被换出）。"
-                            "「说明」列是**只读的引擎结果**：她会被安排进哪间宿舍的第几号位、"
-                            "或者为什么这一班没安排她。",
-                 bg=theme.BG, fg=theme.TEXT, padx=theme.PAD, justify="left",
-                 wraplength=640, anchor="w").pack(anchor="w", pady=(theme.GAP, 2))
+        self._build_manual_dorm(left)
+
+        tk.Label(right, text="④ 逐次设置：每行只有「参与」可改；「说明」是只读的引擎结果",
+                 bg=theme.BG, fg=theme.TEXT, padx=0, justify="left",
+                 wraplength=IDLE_MANUAL_W + 60, anchor="w").pack(anchor="w", pady=(0, 2))
         self.table_height = self._resolve_table_height()
-        self._build_table()
+        self._build_table(right)
 
         if note:
             tk.Label(self, text=note, bg=theme.BG, fg=theme.MUTED, justify="left",
@@ -786,11 +820,13 @@ class IdleToDormMixin:
                      ).pack(anchor="w", **pad)
         self._sync()
 
-    # ====================================================== ④ 手动入宿编辑器
-    def _build_manual_dorm(self) -> None:
+    # ====================================================== ③ 手动入宿编辑器
+    def _build_manual_dorm(self, parent) -> None:
         """**手动入宿编辑器**（本页最靠上的一层：手动编辑 > 自动入宿 > 导入布局）。
 
-        形态：`③ 手动入宿` 一块 LabelFrame，四行 ——
+        `parent`＝两栏布局的**左栏**（固定宽度 `IDLE_MANUAL_W`，`pack_propagate(False)`）。
+
+        形态：`③ 手动入宿` 一块 LabelFrame，五行 ——
 
         | 行 | 控件 | 语义 |
         |---|---|---|
@@ -802,10 +838,10 @@ class IdleToDormMixin:
         ⚠️ `☑ 锁` 的初值来自 `manual_dorm_editor_state` 的 `locked`（**只读显示**）；
         用户动过的那些格子记在 `_slot_locks[...][1]` 里，刷新时**不许被旧值盖回去**。
         """
-        box = tk.LabelFrame(self, text="③ 手动入宿（手动编辑 > 自动入宿；改动落到勾选的班次）",
+        box = tk.LabelFrame(parent, text="③ 手动入宿（手动编辑 > 自动入宿）",
                             bg=theme.BG, fg=theme.TEXT, bd=1, relief="groove",
                             labelanchor="nw", font=(theme.FONT_FAMILY, theme.FS_SMALL))
-        box.pack(fill="x", padx=theme.PAD, pady=(0, theme.GAP))
+        box.pack(fill="both", expand=True, padx=(theme.PAD, 0), pady=(0, theme.GAP))
 
         self.shift_pick: List[tk.BooleanVar] = []
         # ⚠️ 班次表来自**只读数据源**（`manual_dorm_editor_state` 的 `shifts`），
@@ -813,11 +849,12 @@ class IdleToDormMixin:
         self._manual_shifts: List[tuple] = []
         self._view_var = tk.StringVar(value="0")
         self.manual_notice = tk.Label(box, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
-                                      justify="left", wraplength=740,
+                                      justify="left", wraplength=IDLE_MANUAL_W - 24,
                                       font=(theme.FONT_FAMILY, theme.FS_SMALL))
         if not self._manual_state(0).get("shifts"):
             tk.Label(box, text="（还没有导入排班：导入后可以在这里逐位安排宿舍）",
-                     bg=theme.BG, fg=theme.MUTED,
+                     bg=theme.BG, fg=theme.MUTED, wraplength=IDLE_MANUAL_W - 24,
+                     justify="left",
                      font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", padx=theme.GAP,
                                                                     pady=(4, 6))
             self.manual_msg = self.manual_notice
@@ -825,7 +862,7 @@ class IdleToDormMixin:
             return
         labels = [str(label) for _i, label in self._manual_shifts]
         self._view_var.set("0")
-        # —— ① 班次多选 + 「正在看」+ 宿舍 + 「全部解锁」都挤在**一行**（纵向空间很紧）——
+        # —— ① 班次多选（**自己一行**：左栏窄，横着塞会顶宽整块面板）——
         row1 = tk.Frame(box, bg=theme.BG)
         row1.pack(fill="x", padx=theme.GAP, pady=(4, 0))
         tk.Label(row1, text="班次", bg=theme.BG, fg=theme.TEXT,
@@ -838,25 +875,28 @@ class IdleToDormMixin:
         ttk.Button(row1, text="全选", width=5,
                    command=lambda: self._set_all_shift_pick(True)).pack(side="left", padx=(4, 0))
         ttk.Button(row1, text="全不选", width=6,
-                   command=lambda: self._set_all_shift_pick(False)).pack(side="left", padx=(2, 4))
-        tk.Label(row1, text="正在看", bg=theme.BG, fg=theme.TEXT,
+                   command=lambda: self._set_all_shift_pick(False)).pack(side="left", padx=(2, 0))
+        # —— ② 「正在看」+ 宿舍 + 「全部解锁」（第二行）——
+        row2 = tk.Frame(box, bg=theme.BG)
+        row2.pack(fill="x", padx=theme.GAP, pady=(2, 0))
+        tk.Label(row2, text="正在看", bg=theme.BG, fg=theme.TEXT,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
-        self.view_combo = ttk.Combobox(row1, textvariable=self._view_var, state="readonly",
-                                       width=15, values=[labels[0]])
-        self.view_combo.pack(side="left", padx=(2, 6))
+        self.view_combo = ttk.Combobox(row2, textvariable=self._view_var, state="readonly",
+                                       width=13, values=[labels[0]])
+        self.view_combo.pack(side="left", padx=(4, 0))
         self.view_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_view_pick())
-        tk.Label(row1, text="宿舍", bg=theme.BG, fg=theme.TEXT,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(0, 4))
+        tk.Label(row2, text="宿舍", bg=theme.BG, fg=theme.TEXT,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(6, 0))
         self.dorm_var = tk.StringVar()
-        self.dorm_combo = ttk.Combobox(row1, textvariable=self.dorm_var, state="readonly",
-                                       width=14, values=[])
-        self.dorm_combo.pack(side="left")
+        self.dorm_combo = ttk.Combobox(row2, textvariable=self.dorm_var, state="readonly",
+                                       width=12, values=[])
+        self.dorm_combo.pack(side="left", padx=(4, 0))
         self.dorm_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_dorm_pick())
-        self.unlock_btn = ttk.Button(row1, text="全部解锁…", width=10,
+        self.unlock_btn = ttk.Button(row2, text="全部解锁…", width=10,
                                      command=self._clear_locks)
         self.unlock_btn.pack(side="left", padx=(6, 0))
 
-        # —— ② 提示行（「改动落到哪些班次」+ 口径说明，**同一行**）——
+        # —— ③ 提示行（「改动落到哪些班次」+ 口径说明）——
         # ⚠️ `set_facility_slots(manual=True)` 锁的是**传进来的整段位次**（`touched=len(slots)`），
         #    所以放一个人，**整间宿舍的 ☑ 都会点亮** —— 这是已批准的口径（「摆位即上锁」），
         #    界面必须把后果固定写出来（不管提示行说什么它都在），并给出怎么交还。
@@ -1178,19 +1218,34 @@ class IdleToDormMixin:
 
         为什么 auto：逐次表的行数随周期数与候选人数浮动，固定高度要么撑爆内容区、
         要么白留一大块。
+
+        ⚠️ 两栏布局（`_two_col`）下**不能**用"整页减已用"：左栏与右栏是**并排**的，
+        减出来的高度会把左栏那一份也算进去（于是表格高得离谱、整页被顶出内容区）。
+        而这时左栏的 `winfo_reqheight()` **恒为 1**（`pack_propagate(False)` 切断了
+        "孩子撑大父容器"），所以只能给一个**估值** `IDLE_TABLE_H_INIT` ——
+        建表之后由 `BatchMixin._fit_table_height()` 那条自校正兜底（实测示例排班
+        自然高 700 的下限附近，右栏与左栏差不多高）。
         """
         if self._table_h is not None:
             return self._table_h
         self.update_idletasks()
+        if getattr(self, "_two_col", None) is not None:
+            return IDLE_TABLE_H_INIT
         used = sum(w.winfo_reqheight() for w in self.winfo_children())
         # 表格之后还有一行说明（约 45px，wraplength 会折行）与内边距 → 留 82px
         return max(MIN_TABLE_H, self._page_h - used - 82)
 
     # ------------------------------------------------------------ 表格
-    def _build_table(self) -> None:
-        """可滚动的分组表（结构固定，内容随 `self._groups` 重建）。"""
-        body = tk.Frame(self, bg=theme.BG)
-        body.pack(fill="both", expand=True, padx=theme.PAD)
+    def _build_table(self, parent) -> None:
+        """可滚动的分组表（结构固定，内容随 `self._groups` 重建）。
+
+        `parent`＝两栏布局的**右栏**（吃剩余宽度，`sticky="nsew"`）。
+        ⚠️ 用 `pack_propagate(False)` 把高度钉在 `table_height` 上：右栏在 grid 里是
+        `sticky="nsew"`，不钉的话画布高度会被"剩余空间"二次解释（实测表格忽高忽低）。
+        """
+        body = tk.Frame(parent, bg=theme.BG, height=self.table_height)
+        body.pack(fill="both", expand=True)
+        body.pack_propagate(False)
         self.canvas = tk.Canvas(body, bg=theme.PANEL, highlightthickness=1,
                                 highlightbackground=theme.BORDER, height=self.table_height)
         self.scroll = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
@@ -1205,12 +1260,10 @@ class IdleToDormMixin:
         self.vs = VScroll(self.canvas, self.scroll, self.inner, win=self._win)
         self._fill_table()
         self.vs.refresh()          # 行建完 → 立刻重算滚动区间（别等几何事件）
-        tk.Label(self, text="「说明」列是引擎在那一刻**实际做的安排**（她进了哪间宿舍的第几号位、"
-                            "与谁互换、或者为什么没安排）。要手动指定位置，用上面的 **③ 手动入宿**"
-                            "（或「干员与心情」的位置列 / 看板）—— 那写的是布局本身（手动编辑层，"
-                            "优先级高于自动入宿）。",
-                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=700, anchor="w",
-                 padx=theme.PAD).pack(anchor="w", pady=(2, 0))
+        tk.Label(parent, text="「说明」列是引擎实际做的安排（进了哪间宿舍第几号位、"
+                              "与谁互换、或为什么没安排）",
+                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=IDLE_MANUAL_W,
+                 anchor="w").pack(anchor="w", pady=(2, 0))
 
     def _fill_table(self) -> None:
         for w in self.inner.winfo_children():
@@ -1257,9 +1310,9 @@ class IdleToDormMixin:
                                                               self._schedule_rebuild()))
                 chk.pack(side="left", padx=(6, 4))
                 # 只读说明：引擎这一刻的安排（进了哪/为什么没进）
-                detail = (note or "").strip() or "—"
+                detail = _tidy_note(note)
                 tk.Label(row, text=detail, bg=bg, fg=theme.MUTED, anchor="w",
-                         justify="left", wraplength=430,
+                         justify="left", wraplength=IDLE_MANUAL_W + 60,
                          font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
                 self._rows.append((key, use, dirty))
                 self._widgets.append(chk)
