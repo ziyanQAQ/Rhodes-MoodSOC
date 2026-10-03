@@ -35,6 +35,7 @@ if str(ROOT) not in sys.path:
 
 from store.session import Session  # noqa: E402
 from store.session import MAX_CYCLES  # noqa: E402
+from store.session import seat_values  # noqa: E402
 from ui import theme  # noqa: E402
 from ui.board import BaseBoard, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
@@ -1252,11 +1253,12 @@ class MoodSocApp(tk.Tk):
         `detached` 是**「不在基建」名单**（既不在工作设施、也不在宿舍的人）；
         `None` = 用户没动过这一段 → 保留现有名单（别把导入带来的名单抹掉）。
         """
-        n_ops = 0
-        for i in sorted(changes):
-            facs = changes[i]
-            n_ops += sum(len(f.get("operators", [])) for f in facs)
-            self.schedule = self.schedule.replaced_shift(i, facs)
+        n_ops = sum(1 for i in sorted(changes) for f in changes[i]
+                    for n in seat_values(f) if n)
+        # ⚠️ **Q15=(a)**：界面摆位**也写手动台账**（"手动入宿"不止设置页那一个入口）。
+        #    走 `apply_manual_shifts` 而不是本地 `replaced_shift`：它只给"占位真的变了"的
+        #    设施打标（未动的房间不会被顺手锁上），并且**不重算**（下面的异步重算统一算一次）。
+        n_fac = self.session.apply_manual_shifts(changes, recompute=False)
         # 心情整份替换起点 + 收下锚点（**原样替换**：`None` 也当空列表，
         # 否则删掉的锚点会留在引擎里继续生效 —— 这条口径现在写在 Session 里）
         self.session.initial_moods = {str(k): v for k, v in dict(moods).items()}
@@ -1271,7 +1273,7 @@ class MoodSocApp(tk.Tk):
         n_bench = len(self.session.bench_names())
         self._status_after_recalc = (
             f"设置已生效：{which}"
-            + (f"（{n_ops} 个位置）" if changes else "")
+            + (f"（{n_fac} 间房 / {n_ops} 个位置）" if changes else "")
             + f"　｜　手动起点心情 {len(moods)} 名，其余用导入值"
             + (f"　｜　不在基建 {n_bench} 名" if n_bench else "")
             + (f"　｜　心情指定事件 {len(self.mood_events)} 条" if self.mood_events else ""))

@@ -93,6 +93,8 @@ SESSION_METHOD_OWNER = {
     "replace_facilities": "布局", "facilities_of": "布局",
     # 2026-10：显式上锁 / 解锁（只改 `manual` 台账，不动占位）
     "set_seat_lock": "布局", "clear_seat_locks": "布局", "locked_seats_of": "布局",
+    # 2026-10：界面整批摆位的落地口（Q15=(a)：界面摆位也写手动台账）
+    "apply_manual_shifts": "布局", "manual_dorm_editor_state": "布局",
     # —— 心情 ——
     "set_initial_mood": "心情", "set_initial_moods": "心情", "set_mood_at": "心情",
     "clear_mood_events": "心情", "restore_imported_moods": "心情",

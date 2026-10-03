@@ -1116,6 +1116,59 @@ class Session:
             out.append(copy)
         return out
 
+    def apply_manual_shifts(self, changes: Dict[int, List[dict]],
+                            recompute: bool = True) -> int:
+        """**整批**落地"按班次的布局改动"，并把**占位真的变了**的设施记进手动台账。
+
+        `changes` = `{班次下标: 布局列表}`；每个布局项是**设施描述**（`ui/batch.py` 给的
+        "按位次对齐的名字列表"放在 `operators` 里，空串＝空槽）。返回**改动过的设施数**。
+
+        **Q15=(a) 的落点**："任何界面摆位都算手动入宿" —— 所以这条路的台账语义与
+        `set_facility_slots` 一致：**传进来的整段位次都算人管**（含被清空的 ⇒ "保持空着"）。
+
+        ⚠️ 为什么不是让调用方逐间调 `set_facility_slots`：
+        ① **只动"占位真的变了"的设施** —— 面板给的是一整班布局，未动的房间不该被"手动钉住"
+           （否则"改一行"会把整班都锁上，自动入宿从此再也进不来）；
+        ② **可只重算一次** —— 逐间调会各自 `recompute()`，一次粘贴改 8 间房就是 8 次重算
+           （界面明显卡）；`recompute=False` 时由调用方统一触发（界面走异步重算）。
+        """
+        if self.schedule is None or not changes:
+            return 0
+        written = 0
+        marked = 0
+        for i in sorted(changes):
+            if not (0 <= i < len(self.schedule.shifts)):
+                continue
+            facs = self.facilities_of(i)
+            hit = False
+            for fi, item in enumerate(changes[i]):
+                if fi >= len(facs):
+                    break
+                if not isinstance(item, dict):
+                    continue
+                # 比较用**名字**（位次对齐），写回用**spec**（保留 `{"elite":…}` 对象写法 ——
+                # 用名字写回会把这一房所有人的练度悄悄拍回默认 E2/Lv30）。
+                new_values = _seat_values(item)
+                old_values = _seat_values(facs[fi])
+                fac = dict(item)                      # 面板给的整份（等级/名称/其它键都带上）
+                _write_seats(fac, _seat_specs(item))  # 收敛成唯一正式写法（紧凑/带空洞）
+                if new_values != old_values:
+                    # 占位变了 ⇒ 整段位次算人管（含被清空的：**清空即上锁**）
+                    _write_manual(fac, raw_slots=[k for k, n in enumerate(new_values) if n],
+                                  raw_names=[n for n in new_values if n],
+                                  touched=max(len(new_values), len(old_values)))
+                    marked += 1
+                facs[fi] = fac
+                hit = True
+                written += 1
+            # ⚠️ 只要写过就装这份布局 —— **不能只看"有没有打标"**：面板只改房间等级时
+            #    占位一个都没变，但那份 `level` 必须落进 `schedule`（否则改等级静默失效）。
+            if hit:
+                self.schedule = self.schedule.replaced_shift(i, facs)
+        if written and recompute:
+            self.recompute()
+        return written
+
     # ---------------------------------------------------------------- 心情
     def imported_moods(self) -> Dict[str, Decimal]:
         """导入时各人的起点心情（「恢复导入值」用的基准）。"""

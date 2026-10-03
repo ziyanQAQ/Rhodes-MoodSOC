@@ -740,6 +740,29 @@ def test_manual_dorm_editor_state():
     check("同时给出班次清单（编辑器要按班次切换）",
           [k for k, _label in st["shifts"]] == [0], str(st["shifts"]))
 
+
+def test_apply_manual_shifts():
+    print("界面整批摆位也写手动台账（Q15=(a)：`Session.apply_manual_shifts`）")
+    from store.session import Session
+
+    s = Session()
+    s.load_layout({"facilities": [
+        {"type": "宿舍", "level": 1, "capacity": 5, "operators": ["甲", "乙"]},
+        {"type": "制造站", "level": 3, "operators": ["丙"]}]}, hours=1)
+    facs = s.facilities_of(0)
+    # 面板风格：设施描述里 `operators` 是"按位次对齐的名字列表"（空串＝空槽）
+    facs[0] = dict(facs[0], operators=["甲", "", "丁"])
+    n = s.apply_manual_shifts({0: facs})
+    raw = s.schedule.shifts[0].facilities[0]
+    check("改过的设施被写回，且**整段位次**进台账（含被清空的那一位）",
+          raw.get("slots") == ["甲", None, "丁"]
+          and raw.get("manual") == {"slots": [0, 1, 2], "names": ["丁", "甲"]},
+          str(raw))
+    check("制造站没被改 ⇒ **一个标都不打**（不能因为「顺带过一遍」就把它锁上）",
+          "manual" not in s.schedule.shifts[0].facilities[1],
+          str(s.schedule.shifts[0].facilities[1]))
+    check("返回值＝写过的设施数（状态栏「几间房」用它）", n == 2, str(n))
+
     # —— 手动锁优先于**进驻事件**（用户裁决 Q-A=(a)：只换心情、不换位置）——
     #    入驻事件在 `restore_back=False` 时会顺手对调两人的位置，而它过去**绕过台账**
     #    ⇒ 手动钉住的人/位次会被它挪走。"手动锁＝第 1 层、永不被动"要没有例外。
