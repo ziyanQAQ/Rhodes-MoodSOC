@@ -763,6 +763,55 @@ def test_apply_manual_shifts():
           str(s.schedule.shifts[0].facilities[1]))
     check("返回值＝写过的设施数（状态栏「几间房」用它）", n == 2, str(n))
 
+
+def test_manual_lock_holds_every_point():
+    print("手动锁在**每个周期 / 每个换班执行点**都生效（世界级回归）")
+    from mood_soc.battery import to_decimal
+    from store.session import Session
+
+    s = Session()
+    s.load_layout({"facilities": [
+        {"type": "制造站", "level": 3, "operators": ["甲"]},
+        {"type": "宿舍", "level": 1, "capacity": 5}]}, hours=24)
+    s.set_detached(["乙"])                        # 名单里的人也是自动入宿的候选
+    s.initial_moods["乙"] = to_decimal("10")      # 心情 < 24 才会被安排
+    s.set_cycles(2)
+    s.recompute()
+
+    def dorm_seats(t):
+        w = s.traj.world_at(t)
+        dorm = next(f for f in w.facilities if f.ftype == FacilityType.DORMITORY)
+        m = dorm.slot_map()
+        return [m[i].name if i in m else "" for i in range(int(dorm.capacity))]
+
+    starts = [seg[0] for seg in s.traj.segments]
+    check("前提：这份排班确实有多个执行点（2 周期 × 24h ⇒ 班初 + 班内 12h）",
+          len(starts) >= 4, f"{len(starts)} 段：{starts}")
+    check("没锁时：**班初那一段**她被安排到第 1 位",
+          dorm_seats(starts[0])[0] == "乙",
+          str([dorm_seats(t) for t in starts]))
+    # ⚠️ 后面几段她**不在宿舍**是**文档化行为**、不是 bug：候选条件是"实时心情 < 24"，
+    #    而她在宿舍里回满 24 之后就不再是候选；位置又每个执行点从 `pristine` 重建
+    #    （她不在原始布局里）⇒ 那几段她是"不在基建"的平线。心情是满的，数值无害。
+
+    s.set_seat_lock(0, 1, 0)                      # 锁住"宿舍"第 1 位（空位）
+    starts2 = [seg[0] for seg in s.traj.segments]
+    check("锁住第 1 位后：**每个**执行点的第 1 位都是空的（锁跨周期、跨执行点都成立）",
+          all(dorm_seats(t)[0] == "" for t in starts2),
+          str([dorm_seats(t) for t in starts2]))
+    check("班初那一段她被改安排到第 2 位（锁只是把她挪开，不是把她挡在门外）",
+          dorm_seats(starts2[0])[1] == "乙",
+          str([dorm_seats(t) for t in starts2]))
+    # ★ 这条才是勘察点名的空白：**台账随深拷贝走到每一段、每个周期**
+    from mood_soc.models import read_manual
+    leds = []
+    for t in starts2:
+        w = s.traj.world_at(t)
+        dorm = next(f for f in w.facilities if f.ftype == FacilityType.DORMITORY)
+        leds.append(sorted(read_manual(dorm).slots))
+    check("每一段的世界里那份手动锁都在（`read_manual(...).slots == [0]` × 4 段）",
+          all(x == [0] for x in leds), str(leds))
+
     # —— 手动锁优先于**进驻事件**（用户裁决 Q-A=(a)：只换心情、不换位置）——
     #    入驻事件在 `restore_back=False` 时会顺手对调两人的位置，而它过去**绕过台账**
     #    ⇒ 手动钉住的人/位次会被它挪走。"手动锁＝第 1 层、永不被动"要没有例外。
