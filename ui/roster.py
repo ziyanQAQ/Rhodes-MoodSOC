@@ -7,7 +7,8 @@
 - **固定顺序**（班次出现顺序）——不按心情排序，否则拖动滑块时格子会跳来跳去；
   "谁危险"靠颜色（红→绿）与右上角的"最危险 3 人"文字体现。
 - 位置标记（`制1` / `宿3` / `中`…）：显示他**在当前班次**在哪；不在本班次时显示 `休` 并置灰。
-- **左键** = 对点（右侧曲线切到该干员）；**右键** = 设他的心情（周期起点）。
+- **左键** = 对点（右侧曲线切到该干员）；本控件**只做展示与点选**，不改任何数据
+  （设心情走右侧「设置心情…」或「设置 → 干员与心情」——2026-10 起右键设心情已撤掉）。
 """
 from __future__ import annotations
 
@@ -24,12 +25,10 @@ COLUMNS_MAX = 14
 class RosterStrip(tk.Frame):
     """全员一览：芯片网格 + "最危险 3 人"提示。"""
 
-    def __init__(self, master, on_pick: Optional[Callable[[str], None]] = None,
-                 on_set_mood: Optional[Callable[[str], None]] = None, **kw):
+    def __init__(self, master, on_pick: Optional[Callable[[str], None]] = None, **kw):
         kw.setdefault("bg", theme.BG)
         super().__init__(master, **kw)
         self.on_pick = on_pick
-        self.on_set_mood = on_set_mood
         self.chips: List[MoodChip] = []
         self.by_name: Dict[str, MoodChip] = {}
         self._entries: List[str] = []
@@ -91,10 +90,9 @@ class RosterStrip(tk.Frame):
             v.set_tag(tags.get(v.operator, "休"))
             v.dim = v.operator not in tags
         self.hint.configure(
-            text=f"{len(self.chips)} 名干员　左键=对点看曲线　右键=设心情　"
+            text=f"{len(self.chips)} 名干员　左键=点选看曲线　"
                  f"（位置标记＝当前班次所在房间，「休」=本班次未排班，"
-                 f"「不」=不在基建（心情不变））"
-                 f"　｜　看板：左键选人/更换/清空·右键设心情")
+                 f"「不」=不在基建（心情不变））")
 
     def update_moods(self, moods: Dict[str, Decimal], quick: bool = False) -> None:
         """时间滑动时更新所有芯片（含"不在本班次"的：他们的心情由轨迹给出）。"""
@@ -179,8 +177,7 @@ class RosterStrip(tk.Frame):
             self.body.columnconfigure(i, weight=1, uniform="roster")
         for i, name in enumerate(self._entries):
             chip = MoodChip(self.body, width=theme.ROSTER_CHIP_W, show_tag=True,
-                            on_left=lambda n=name: self._pick(n),
-                            on_right=lambda n=name: self._set_mood(n))
+                            on_left=lambda n=name: self._pick(n))
             chip.grid(row=i // columns, column=i % columns, sticky="ew", padx=1, pady=1)
             chip.set(name, mood=None, tag="")
             self.chips.append(chip)
@@ -189,10 +186,6 @@ class RosterStrip(tk.Frame):
     def _pick(self, name: str) -> None:
         if self.on_pick:
             self.on_pick(name)
-
-    def _set_mood(self, name: str) -> None:
-        if self.on_set_mood:
-            self.on_set_mood(name)
 
     # ------------------------------------------------------------------ 联动
     def flash(self, name: str) -> bool:

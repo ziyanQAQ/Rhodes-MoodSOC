@@ -38,13 +38,13 @@ from store.session import MAX_CYCLES  # noqa: E402
 from ui import theme  # noqa: E402
 from ui.board import BaseBoard, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
-from ui.dialogs import ask_operator, ask_level, ask_mood  # noqa: E402
+from ui.dialogs import ask_operator, ask_mood  # noqa: E402
 from ui.roster import RosterStrip  # noqa: E402
 # 视图**只从 store 取计算与状态**：排班引擎、装配、心情查询都在 Session 与 store.schedule 里。
 from ui.schedule import all_operator_names  # noqa: E402  （转发自 store.schedule）
 from mood_soc import entry_target_kind  # noqa: E402
 from mood_soc.battery import to_decimal  # noqa: E402
-from mood_soc.config import MOOD_MAX, facility_max_level, facility_slots  # noqa: E402
+from mood_soc.config import MOOD_MAX  # noqa: E402
 from mood_soc.models import normalize_entry_when  # noqa: E402
 from data.paths import MAA_SAMPLE, RES as DATA_RES  # noqa: E402
 
@@ -493,9 +493,9 @@ class MoodSocApp(tk.Tk):
         body = tk.Frame(self, bg=theme.BG)
         body.pack(fill="both", expand=True, padx=theme.PAD)
 
-        self.board = BaseBoard(body, on_slot_click=self.on_slot_left,
-                               on_slot_right=self.on_slot_right,
-                               on_room_click=self.on_room_left)
+        # 看板**只做展示**（2026-10）：不传任何点击回调 —— 位置/房间头都点不动，
+        # 手动入宿与心情的入口在「设置 → 干员与心情 / 闲置入宿」。
+        self.board = BaseBoard(body)
         self.board.pack(side="left", fill="both", expand=True)
 
         right = tk.Frame(body, bg=theme.PANEL, highlightbackground=theme.BORDER,
@@ -530,8 +530,8 @@ class MoodSocApp(tk.Tk):
         self.stats.pack(fill="x", padx=theme.PAD, pady=(0, theme.PAD))
 
         # 全员一览（横条，铺在下方）：把整个周期出现过的干员一次全部摆出来
-        self.roster = RosterStrip(self, on_pick=self.on_roster_pick,
-                                 on_set_mood=self.on_roster_set_mood)
+        # （只做**点选**：左键 = 对点看曲线；右键设心情已随"看板只做展示"一起撤掉）
+        self.roster = RosterStrip(self, on_pick=self.on_roster_pick)
         self.roster.pack(fill="x", pady=(theme.GAP, 0))
 
     # ================================================================== 底部
@@ -1085,7 +1085,12 @@ class MoodSocApp(tk.Tk):
         return self.schedule.index_at(self.current_t)
 
     def on_slot_left(self, fac_index: int, slot_index: int):
-        """左键：选人 / 更换 / 清空该位置。"""
+        """**程序化入口**（界面已不再绑定；供新编辑器 / 测试用）：选人 / 更换 / 清空该位置。
+
+        2026-10 起看板只做展示，位置芯片不再绑左键 —— 但这段实现是"把手动入宿
+        写进布局"的现成路径（`Session.set_slots`），所以**留着**：
+        `scripts/verify_modules.py` 的「布局」写入口表里有它，下一步的新编辑器要用。
+        """
         if self.schedule is None:
             return
         idx = self._editing_shift_index()
@@ -1105,42 +1110,6 @@ class MoodSocApp(tk.Tk):
         self._layout_sig = None
         self.recompute_async()
 
-    def on_slot_right(self, fac_index: int, slot_index: int):
-        """右键：设置该位置干员的心情（周期起点）。"""
-        if self.schedule is None:
-            return
-        idx = self._editing_shift_index()
-        facility = self.schedule.shifts[idx].world.facilities[fac_index]
-        if slot_index >= len(facility.operators):
-            return
-        who = facility.operators[slot_index].name
-        self._ask_and_set_mood(who)
-
-    def on_room_left(self, fac_index: int):
-        """点房间卡头：改这间房的**等级**（容量随之变化）。
-
-        上游依据：`rooms[].phases[lv].maxStationedNum` —— 制造站/贸易站 1/2/3 人、发电站 1/1/1、
-        宿舍 5、控制中枢 1~5、会客室/训练室 2、加工站/办公室 1。宿舍等级还决定基础回复；
-        中枢等级决定中枢能站几个人（→ 全基建减免）。
-        """
-        if self.schedule is None:
-            return
-        idx = self._editing_shift_index()
-        facility = self.schedule.shifts[idx].world.facilities[fac_index]
-        ftype = facility.ftype
-        new_lv = ask_level(self, facility.display_name, facility.level,
-                           facility_max_level(ftype),
-                           lambda lv: facility_slots(ftype, lv))
-        if new_lv is None or new_lv == facility.level:
-            return
-        self.session.set_room_level(idx, fac_index, int(new_lv))
-        self._layout_sig = None
-        self.recompute_async()
-        self._status_after_recalc = (
-            f"{facility.display_name} 已设为 Lv{new_lv}"
-            f"（可放 {facility_slots(ftype, new_lv)} 人）"
-            + (f"　⚠ {self._layout_issues()}" if self._layout_issues() else ""))
-
     def set_curve_mood(self):
         """右侧面板：给当前曲线选中的干员设心情。"""
         if not self.curve_operator:
@@ -1157,10 +1126,6 @@ class MoodSocApp(tk.Tk):
         self._update_chart()
         if not self.board.highlight(who):
             self.status.configure(text=f"{who} 不在当前班次（点上方班次按钮可切换）")
-
-    def on_roster_set_mood(self, who: str):
-        """全员一览右键：设该干员心情（周期起点）。"""
-        self._ask_and_set_mood(who)
 
     def _ask_and_set_mood(self, who: str):
         current = self.initial_moods.get(who, self._current_start_mood(who))

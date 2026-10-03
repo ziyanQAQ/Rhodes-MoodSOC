@@ -120,7 +120,9 @@ WRITE_ENTRY_OWNER = {
     "_apply_clock": "时间轴", "_on_cycles": "时间轴", "on_cycles_changed": "时间轴",
     # —— 布局 ——
     "op_set_slots": "布局", "op_set_room_level": "布局", "_apply_facilities": "布局",
-    "on_slot_left": "布局", "on_room_left": "布局",
+    # 2026-10：看板只做展示 ⇒ `on_room_left`（点房间头改等级）已删，登记一并撤掉；
+    #           `on_slot_left` 保留（界面不再绑定，但它是"手动入宿写进布局"的程序化入口）
+    "on_slot_left": "布局",
     # —— 心情 ——
     "op_set_initial_moods": "心情", "op_set_moods": "心情", "op_set_mood_at": "心情",
     "op_clear_mood_events": "心情", "op_restore_imported_moods": "心情",

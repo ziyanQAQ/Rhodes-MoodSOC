@@ -21,13 +21,15 @@
 
 > 想调排布：改 `ROW_ORDER` / `SMALL_TYPES` / `PER_ROW` 即可。房间数与容量仍完全由导入的排班决定。
 
-交互：**左键**位置 → 选人/更换/清空；**右键**位置 → 设该干员的心情（周期起点）。
+交互（2026-10 起）：**只做展示** —— 位置芯片与房间卡头都不再接受点击改数据，
+手动入宿与心情的调节入口全在「设置 → 干员与心情 / 闲置入宿」；
+看板只随时间滑块刷新芯片上的心情数值与颜色。
 """
 from __future__ import annotations
 
 import tkinter as tk
 from decimal import Decimal
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from mood_soc.config import FACILITY_LABELS
 
@@ -95,18 +97,14 @@ class SlotView:
 class BaseBoard(tk.Frame):
     """可滚动的基建看板（紧凑芯片布局）。
 
-    `on_slot_click(fac_index, slot_index)`：**左键**（选人/更换/清空）
-    `on_slot_right(fac_index, slot_index)`：**右键**（设置该位置干员的心情）
+    **只做展示**：位置芯片与房间卡头都不绑任何点击（所以本类没有 `on_slot_click` /
+    `on_slot_right` / `on_room_click` 这类回调参数）；改布局/改等级/设心情的入口在
+    「设置 → 干员与心情 / 闲置入宿」，看板只跟着时间刷新芯片上的心情。
     """
 
-    def __init__(self, master, on_slot_click: Optional[Callable[[int, int], None]] = None,
-                 on_slot_right: Optional[Callable[[int, int], None]] = None,
-                 on_room_click: Optional[Callable[[int], None]] = None, **kw):
+    def __init__(self, master, **kw):
         kw.setdefault("bg", theme.BG)
         super().__init__(master, **kw)
-        self.on_slot_click = on_slot_click
-        self.on_slot_right = on_slot_right
-        self.on_room_click = on_room_click          # 点房间头 = 改这间房的等级
         self.slots: List[SlotView] = []
         self.chip_by_operator: Dict[str, MoodChip] = {}
         self._chips: Dict[tuple, MoodChip] = {}      # (设施下标, 座位号) → 芯片（复用用）
@@ -322,19 +320,17 @@ class BaseBoard(tk.Frame):
         head.pack(fill="x")
         tk.Label(head, text=facility_tag(facility, ordinal), bg=theme.PANEL_ALT, fg=theme.TEXT,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=(6, 4), pady=1)
-        # 房间头可点：改这间房的等级（容量随之变化；上游 rooms[].phases[lv].maxStationedNum）
+        # 房间卡头**只显示**等级：改等级在「设置 → 干员与心情」的等级下拉里
+        # （容量随之变化；上游 rooms[].phases[lv].maxStationedNum）
         lv_label = tk.Label(head, text=f"{label} Lv{facility.level}", bg=theme.PANEL_ALT,
-                            fg=theme.MUTED, cursor="hand2",
+                            fg=theme.MUTED,
                             font=(theme.FONT_FAMILY, theme.FS_SMALL))
         lv_label.pack(side="left", pady=1)
-        lv_label.bind("<Button-1>", lambda _e: self._room_click(fac_index))
         over = len(facility.operators) > facility.capacity
         count = tk.Label(head, text=f"{len(facility.operators)}/{facility.capacity}",
                          bg=theme.PANEL_ALT, fg=(theme.DANGER if over else theme.MUTED),
                          font=(theme.FONT_FAMILY, theme.FS_SMALL))
         count.pack(side="right", padx=(2, 6), pady=1)
-        if over:
-            count.bind("<Button-1>", lambda _e: self._room_click(fac_index))
 
         strip = tk.Frame(card, bg=theme.PANEL)
         strip.pack(fill="x", padx=4, pady=3)
@@ -351,10 +347,12 @@ class BaseBoard(tk.Frame):
 
     def _build_slot(self, parent: tk.Frame, fac_index: int, slot_index: int,
                     operator: Optional[str], horizontal: bool = False) -> None:
-        """横向卡片（控制中枢铺满整行）→ 芯片横排；竖向卡片 → 芯片纵向堆叠。"""
-        chip = MoodChip(parent, width=theme.CHIP_MIN_W,
-                        on_left=lambda: self._click(fac_index, slot_index),
-                        on_right=lambda: self._right(fac_index, slot_index))
+        """横向卡片（控制中枢铺满整行）→ 芯片横排；竖向卡片 → 芯片纵向堆叠。
+
+        芯片**不传 `on_left` / `on_right`**：看板只做展示，点它不改任何数据
+        （`MoodChip` 本身的左右键能力保留，是通用部件能力，别的地方照用）。
+        """
+        chip = MoodChip(parent, width=theme.CHIP_MIN_W)
         if horizontal:
             chip.pack(side="left", fill="x", expand=True, padx=(0, 3))
         else:
@@ -366,18 +364,6 @@ class BaseBoard(tk.Frame):
         self._chips[(fac_index, slot_index)] = chip
         if operator:
             self.chip_by_operator[operator] = chip
-
-    def _click(self, fac_index: int, slot_index: int) -> None:
-        if self.on_slot_click:
-            self.on_slot_click(fac_index, slot_index)
-
-    def _room_click(self, fac_index: int) -> None:
-        if self.on_room_click:
-            self.on_room_click(fac_index)
-
-    def _right(self, fac_index: int, slot_index: int) -> None:
-        if self.on_slot_right:
-            self.on_slot_right(fac_index, slot_index)
 
     # ------------------------------------------------------------------ 刷新
     def update_moods(self, moods: Dict[str, Decimal], quick: bool = False) -> None:
