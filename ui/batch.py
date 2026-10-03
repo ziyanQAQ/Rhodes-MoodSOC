@@ -1796,8 +1796,10 @@ class BatchMixin:
                 ops.append("")
             ops[si] = name
             filled += 1
-        for f in self._fac_names:                   # 收掉空位（引擎按顺序读 operators，不留洞）
-            f["operators"] = [n for n in f.get("operators", []) if n]
+        # ⚠️ 这里**不再"收掉空位"**（旧实现是 `[n for n in ops if n]`）：位次是正式概念
+        #    —— "第 3 位"被清空之后后面的人**不左移**；而且工作副本的 `operators` 是
+        #    **按位次对齐的名字列表**（空串＝空槽），出口 `value()` 用 `write_seats` 收敛。
+        #    塌缩会让位次整体前移，与"位次不左移"直接冲突（也是 `_apply_names` 的老 bug）。
         self._mark_dirty()
         self._rebuild_rows()
         left = max(0, len(names) - len(slots))                 # 位置不够、没排上的
