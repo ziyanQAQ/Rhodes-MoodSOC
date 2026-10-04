@@ -1147,24 +1147,44 @@ def test_entry_event_scope():
           "（漏了就会「第 2 个周期起一次都不再触发」）",
           len(events) == 1 and moods["菲亚梅塔"] == Decimal("6"), f"{events} {moods}")
 
-    # 名单里 + 默认「前一位进驻」：她不属于任何房间 ⇒ 没有「前一位」，静默不换
+    # 名单里 + 默认「前一位进驻」：她不属于任何房间 ⇒ 没有「前一位」，不换
+    # ⚠️ 本用例**原来钉的是"静默"**（旧断言：`events == []`）。2026-10 起"过了满 24 那道门
+    #    却没换成"**一律记一条 `entry_swap_skipped` 说明**（用户要求：别让用户只看到"没换"、
+    #    看不出原因），所以期望值改成"一条说明 + 数值一字不变"；不换这个结论没变。
     w2 = build_base_layout({"facilities": [
         {"type": "宿舍", "level": 5, "operators": [{"name": "路人", "mood": "6"}]}],
         "detached": ["菲亚梅塔"]})
     m2 = {"菲亚梅塔": Decimal("24")}
     events = apply_entry_events(w2, enabled=True, detached_moods=m2)
-    check("名单里 + 默认「前一位进驻」⇒ 没房间就没「前一位」，不换（也不报错）",
-          events == [] and m2["菲亚梅塔"] == Decimal("24"), f"{events} {m2}")
+    check("名单里 + 默认「前一位进驻」⇒ 没房间就没「前一位」，不换；"
+          "**但记一条说明**（原来静默，数值不变）",
+          [e.group for e in events] == ["entry_swap_skipped"]
+          and m2["菲亚梅塔"] == Decimal("24"), f"{events} {m2}")
 
-    # ④ 她完全没出现在这一班（未排班、也不在名单）⇒ 不触发
+    # ④ **触发者的判据是"实时心情表里有、这一班的世界里没有"**（2026-10 修 bug，用户原话
+    #    「算存在：本班未排班也触发」）—— 她**不在** `world.detached` 里、也不在这一班的
+    #    任何设施里，但那张表里有她 ⇒ **照样触发**。
+    #    ⚠️ 本用例**原来钉的正好是相反的边界**（旧断言："她本班完全没出现 ⇒ 不触发"）：
+    #    那是"本班未排班也算在场"这条裁决**之前**的口径，故反过来写。
     w = build_base_layout({"facilities": [
         {"type": "宿舍", "level": 5, "operators": [{"name": "路人", "mood": "6"}]}]})
     moods = {"菲亚梅塔": Decimal("24")}
     events = apply_entry_events(w, enabled=True, swap_with="路人", scope="anywhere",
                                 detached_moods=moods)
-    check("她本班完全没出现（未排班、也不在名单）⇒ 不触发（这就是放宽的**边界**）",
-          events == [] and moods["菲亚梅塔"] == Decimal("24")
-          and w.get_operator("路人").mood == Decimal("6"), f"{events} {moods}")
+    check("她本班未排班（不在任何设施、也不在显式名单）⇒ **照样触发**（判据＝实时心情表）",
+          len(events) == 1 and events[0].group == "entry_swap"
+          and moods["菲亚梅塔"] == Decimal("6")
+          and w.get_operator("路人").mood == Decimal("24"), f"{events} {moods}")
+    check("例外**只限「她算不算在场」**：换完她仍旧不在 `facilities` 里（不进任何技能计数）",
+          w.get_operator("菲亚梅塔") is None and w.facility_of("菲亚梅塔") is None
+          and w.detached == [], f"{w.detached}")
+    # 真正的边界＝**那张实时心情表里根本没有她**（没传表 / 表里没她）⇒ 不触发
+    w3 = build_base_layout({"facilities": [
+        {"type": "宿舍", "level": 5, "operators": [{"name": "路人", "mood": "6"}]}]})
+    events = apply_entry_events(w3, enabled=True, swap_with="路人", scope="anywhere",
+                                detached_moods={"别人": Decimal("24")})
+    check("实时心情表里没有她 ⇒ 不触发（这才是现在的边界）",
+          events == [] and w3.get_operator("路人").mood == Decimal("6"), f"{events}")
 
     # ⑤ 排班层端到端：引擎把**实时心情表**交给进驻事件（名单里的人也判心情）
     facs = [{"type": "贸易站", "level": 3, "operators": [{"name": "路人", "mood": "6"}]}]
@@ -1218,6 +1238,63 @@ def test_entry_event_scope():
               len(ev) == 1 and ev[0].group == "entry_swap" and "本来就相同" in ev[0].detail
               and [o.name for o in w.facilities[0].operators] == ["菲亚梅塔", "路人"],
               f"{mode}: {[(e.group, e.detail) for e in ev]}")
+
+    # ⑧ **「本班未排班」与「显式『不在基建』名单」在引擎里是同一条判据**（2026-10 用户要求
+    #    取证：两条路结果必须一致）。两个世界**逐字相同**，只差 `world.detached` 那一项：
+    #      ① `detached=[]`   ⇒ 她是"本班未排班"（＝被「锁定入宿」顶掉之后的实际状态）
+    #      ② `detached=[她]` ⇒ 她是"显式名单"
+    #    修前 ① **一条事件都没有**（旧判据只认 `world.detached`）—— 这就是用户报的"满 24 却没换"。
+    def _one_world(detached):
+        return build_base_layout({"facilities": [
+            {"type": "贸易站", "level": 3, "operators": [{"name": "龙舌兰", "mood": "2"}]}],
+            "detached": list(detached)})
+
+    outs = []
+    for det in ([], ["菲亚梅塔"]):
+        w1, m1 = _one_world(det), {"菲亚梅塔": Decimal("24")}
+        evs = apply_entry_events(w1, enabled=True, swap_with="龙舌兰", scope="anywhere",
+                                 detached_moods=m1)
+        outs.append(([(e.group, e.detail) for e in evs], m1, w1.get_operator("龙舌兰").mood))
+    check("「本班未排班」与「显式名单」在引擎里是**同一条**：两个世界只差 `world.detached`，"
+          "结算结果逐字相同（修前前者一条事件都没有）",
+          outs[0] == outs[1] and outs[0][0] and outs[0][0][0][0] == "entry_swap",
+          f"{outs[0]} vs {outs[1]}")
+
+    # ⑨ 端到端（真实 MAA 示例 + 用户那套配置「第 1 班：龙舌兰 / anywhere / wait」）：
+    #    ① 走「锁定入宿」把别人锁进她那一格（她被顶掉、**不回原位**）；
+    #    ② 走显式「不在基建」名单。
+    #    两条路在**第 1 班三个周期的班初**都该结算一次心情互换 ⇒ 龙舌兰每次都被换到 24。
+    #    ⚠️ 只在"她的心情"上会有末位（1e-26）差异：② 把她从**所有**班次摘掉，
+    #    而 ① 只摘第 1 班（她在第 2/3 班照常回复）——那是两条路**本来就该有的区别**，
+    #    不是不一致；**「第 1 班班初要不要换」这件事两边一字不差**。
+    from data.paths import MAA_SAMPLE
+    from store.session import Session, seat_values as _seats
+
+    def _entry_session():
+        se = Session()
+        se.load_paths([MAA_SAMPLE])
+        se.set_cycles(3)
+        se.entry_events = True
+        se.entry_swap_with = "龙舌兰"
+        se.entry_scope = "anywhere"
+        se.entry_when = "wait"
+        return se
+
+    s_top, s_list = _entry_session(), _entry_session()
+    fi = next(i for i, f in enumerate(s_top.facilities_of(0))
+              if f.get("type") == "宿舍" and _seats(f)[:1] == ["菲亚梅塔"])
+    s_top.place_operator(0, fi, 0, "泡泡")      # ① 把别人锁进她那一格（她不回原位）
+    s_top.recompute()
+    s_list.set_detached(["菲亚梅塔"])            # ② 显式名单
+    s_list.recompute()
+    rows = []
+    for se in (s_top, s_list):
+        rows.append([(str(se.traj.mood_at("龙舌兰", Decimal(24) * k)),
+                      len([mm for mm in se.traj.marks
+                           if mm.t == Decimal(24) * k and mm.kind == "entry"]))
+                     for k in range(3)])
+    check("① 锁定入宿顶掉 vs ② 显式名单：第 1 班三个周期班初都是「一次事件 + 龙舌兰 24」",
+          rows[0] == rows[1] == [("24.00", 1), ("24", 1), ("24", 1)], f"{rows}")
 
 
 def test_seat_io_roundtrip():
