@@ -729,7 +729,7 @@ class IdleToDormMixin:
     | ② 锁定位置数 | `IdleToDormConfig.protected_slots`（按竖向正序锁前 N 个位置） |
     | ② 黑名单 | `IdleToDormConfig.blacklist`（永远不能**通过闲置入宿进宿舍**的人） |
     | 每行的「参与」 | `per_operator[(周期,班次,干员)].enabled` |
-    | ③ 手动入宿的每格 | `facilities[].slots` + `manual`（只走 `set_facility_slots`） |
+    | ③ 手动入宿的每格 | `facilities[].slots` + `manual`（只走 `set_facility_slots(touched=…)`；**只锁这次碰过的那一格**，累积） |
 
     **逐次表**按时间排（第 1 周期第 1 班 → …），**一个换班执行点一组**：真实班初一组，
     长班（> 12h）的每个**内部换班点**各一组（标题带 `（12h 内部换班）`）；组内只放那一刻
@@ -744,7 +744,8 @@ class IdleToDormMixin:
     ⚠️ **锁在界面上不再暴露**（2026-10 用户口径：「放上去之后自动上锁。**不需要手动上锁**」
     「解锁时只需要**将该位置空**就可以了」「锁功能只作为内部自动入宿进行位置判定时使用，
     而**不对外输出暴露**」）：逐位 `☑ 锁`、「全部解锁…」按钮都已删除 ——
-    **摆位即上锁、清空该位即解锁**。`Session.set_seat_lock` / `clear_seat_locks` 仍保留
+    **摆位即上锁、清空该位即解锁**（⚠️ 且**只锁你碰过的那一格**、累积：同房间导入进来的人
+    不受影响，见 `_write_manual`）。`Session.set_seat_lock` / `clear_seat_locks` 仍保留
     给程序接口（`api/`）：API 可以把一个**空位**单独锁住（"预留空位"）。
 
     ⚠️ 改动会**实时生效**：每次改动 / 改锁定数 / 改黑名单都会回调 `on_change(状态)` ——
@@ -1504,9 +1505,11 @@ class IdleToDormMixin:
         """
         if self._groups_provider is not None:
             self.refresh_groups(self._groups_provider())
-        # ⚠️ **逐位那几行要整块重建**：`set_facility_slots(manual=True)` 锁的是**整段位次**
-        #    （放一个人 ⇒ 同房间其它格子的 ☑ 也会亮起来）。只"改 var 的值"不重建的话，
-        #    界面上那几格的 ☑ 会停在旧样子（用户看到的就是"我改的这一位锁了、别的没锁"）。
+        # ⚠️ **逐位那几行要整块重建**：重算落地后同一格上的人可能已经变了（自动入宿换人 /
+        #    入驻事件），而 `set_facility_slots(manual=True)` 又按**累积**改台账 —— 只"改 var 的
+        #    值"不重建的话，那几格会停在旧样子（用户看到的就是"我改的这一位没生效"）。
+        #    ⚠️ 2026-10 第三次收敛之后台账**只记碰过的那一格**（不再整段连坐），所以这里
+        #    重建的是"人名 + 只读锁态"，与界面上已删掉的 ☑ 无关。
         if self.shift_pick and self.winfo_exists():
             self._refresh_manual_state(force=True)
             self._build_slots()
