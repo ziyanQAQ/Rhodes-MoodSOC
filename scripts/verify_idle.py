@@ -9,6 +9,10 @@
   ① **手动编辑**（`models.ManualLedger`，跟着班次布局走）—— **摆位即上锁、清空即解锁**
      （2026-10 口径反转）：摆了人的**位次**与手动放进去的**人**绝对不碰（不占、不换）；
      **把该位置空＝那一位交还自动入宿**（不再"保持空着"）；导入不打标。
+     ⚠️ **粒度＝只锁你碰过的那些位次（累积）**（2026-10 第三次收敛）：界面两条路交来
+     "碰过哪些位次"（`touched`），台账按"旧 ∩ 现在还在的 ∪ 这次碰过的"算 ⇒ **同房间
+     导入进来的人不受影响、仍可被自动入宿换出**，以前手动放过的格子继续保持锁，
+     清空一格只解一格。不传 `touched` 的老写法＝整段有名字的全算（`set_slots` 的 API 契约）。
      锁只在**内部**（自动入宿判定位置）用 —— 界面上没有 `☑ 锁` / 「全部解锁」，
      但 `Session.set_seat_lock` / `clear_seat_locks` 仍保留给 API（能锁一个**空位**）。
   ② **全局配置** —— 总开关 / 锁定位置数（竖向正序前 N 个**逻辑位次**，默认 5）/
@@ -759,14 +763,104 @@ def test_apply_manual_shifts():
     facs[0] = dict(facs[0], operators=["甲", "", "丁"])
     n = s.apply_manual_shifts({0: facs})
     raw = s.schedule.shifts[0].facilities[0]
-    check("改过的设施被写回，台账只记**摆了人的位次**（清空的那一位交还自动入宿）",
+    # ⚠️ **粒度＝"这次真的改了的那几位"（2026-10 第三次收敛）**：面板交来的是一整班布局，
+    #    但逐位比对之后只有第 2 位（乙→空）与第 3 位（空→丁）算"碰过"；第 1 位的 甲
+    #    是**导入进来的人**、用户没碰 ⇒ 不进 `names`（旧口径把她一起锁上＝连坐）。
+    #    清空的那一位（第 2 位）仍然"摆位即上锁 / 清空即解锁"⇒ 交还自动入宿。
+    check("改过的设施被写回，台账只记**这次真的改了的位次里还有人的那些**"
+          "（导入的甲不连坐、清空的第 2 位交还自动入宿）",
           raw.get("slots") == ["甲", None, "丁"]
-          and raw.get("manual") == {"slots": [0, 2], "names": ["丁", "甲"]},
+          and raw.get("manual") == {"slots": [2], "names": ["丁"]},
           str(raw))
     check("制造站没被改 ⇒ **一个标都不打**（不能因为「顺带过一遍」就把它锁上）",
           "manual" not in s.schedule.shifts[0].facilities[1],
           str(s.schedule.shifts[0].facilities[1]))
     check("返回值＝写过的设施数（状态栏「几间房」用它）", n == 2, str(n))
+    # 累积：同一条路上再动一格 ⇒ 上一次那个标**留着**（不是每次从头算）
+    # ⚠️ 像面板那样 `pop("slots")` + 写 `operators`：两种写法并存时 `slots` 优先，
+    #    只改 `operators` 会静默失效（`ui/batch.py` 修过的 bug，这里照它的形状构造）。
+    facs = s.facilities_of(0)
+    facs[0] = dict(facs[0], operators=["甲", "", "丁", "戊"])
+    facs[0].pop("slots", None)
+    s.apply_manual_shifts({0: facs})
+    raw = s.schedule.shifts[0].facilities[0]
+    check("第二条整批摆位：新碰的第 4 位进台账，上一次的第 3 位**留着**（累积）",
+          raw.get("manual") == {"slots": [2, 3], "names": ["丁", "戊"]},
+          str(raw.get("manual")))
+
+
+def test_manual_lock_scope():
+    """**手动台账的粒度**（2026-10 第三次收敛：只锁碰过的那一格、累积）。
+
+    病根（工单 §0 实测）：界面把"按位次对齐的**整段**"交给 `set_facility_slots`，而旧
+    `_write_manual` 是"传进来的整段里有名字的位次全算人写的" ⇒ **只放 1 个人**也会把
+    同一间宿舍里**导入进来的人**一起锁上（`slots` 从 `[]` 变 `[0, 1, 4]`），他们从此
+    再不能被自动入宿换出。修法：界面两条路交来"**碰过哪些位次**"（`touched`），
+    `_write_manual` 按**累积**算：
+      `slots = (旧 slots ∩ 现在仍有人的位次) ∪ (T ∩ 现在仍有人的位次)`、
+      `names = (旧 names ∩ 现在仍在本设施里的人) ∪ (T 位上现在坐着的人)`。
+    ⚠️ **不传 `T` 的老写法保持原样**（＝"整段里有名字的全算"）：那是 `set_slots` 的
+      既有 API 契约（`api/` 与 `documents/11-程序接口.md`），最后一条钉住它。
+    """
+    from store.session import Session, seat_values
+
+    def fac(session) -> dict:
+        return session.schedule.shifts[0].facilities[0]
+
+    def ledger(session):
+        return fac(session).get("manual") or {}
+
+    def fresh() -> dict:
+        """一间**本来就有 2 个人（导入进来）**的宿舍，容量 5（每次给一份新 dict）。"""
+        return {"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                "operators": ["甲", "乙"]}]}
+
+    s = Session()
+    s.load_layout(fresh(), hours=1)
+    # 起手：两个人是**导入**来的 ⇒ 台账空（导入不打标）
+    check("起手（2 人是导入的）台账是空的", "manual" not in fac(s), str(fac(s)))
+    # ①＋②：**按界面那样**交来"整段回填 + 碰过第 5 位"（`touched=[4]`）——
+    #    整段回填是必须的（那个入口 `slots[0]` 就是第 1 位），但打标只认 `touched`。
+    s.set_facility_slots(0, 0, ["甲", "乙", None, None, "戊"], touched=[4])
+    check("① 只锁碰过的那一格：`slots == [4]`（不是连坐的 `[0, 1, 4]`）",
+          ledger(s).get("slots") == [4], str(ledger(s)))
+    check("② 导入的人不受影响：`names` 里**没有**第 1、2 位的 甲/乙，"
+          "且布局里他们**还在原位上**（不左移、不摘人）",
+          ledger(s).get("names") == ["戊"]
+          and seat_values(fac(s)) == ["甲", "乙", "", "", "戊"],
+          f"{ledger(s)} / {seat_values(fac(s))}")
+    # ②b：他们仍然**不是**"被钉住的人"（裁决点第 1 层只看台账）
+    w = s.schedule.shifts[0].world.facilities[0]
+    check("②b 导入的人仍可被自动入宿换出（裁决不是 `locked`）",
+          _seat_verdict(w, 0)[0] != SEAT_LOCKED and _seat_verdict(w, 1)[0] != SEAT_LOCKED,
+          f"{_seat_verdict(w, 0)} / {_seat_verdict(w, 1)}")
+    # ③ 累积：再在空格放第 2 个人 ⇒ 上一次的标**留着**
+    s.set_facility_slots(0, 0, ["甲", "乙", None, "己", "戊"], touched=[3])
+    check("③ 累积：`slots == [3, 4]`（含上一次的），两个人都在 `names` 里",
+          ledger(s).get("slots") == [3, 4]
+          and set(ledger(s).get("names") or []) == {"戊", "己"}, str(ledger(s)))
+    # ④ 清一格只解一格（把第 5 位留空，别的格子原样传回）
+    s.set_facility_slots(0, 0, ["甲", "乙", None, "己", None], touched=[4])
+    check("④ 清一格只解一格：`slots == [3]`，第 4 位的 己 仍在台账里（戊 一起摘掉）",
+          ledger(s).get("slots") == [3]
+          and ledger(s).get("names") == ["己"], str(ledger(s)))
+    # ⑤ 不传 `touched` 的**旧契约**（`set_slots` / API）不变
+    s2 = Session()
+    s2.load_layout(fresh(), hours=1)
+    s2.set_slots(0, 0, ["甲", "乙", "丙"])
+    check("⑤ 不传 `touched` 的旧契约不变：`set_slots(整段)` 仍把**有名字的位次全记**进台账",
+          (s2.schedule.shifts[0].facilities[0].get("manual") or {})
+          == {"slots": [0, 1, 2], "names": ["丙", "乙", "甲"]},
+          str(s2.schedule.shifts[0].facilities[0].get("manual")))
+    s3 = Session()
+    s3.load_layout({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                    "operators": ["甲", "乙", "丙"]}]}, hours=1)
+    s3.set_facility_slots(0, 0, [None, "丁"])
+    check("⑤b 同一份兼容口在 `set_facility_slots` 上也在（不传 `touched` ＝ 传进来那一段里"
+          "**有名字的全算**；上界仍是那一段的长度 ⇒ 第 3 位的 丙 不进 `slots`、只进 `names`）",
+          (s3.schedule.shifts[0].facilities[0].get("manual") or {})
+          == {"slots": [1], "names": ["丁", "丙"]},
+          str(s3.schedule.shifts[0].facilities[0].get("manual")))
 
 
 def test_manual_lock_holds_every_point():
