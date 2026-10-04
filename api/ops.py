@@ -266,7 +266,9 @@ def op_load_json(session: Session, args: dict) -> dict:
       - `apply_file_settings`：是否沿用**文件里的开关**（**默认 `false`**：不继承 v3 的
         `Fiammetta.enable`，「换心情」保持关闭）；
       - `entry_events`：显式开关「换心情」（缺省＝沿用上面那条规则）；
-      - `idle_to_dorm`：显式开关「闲置入宿」（**本入口默认开**，空位优先；全满后按竖向反序扫描锁定区外位置，取首个严格高于候选者）。
+      - `idle_to_dorm`：显式开关「闲置入宿」（**本入口缺省＝开**；`None` 时按本入口口径取开，
+        见 `store.session.load_data` 的说明表）；给了 `apply_file_settings: true` 才按文件里那个
+        `idle_to_dorm` 走。
 
     与 `load_file` 走**同一条装配路径**，同一份 JSON 走文件或走内存必须给出同一批数值。
     """

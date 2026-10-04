@@ -211,6 +211,13 @@ documents/
       里面的人自动不换、**空位照样能入住**）/ **黑名单**（不能**通过闲置入宿进宿舍**，但可被换出）/
       逐人 `per_operator` **只剩"参不参与"**（旧写法 `target`/`dorm`/`slot`/`swap_with` 读得进来
       但**被忽略**，API 回一条 `notes`）。
+      ⚠️ **这一份和 `entry_events` 一起挂在 `Shift` 上（`Shift.idle_to_dorm` / `.entry_events`）并被
+      四条重建路径搬运**（`with_hours` / `replaced_shift` / `with_detached` / `with_start_clock`）——
+      `world` 每次由 `facilities` 现搭，**只挂在 world 上的全局设置会在重建时退回默认值**（2026-10
+      修：碰一下「不在基建」名单，面板设的 `(True, 9, ['丙'])` 就曾被打回 `(True, 5, [])`）。
+      文件顶层 `idle_to_dorm` 也**真的生效**（导入层原样交下去，解析只有
+      `models.build_idle_to_dorm_config` 一处）；面板改的这两组**只写在 `Session` 上**，
+      `set_detached` **只动名册、不再重同步**，`Session._push_automation_settings()` 负责落回快照。
     · **不设班次数量门槛**：1 个班次也执行 —— 引擎签名里**没有**班次数参数；
     · **换班执行点**：每个真实班次**班初** ＋ 长班（>12h）班内每个**严格小于班末**的 12h 整数倍
       （`store.schedule.execution_offsets`：12h→[0]、18h→[0,12]、24h→[0,12]、25h→[0,12,24]；
