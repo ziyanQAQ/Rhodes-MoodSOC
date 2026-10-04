@@ -235,9 +235,17 @@ class OperatorPicker(tk.Toplevel):
         self.destroy()
 
 
-def ask_operator(parent, names: Sequence[str], current: str = "") -> Optional[str]:
-    """返回选中的干员名；`""` 表示"清空该位置"；`None` 表示取消。"""
-    dlg = OperatorPicker(parent, names, current)
+def ask_operator(parent, names: Sequence[str], current: str = "",
+                 title: str = "选择干员") -> Optional[str]:
+    """返回选中的干员名；`""` 表示「清空该位置」；`None` 表示取消。
+
+    ⚠️ `title` 是**转发形参**：`OperatorPicker.__init__` 本来就有它（第 4 个位置参数），
+    而本壳原先没接 —— 三处调用点（位次按钮 / 「＋ 添加干员…」/ `on_slot_left`）
+    都传了 `title=`，于是 `TypeError: ask_operator() got an unexpected keyword argument
+    'title'`，而 **Tk 吞掉回调异常只打 stderr** ⇒ 用户看到的是「点了完全没反应」、
+    台账一字不动。别把 `title` 插到 `current` **前面**（那会打乱既有位置参数顺序）。
+    """
+    dlg = OperatorPicker(parent, names, current, title=title)
     parent.wait_window(dlg)
     return dlg.result
 
