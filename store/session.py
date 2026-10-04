@@ -898,6 +898,11 @@ class Session:
         自动入宿从此不占"摆着人"的位次、不换那些人。导入**不打标**
         （只有这个入口与 `set_facility_slots` 会打）。见 `04-特殊机制.md` 第 30 条。
 
+        ⚠️ **本入口的粒度是"整段"（不传 `touched_indices`）**：它把传进来的整份列表里
+        **有名字的位次全算人写的** —— 这是**既有 API 契约**，界面那两条路
+        （`set_facility_slots(touched=…)` / `apply_manual_shifts` 的逐位差异）走的是
+        **累积**粒度（只锁碰过的那一格）。要收窄粒度请用 `set_facility_slots`。
+
         `manual=False`：**只改布局、不打手动标**（API 用；默认 `True` 保持既有行为）——
         "改布局"与"上锁"是两件事，这个开关是它们的解耦口。
 
@@ -923,13 +928,24 @@ class Session:
         self.replace_facilities(shift_index, facs)
 
     def set_facility_slots(self, shift_index: int, facility_index: int,
-                           slots: Sequence[Optional[str]], manual: bool = True) -> None:
+                           slots: Sequence[Optional[str]], manual: bool = True,
+                           touched: Optional[Sequence[int]] = None) -> None:
         """**带空洞的逐位写入**（界面的看板/表格走这条）：`slots[i]` = 第 i+1 位的干员名或 `None`。
 
         与 `set_slots` 的区别是**不动没提到的位次**：传进来的每一位按原样写
         （`None`/空串 = 该位留空），后面的位次与它们的手动标记保持原样。
         手动台账（2026-10）：**摆了人的位次**进台账（＝摆位即上锁）、写了名字的连人一起标；
         **被清空的位次不进台账**（＝清空即解锁，那一位交还自动入宿）。
+
+        `touched` ＝ **调用方明确说"这些位次是我这次真的碰过的"**（可选，0 基下标）：
+        · **不传（`None`）⇒ 行为一字不变**：传进来的整段里**有名字的位次**全记进台账
+          —— 这是既有 API 契约（`api/` 与 `documents/11-程序接口.md` 都按这个写），
+          留作兼容口；
+        · **传了** ⇒ **累积**语义：只把**这些位次**里"现在还有人的"记进 `slots`、
+          把**这些位次上现在坐着的人**记进 `names`，并**保留**上一次已经记过的
+          （旧的 `∩ 现在还在的`）—— 于是"只放一个人"不会连坐同房间导入进来的人，
+          以前手动放过的格子继续保持锁，清空某一格只让那一格退出台账。
+          越界的下标按容量裁掉。细节见 `_write_manual`。
 
         `manual=False`：只改布局、不打手动标（与 `set_slots` 同一个开关）。
         """
@@ -948,8 +964,13 @@ class Session:
             self._reject_detached_seats(merged, shift_index, facility_index)
         _write_seats(fac, merged)
         if manual:
+            # ⚠️ `touched=len(slots)`（**传进来的那一段的长度**）只作 `touched=None` 那条
+            #    旧契约的上界，别改成 `len(merged)`：那会把"没提到的位次"也算进上界，
+            #    于是 `set_facility_slots([None, "丁"])` 的台账从 `slots=[1]` 变成 `[1, 2]`
+            #    （既有断言与 API 契约都会被改坏）。
             _write_manual(fac, raw_slots=[i for i, n in enumerate(merged) if n],
-                          raw_names=[n for n in merged if n], touched=len(slots))
+                          raw_names=[n for n in merged if n], touched=len(slots),
+                          touched_indices=None if touched is None else [int(i) for i in touched])
         facs[facility_index] = fac
         self.replace_facilities(shift_index, facs)
 
@@ -1156,6 +1177,12 @@ class Session:
         `set_facility_slots` 一致（2026-10 口径）：**摆了人的位次**进台账（＝摆位即上锁）、
         **被清空的位次不进台账**（＝清空即解锁，那一位交还自动入宿）。
 
+        ⚠️ **粒度＝"这次真的改了的那几位"（2026-10 第三次收敛）**：逐位比对新旧占位，
+        把**值不同的位次**作为 `touched_indices` 交给 `_write_manual`（**累积**：旧台账里
+        仍然成立的部分保留）—— 面板交来的是一整班布局，但"我只改了一格"就**只锁那一格**，
+        同房间导入进来的人不受影响。不这么做就会连坐（实测只碰 1 格却锁上 `[0, 1, 4]`，
+        导入进来的人从此再不能被自动入宿换出）。
+
         ⚠️ 为什么不是让调用方逐间调 `set_facility_slots`：
         ① **只动"占位真的变了"的设施** —— 面板给的是一整班布局，未动的房间不该被"手动钉住"
            （否则"改一行"会把整班都锁上，自动入宿从此再也进不来）；
@@ -1183,10 +1210,15 @@ class Session:
                 fac = dict(item)                      # 面板给的整份（等级/名称/其它键都带上）
                 _write_seats(fac, _seat_specs(item))  # 收敛成唯一正式写法（紧凑/带空洞）
                 if new_values != old_values:
-                    # 占位变了 ⇒ 只把**摆了人的位次**记进台账（清空的那一位交还自动入宿）
+                    # 占位变了 ⇒ 只把**这次真的改了的位次**记进台账（累积；清空的那一位
+                    # 在 `_write_manual` 里过不了「现在还有人」这一关 ⇒ 自动交还自动入宿）
+                    width = max(len(new_values), len(old_values))
+                    diff = [k for k in range(width)
+                            if (new_values[k] if k < len(new_values) else "")
+                            != (old_values[k] if k < len(old_values) else "")]
                     _write_manual(fac, raw_slots=[k for k, n in enumerate(new_values) if n],
                                   raw_names=[n for n in new_values if n],
-                                  touched=max(len(new_values), len(old_values)))
+                                  touched=width, touched_indices=diff)
                     marked += 1
                 facs[fi] = fac
                 hit = True
@@ -1617,7 +1649,8 @@ def write_seats(fac: dict, values: Sequence[object]) -> None:
     _write_seats(fac, values)
 
 
-def _write_manual(fac: dict, *, raw_slots=(), raw_names=(), touched: Optional[int] = None) -> None:
+def _write_manual(fac: dict, *, raw_slots=(), raw_names=(), touched: Optional[int] = None,
+                  touched_indices: Optional[Sequence[int]] = None) -> None:
     """写设施描述的 `manual` 台账（`store.session.set_slots` / `set_facility_slots` 用）。
 
     规则（Q2/Q12/Q13；2026-10 口径反转，见 `04-特殊机制.md` 第 30 条）：
@@ -1633,6 +1666,22 @@ def _write_manual(fac: dict, *, raw_slots=(), raw_names=(), touched: Optional[in
     「解锁时只需要**将该位置空**就可以了」）⇒ 那一行删掉。要"锁住一个空位"请走
     `set_seat_lock`（`_set_lock`，**"预留空位"的能力，没动过**）。
 
+    ⚠️ **粒度（2026-10 第三次收敛）**：光有"摆位即上锁、清空即解锁"还不够 —— 界面过去交来的
+    是"按位次对齐的**整段**"，于是"我只放了一个人"也会把同一间宿舍里**导入进来的人**一起
+    记进台账（实测 `slots` 从 `[]` 变成 `[0, 1, 4]`），他们从此再不能被自动入宿换出。
+    所以新增 `touched_indices`＝**调用方明确说"这些位次是我这次碰过的"**：
+
+      · `touched_indices is None`（**旧契约，不传就保持原样**）：把传进来的整段里
+        **有名字的位次**全算人写的 —— 这是 `set_slots` 的既有 API 口径，别改；
+      · `touched_indices` 给定 ⇒ 按**累积**算：
+        `slots = (旧 slots ∩ 现在仍有人的位次) ∪ (T ∩ 现在仍有人的位次)`、
+        `names = (旧 names ∩ 现在仍在本设施里的人) ∪ (T 位上现在坐着的人)`。
+        于是"放一个人到空格只多锁那一格"、"以前手动放过的格子继续保持锁"、
+        "清空某一格只让那一格退出台账"；`T` 里的越界下标按**容量**裁掉。
+        ⚠️ 读**旧台账**就是这里读的 `fac["manual"]` —— `_write_seats` 只摘
+        `slots`/`operators`、**不动** `manual`，所以进本函数时它还是旧值
+        （`apply_manual_shifts` 的 `fac = dict(item)` 也把旧 `manual` 带过来）。
+
     ⚠️ **`touched` / `limit` 仍留作位次的上界校验**（不是"锁哪些位次"）：
     `_seat_values` 会**裁掉尾部空槽**（`["甲","乙",""]` → `["甲","乙"]`），不夹上界的话
     越界的 `raw_slots`（比如同一批里第 3 位被清空、而前面几位的下标还在）会被写进台账。
@@ -1641,9 +1690,20 @@ def _write_manual(fac: dict, *, raw_slots=(), raw_names=(), touched: Optional[in
     """
     cap = max(_capacity_of_dict(fac), len(_seat_values(fac)))
     limit = cap if touched is None else min(int(touched), cap)
-    slots = {int(i) for i in raw_slots if 0 <= int(i) < limit}
-    names = {str(n) for n in raw_names if n}
-    live = {v for v in _seat_values(fac) if v}
+    values = _seat_values(fac)
+    live = {v for v in values if v}
+    if touched_indices is None:
+        slots = {int(i) for i in raw_slots if 0 <= int(i) < limit}
+        names = {str(n) for n in raw_names if n}
+    else:
+        old = dict(fac.get("manual") or {})                   # ← 旧台账（`_write_seats` 不碰它）
+        old_slots = {int(i) for i in (old.get("slots") or [])}
+        old_names = {str(n) for n in (old.get("names") or [])}
+        mine = {int(i) for i in touched_indices if 0 <= int(i) < cap}
+        live_slots = {i for i, v in enumerate(values) if v and i < cap}
+        slots = (old_slots & live_slots) | (mine & live_slots)
+        names = (old_names & live) | {values[i] for i in sorted(mine)
+                                      if i < len(values) and values[i]}
     names &= live
     _put_manual(fac, slots, names)
 

@@ -1252,15 +1252,22 @@ class MoodSocApp(tk.Tk):
             # —— ① 放人 / 清空：`set_facility_slots` 的 `slots` 是**按位次对齐的整段**
             #    （`slots[0]` 就是第 1 位），所以未提到的位次必须按原值回填 ——
             #    只传"改掉的那几个"会把名字写到第 1 位上（实测踩到）。
+            #    ⚠️ 但**打标的范围**要收窄：把"这次真的碰过、且与当前布局不同"的位次
+            #    作为 `touched` 交给写入口（累积）—— 否则"只放 1 个人"会把同宿舍
+            #    **导入进来的人**一起锁上（实测 `slots` 从 `[]` 变 `[0, 1, 4]`，
+            #    他们从此再不能被自动入宿换出）。见 `_manual_seats` 与 `_write_manual`。
             if names:
-                merged = self._manual_seats(shift=i, fac_index=fac_index,
-                                            changes=names)
+                merged, touched = self._manual_seats(shift=i, fac_index=fac_index,
+                                                     changes=names)
                 try:
-                    self.session.set_facility_slots(i, fac_index, merged, manual=True)
+                    self.session.set_facility_slots(i, fac_index, merged, manual=True,
+                                                    touched=touched)
                     done.append(i)
                 except ValueError as exc:
                     refus.append(f"第 {i + 1} 班 {exc}")
             # —— ② 逐位上锁 / 解锁（只动锁，不动这一位坐的是谁）——
+            #    ⚠️ `locks` 是界面早就不传的**程序化**分支；它走 `set_seat_lock`，那个入口
+            #    本来就是"只动这一位"（不经过整段台账），所以**不需要** `touched` 收窄。
             if locks:
                 hit = False
                 for slot, on in sorted(locks.items()):
@@ -1280,22 +1287,31 @@ class MoodSocApp(tk.Tk):
         self._status_after_recalc = head + tail
         return head + tail
 
-    def _manual_seats(self, shift: int, fac_index: int, changes: dict) -> list:
-        """把这次改动摊成 `set_facility_slots` 要的**按位次对齐的整段**。
+    def _manual_seats(self, shift: int, fac_index: int, changes: dict) -> tuple:
+        """把这次改动摊成 `set_facility_slots` 要的**按位次对齐的整段** ＋ **碰过哪些位次**。
 
         `changes` ＝ `{位次: 人名或 ""}`：未提到的位次按**当前值**回填（`None`/`""` = 留空），
         位次越界就补空槽。⚠️ 不能只传"改掉的那几个"：那个写入口的 `slots[0]` 就是第 1 位。
+
+        返回 `(整段, touched)`；`touched` ＝ `changes` 里**与当前布局确实不同**的位次
+        （0 基、升序）。它交给 `set_facility_slots(touched=…)` 之后，手动台账只按**这些**
+        位次**累积**（"只手写我碰过的那一格"）—— 同一间宿舍里**导入进来的人**不再被连坐，
+        仍可被自动入宿换出（2026-10 第三次收敛）。
         """
         try:
             facs = self.session.facilities_of(shift)
             current = list(seat_values(facs[fac_index]))
         except (IndexError, KeyError, TypeError):
             current = []
+        before = list(current)
         while len(current) < (max(changes) + 1 if changes else 0):
             current.append("")
         for slot, name in changes.items():
             current[int(slot)] = str(name or "")
-        return current
+        touched = sorted(int(s) for s in changes
+                         if str(changes[s] or "")
+                         != (before[int(s)] if 0 <= int(s) < len(before) else ""))
+        return current, touched
 
     def apply_idle_to_dorm(self, enabled: bool, entries: dict,
                            protected_slots: Optional[int] = None,
