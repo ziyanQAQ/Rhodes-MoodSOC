@@ -754,15 +754,16 @@ def find_entry_target(world: BaseLayout, holder: Operator, facility: Facility,
     ⚠️ **2026-10 触发者放宽后的两处口径**（用户裁决，见 `apply_entry_events`）：
       · `facility` 现在可能是**任意设施**（她不再必须进驻宿舍）⇒「前一位进驻」＝
         **她所在那一间**里排在她之前的那位（她在宿舍时与旧口径逐字相同）；
-      · `facility` 为 `None` ＝ 她只在**「不在基建」名单**里、不属于任何房间 ⇒
-        「前一位进驻」与「同一宿舍」都无从谈起（没有房间），只有
-        `scope="anywhere"` / 点名 / 自动挑才换得动。
+      · `facility` 为 `None` ＝ 她**不在这一班的任何设施里**（**本班未排班**，或她在
+        显式「不在基建」名单里）、不属于任何房间 ⇒「前一位进驻」与「同一宿舍」都无从谈起
+        （没有房间），只有 `scope="anywhere"` / 点名 / 自动挑才换得动。
     """
     name = (swap_with or "").strip()
     kind = entry_target_kind(swap_with, scope)
     if kind == "default":
         if facility is None:
-            return None, "（她人在「不在基建」名单里、不属于任何房间 ⇒ 没有「前一位进驻」可换）"
+            return None, ("（她不在这一班的任何设施里（本班未排班 / 在「不在基建」名单），"
+                          "不属于任何房间 ⇒ 没有「前一位进驻」可换）")
         idx = facility.operators.index(holder)
         if idx == 0:
             return None, f"（{facility.display_name} 里没有「前一位进驻」的干员）"
@@ -785,22 +786,23 @@ def find_entry_target(world: BaseLayout, holder: Operator, facility: Facility,
     if scope == "anywhere":
         where = "基建内"
     elif facility is None:
-        where = "她所在的房间（她人在「不在基建」名单里，不属于任何房间）"
+        where = "她所在的房间（她不在这一班的任何设施里，不属于任何房间）"
     else:
         where = facility.display_name
     return None, f"（指定的交换对象「{name}」不在{where}）"
 
 
 def _outside_operator(world: BaseLayout, name: str, mood=None) -> Operator:
-    """「不在基建」名单里那位的**代理 `Operator`**（按世界快照缓存）。
+    """**本班不在场的干员**（本班未排班 / 显式「不在基建」名单）的**代理 `Operator`**（按世界快照缓存）。
 
-    为什么需要它：名单里的人**不在 `world.facilities` 里**（见 `models.BaseLayout.detached`），
+    为什么需要它：这类人**不在 `world.facilities` 里**（见 `models.BaseLayout.detached`），
     而 2026-10 起 M15a 患难之交把她也算作"存在"（用户裁决，见 `apply_entry_events`）——
     判定"她持不持有这条技能"、以及找交换对象，都要一个干员对象。
 
     缓存挂在 `world.__dict__` 上（与 `models.BaseLayout._name_index_cache` 同一手法），
     于是 `entry_swapped`（"同一份快照只结算一次"）能像世界里的干员一样留着；
     `reset_entry_events` 会连他们一起归位。
+    ⚠️ **只为"确实持有 M15a 的人"造代理**（`_outside_holds_entry` 先粗筛，性能）。
 
     ⚠️ 她的**心情只存在于调用方那张表**（`detached_moods`）：`mood=None` 时不动代理对象上的值
     （粗筛用，如 `entry_event_holders`）。
@@ -817,14 +819,50 @@ def _outside_operator(world: BaseLayout, name: str, mood=None) -> Operator:
     return op
 
 
+#: 「本班未排班」那类人**是否持有 M15a** 的记忆化（键＝`(名字, 技能槽)`）。
+#: 为什么要它：实时心情表有几十上百人（示例排班 57 人），而"造代理 + 查模板技能"不该对
+#: 每个人都做一遍 —— 先过这道**廉价**判断，只有真持有 M15a 的人才进后面的循环。
+_ENTRY_OUTSIDE_HOLDERS: Dict[tuple, bool] = {}
+
+
+def _outside_holds_entry(name: str) -> bool:
+    """只有**名字**可用时，判断她是否持有 M15a（进驻事件）—— 用于"本班未排班"那类人。
+
+    她的技能槽只有一处来源（`DEFAULT_OPERATORS`，与 `_outside_operator` 建代理时同一份），
+    练度也固定 E2/30（与 `store.layout.build_operator` 的默认一致），所以这个判断是
+    **名字的纯函数** ⇒ 按 `(名字, 技能槽)` 记忆化，避免每个执行点重复构造干员对象。
+    """
+    ids = tuple(DEFAULT_OPERATORS.get(name, ()))
+    key = (name, ids)
+    hit = _ENTRY_OUTSIDE_HOLDERS.get(key)
+    if hit is None:
+        probe = Operator(name=name, skill_ids=list(ids), elite=2, level=30)
+        hit = bool(_template_skills(probe, "M15a"))
+        _ENTRY_OUTSIDE_HOLDERS[key] = hit
+    return hit
+
+
 def _entry_trigger_ops(world: BaseLayout, detached_moods=None):
     """产出 M15a（进驻事件）的**候选触发者** → `[(干员, 所在设施 | None), ...]`。
 
-    2026-10 触发条件放宽（**用户裁决**，见 `apply_entry_events`）：
-      · 她在**这一班的任意设施**里即可（工作设施 / 控制中枢…都算），不再要求"进驻宿舍"；
-      · 她在**「不在基建」名单**（`world.detached`）里也算"存在" —— 此时设施是 `None`，
-        心情取 `detached_moods[name]`；**没给那张表就当她不在场**
-        （名单里的人心情只存在于那张表里，换了也没处记）。
+    2026-10 触发条件放宽（**用户裁决**，见 `apply_entry_events`）—— 一句话口径：
+    **「本班任一设施 ∨ 本班未排班 ∨ 显式「不在基建」名单」满足其一即算"存在"**：
+      · 她在**这一班的任意设施**里（工作设施 / 控制中枢…都算）⇒ 设施＝那一间、心情＝对象上的值；
+      · 她**只在这张实时心情表里、这一班的 `world` 里没有**（＝**本班未排班**；显式
+        「不在基建」名单是它的一个子集）⇒ 设施＝`None`、心情取 `detached_moods[name]`；
+      · **没给那张表就当她不在场**（这类人的心情只存在于那张表里，换了也没处记）。
+
+    ⚠️ **判据是"心情表"而不是 `world.detached`**（2026-10 修 bug，用户确诊）：
+      排班层交进来的 `detached_moods` 是**整份排班的实时心情表**（键＝
+      `Schedule.operator_names()`，含"本班未排班、但在别的班有活"的人），
+      `world.detached` 只是它的一个**子集**。旧口径只认 `world.detached` ⇒ 被人**顶掉**
+      （既不占任何位次、也不在显式名单）的人**根本产不出触发者**：连 `find_entry_target`
+      都不调、连"未执行"说明都不记 ⇒ "她心情满 24 却没换"**完全静默**。
+      现在统一成"**心情表里有、这一班的世界里没有**"，显式名单被这一条**自然涵盖**。
+
+    ⚠️ **性能**：后面每个人都要查 `_template_skills(op, "M15a")`，所以这里先做一次
+      **廉价的持有判断**（`_outside_holds_entry`，按名字记忆化），只有真持有 M15a 的人
+      才造 `_outside_operator` 代理并进循环 —— **别给几百人建代理**。
     ⚠️ **副手**不在内（`facility.deputies`）：那是"挂件位"，与"她进驻在某设施"不是一回事，
        本次口径没有涉及它（原先扫描也只走 `operators`）。
     """
@@ -834,9 +872,11 @@ def _entry_trigger_ops(world: BaseLayout, detached_moods=None):
                 yield op, facility
     if not detached_moods:
         return
-    for name in (world.detached or ()):
-        if name not in detached_moods or world.get_operator(name) is not None:
-            continue                 # 不在那张表里 / 她本来就在基建里 ⇒ 别重复算一遍
+    for name in detached_moods:
+        if world.get_operator(name) is not None:
+            continue                 # 她本来就在这一班的 `world` 里 ⇒ 上面那一轮已经算过
+        if not _outside_holds_entry(name):
+            continue                 # 不持有 M15a ⇒ 连代理都不造（性能）
         yield _outside_operator(world, name, detached_moods[name]), None
 
 
@@ -855,19 +895,26 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
     已实现：**患难之交**（菲亚梅塔，`dorm_exchangeAp[000]`）
       上游原文：「进驻宿舍时，如果**自身为满心情**，则与当前宿舍**前一位进驻**的干员互换心情」。
 
-    ⚠️⚠️ **触发条件的两次放宽（2026-10，用户裁决 —— 对上游原文的「有意偏离」）**
+    ⚠️⚠️ **触发条件的三次放宽（2026-10，用户裁决 —— 对上游原文的「有意偏离」）**
       **用户原话**：「换心情菲亚梅塔**不要求一定出现在宿舍中**，只要该布局中**存在**菲亚梅塔
-      就可以生效。」+ 两条边界：①「她在这一班的**任意设施**里即可（工作设施、控制中枢…都算，
-      不只是宿舍）」；②「她即使在**「不在基建」名单**里，也算"存在"、照样触发」。
-      因此触发者从"宿舍住户"改成 `_entry_trigger_ops`：**任意设施的在岗干员 + 「不在基建」名单**。
-      ⚠️ ② 是**有意例外，不是 bug，别再"改回去"**：它与项目总口径「不在基建的人
+      就可以生效。」+ 三条边界：①「她在这一班的**任意设施**里即可（工作设施、控制中枢…都算，
+      不只是宿舍）」；②「她即使在**「不在基建」名单**里，也算"存在"、照样触发」；
+      ③「**本班未排班**（不在这一班的任何设施里、也不在名单里）**也算存在**、照样触发」
+      —— 用户原话「**算存在：本班未排班也触发**」。
+      因此触发者从"宿舍住户"改成 `_entry_trigger_ops`，口径统一成一句话：
+      **本班任一设施 ∨ 本班未排班 ∨ 显式「不在基建」名单**（后两者都读**实时心情表**）。
+      ⚠️ ②③ 是**有意例外，不是 bug，别再"改回去"**：它与项目总口径「不在基建的人
       **不参与任何技能计数**、心情一条平线」（`AGENTS.md` 坑 17、`models.BaseLayout.detached`）
       相冲突，用户**明确知道**这层张力并要求本技能照此处理。例外**只限"她算不算在场"**：
       她照旧不在 `facilities` 里（不计入任何技能计数、不消耗不回复、曲线仍是平线），
       只有本事件会把她的心情换掉。见 `documents/04-特殊机制.md` 第 29 条。
+      ⚠️ ③ 修的是**实测 bug**（2026-10 用户确诊）：她被「锁定入宿」顶掉之后**既不占位、
+      也不在显式名单** ⇒ 旧口径（只认 `world.detached`）下引擎**根本不产出她这个触发者**，
+      连 `find_entry_target` 都不调、连"未执行"说明都不记 ⇒「她满 24 却没换」**完全静默**。
+      现在判据改成"**实时心情表里有、但这一班的 `world` 里没有**"，显式名单被**自然涵盖**。
       ⚠️ 上游写的是「**进驻宿舍时**」⇒ 这是**用户要求的有意偏离**，不是"实现漏了/写错了"。
       下游随之改了两处：`find_entry_target` 的「前一位进驻」＝**她所在那一间**的前一位
-      （她在宿舍时与旧口径逐字相同）；`facility=None`（只在名单里）时只有
+      （她在宿舍时与旧口径逐字相同）；`facility=None`（本班未排班 / 只在名单里）时只有
       `anywhere` / 点名 / 自动挑才换得动。
 
     本项目在此之上做了可配置扩展（用户需求）：
@@ -879,7 +926,7 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
     | `scope` | `"dorm"`（限**她所在的那一间**，旧称"同宿舍"）/ `"anywhere"`（**基建任意位置**） | 显式 > JSON > 默认 dorm |
     | `restore_back` | `True`（默认）= 只换心情、两人都留在原位置；`False` = **位置也一起互换** | 显式 > JSON > 默认 True |
     | `when` | **什么时候换**：`"immediate"`（默认）/ `"wait"`（等她回满再换）/ `"full"`（游戏原口径）——**三者都要"她满 24"**，差别只在"她没满时等不等"，见下面 | 显式 > JSON > 默认 immediate |
-    | `detached_moods` | **「不在基建」名单里那些人的当前心情** `{名字: Decimal}`（**就地读写**） | 排班模拟传实时心情表；不传＝名单里的人不算在场 |
+    | `detached_moods` | **本班不在场那些人的当前心情** `{名字: Decimal}`（**就地读写**）＝整份排班的**实时心情表**（`Schedule.operator_names()` 的键） | 排班模拟传它；不传＝表里的人不算在场 |
 
     ⚠️⚠️ **「她满 24」这道门在三种模式下都生效（2026-10，用户裁决 —— 对上一版口径的收紧）**
       **用户原话**：「换心情这块改为只要布局内存在菲亚梅塔且**心情为满 24** 就可以进行换心情的
@@ -901,7 +948,10 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
       别顺手给 `full`/`wait` 补一条"等值就跳过"。
       ⇒ 若哪天发现 `immediate` 在她 20 时也换了，那是**回归**，不是"用户要的强制"。
 
-    若指定的对象找不到，**不换**，但会记一条 `Bucket.EVENT`（group=`entry_swap_skipped`）说明原因。
+    若**过了"满 24"那道门**却找不到交换对象，**不换**，但**一律**记一条 `Bucket.EVENT`
+    （group=`entry_swap_skipped`）说明原因（用 `find_entry_target` 返回的说明文本）——
+    默认口径（「前一位进驻」而她排在某间第 1 位 / 她本班未排班没有房间）过去是**静默**的，
+    用户只看到"没换"、看不出原因（2026-10 用户要求补上）。⚠️ 只是多一条说明，**数值一字不变**。
     `when="wait"` 的"等待"是**带时间**的语义，只在 `ui.schedule.simulate_schedule` 里生效；
     本函数是一次性结算，不会等待（此时会记一条说明）。
     """
@@ -921,13 +971,15 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
         or "immediate"
 
     events = []
-    # ⚠️ 触发者＝**任意设施的在岗干员 + 「不在基建」名单**（2026-10 用户裁决的放宽，
-    #    原先是"必须是宿舍住户"）。例外与理由见上面 docstring，**别改回宿舍限定**。
+    # ⚠️ 触发者＝**本班任一设施的在岗干员 ∨ 本班未排班 ∨ 显式「不在基建」名单**（2026-10
+    #    用户裁决的三次放宽，原先是"必须是宿舍住户"）。例外与理由见上面 docstring，
+    #    **别改回宿舍限定、也别改回"只认 `world.detached`"**（后者是"满 24 却没换"的病根）。
     for op, facility in _entry_trigger_ops(world, detached_moods):
         if getattr(op, "entry_swapped", False):
             continue                       # 同一份布局快照里只结算一次（重复调用幂等）
         for skill in _template_skills(op, "M15a"):
-            # `facility` 可能是 `None`（她只在名单里）——本技能的条件只读 `ctx.owner.mood`
+            # `facility` 可能是 `None`（她本班未排班 / 只在名单里）——本技能的条件只读
+            # `ctx.owner.mood`
             ctx = SkillContext(world, op, op, facility)
             # ⚠️ **条件（对 M15a 就是"自身满心情 24"）三种模式都要过**（2026-10 用户裁决，
             #    见 docstring）：上一版这里是 `if mode != "immediate" and …`，
@@ -946,13 +998,15 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
                 continue
             other, note = find_entry_target(world, op, facility, swap_with, scope)
             if other is None:
-                # 只有"点名要换某人 / 自动挑"却没换成时才记一条说明；
-                # 默认口径（「前一位进驻」而她排第一）属于游戏本来的"没得换"，静默跳过。
-                if swap_with:
-                    events.append(Contribution(
-                        Bucket.EVENT, "进驻事件未执行", ZERO, group="entry_swap_skipped",
-                        owner=op.name, target=(swap_with or ""), skill_id=skill.id,
-                        skill_name=skill.name, template=skill.template_id, detail=note))
+                # ⚠️ **一律记一条说明**（2026-10，用户要求）——她**已经过了"满 24"那道门**，
+                #    却没换，用户必须能看出**为什么**。旧口径只在"点名要换某人 / 自动挑"没换成
+                #    时才记，默认口径（「前一位进驻」而她排第一 / 她本班未排班没有房间）**静默**，
+                #    于是界面只显示"没换"、看不出原因（用户报的病）。
+                #    ⚠️ 只多一条说明，**一个数值都不动**：不进 `entry_swap`、不改心情、不改位置。
+                events.append(Contribution(
+                    Bucket.EVENT, "进驻事件未执行", ZERO, group="entry_swap_skipped",
+                    owner=op.name, target=(swap_with or ""), skill_id=skill.id,
+                    skill_name=skill.name, template=skill.template_id, detail=note))
                 continue
             # ⚠️ 到这里**不再**看"双方心情是否相同"：用户口径是"不管对方心情是多少，
             #    只要设置了就执行互换"（数值相同时事件照记、`restore_back=False` 时位置照换）。
