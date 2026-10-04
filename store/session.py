@@ -984,20 +984,37 @@ class Session:
             self.replace_facilities(shift_index, facs)
             return
         # —— `pin=True`：逐格"先摘后写"（工单 §3.1）——
-        #    ⚠️ 台账由 `_write_one_seat` 自己写（按**累积**语义记"这一格"），它同时保证
-        #    被摘掉的那一格从台账里退掉。`touched` 在这条路上**只用来收窄**：调用方说
-        #    "我这次真的碰过哪几格"，没碰过的那几格保持它们原来的名字、不额外放锁。
-        if manual:
-            keep_set = {int(k) for k in touched} if touched is not None \
-                else {i for i, v in enumerate(values) if v}
-            for i in range(len(values)):
-                if i in keep_set:
-                    continue
-                fac2 = dict(facs[facility_index])
-                _write_manual(fac2, touched=bound, touched_indices=[])
-                facs[facility_index] = fac2
+        #    ⚠️ 顺序是 **① 把 `values` 摊成一份"按位次对齐的 spec 副本" → ② 逐格"先摘本班
+        #    别处的她、再写这一格" → ③ 收尾重建台账**。
+        #    反过来（先摘、再按面板整段回填）会把刚摘掉的人又写回来（实测踩到）。
+        #    台账放最后：`_write_one_seat(pin=True)` 里"摘空该格"那一手会顺手解掉台账，
+        #    而摘的正是目标格，所以最后必须**从最终布局重建**它。
+        #    ⚠️ **写的是 spec 不是名字**（`_seat_specs` 的对象写法要保住）：用纯名字写回会把
+        #    这一房所有人的练度悄悄拍回默认 E2/Lv30 —— 那是 `ui/batch.py` 修过的老 bug，
+        #    走 `pin` 这条路时**同样**会中招（实测：改「卡夫卡 E1」写回后引擎里又变 E2）。
+        merged = _seat_specs(facs[facility_index])
         for i, value in enumerate(values):
-            _write_one_seat(facs, facility_index, i, value, pin=manual)
+            while len(merged) <= i:
+                merged.append("")
+            merged[i] = value
+        if manual:
+            for i, value in enumerate(values):
+                if value:
+                    _write_one_seat(facs, facility_index, i, value, pin=True)
+                else:
+                    stripped = dict(facs[facility_index])
+                    _write_manual(stripped, touched=bound, touched_indices=[i])
+                    facs[facility_index] = stripped
+            keep = {int(k) for k in touched} if touched is not None \
+                else {i for i, v in enumerate(values) if v}
+            _rebuild_ledger(facs[facility_index], extra_slots=keep)
+        # ③ 收尾：把 ② 那几步摘掉/清空的位次按 `merged` 收口 —— 目标格留住她、
+        #    其它位次回到**摘之前**的样子（练度对象原样保留）。台账在**这之后**重算一次。
+        fac = dict(facs[facility_index])
+        _write_seats(fac, merged)
+        if manual:
+            _rebuild_ledger(fac, extra_slots=keep)
+        facs[facility_index] = fac
         self.replace_facilities(shift_index, facs)
 
     def place_operator(self, shift_index: int, facility_index: int, slot: int,
@@ -1318,6 +1335,12 @@ class Session:
                         pins[str(n)] = (fi, k)
             written_before = written
             # —— ② 落面板给的那份整班布局（逐位差异 → 累积台账）——
+            #    ⚠️ `snapshot` 存的是**摘之前的 spec**（保住练度对象写法），另给一份"名字版"
+            #    用来逐位比对；只落 `diff` 那几位 —— 整段照抄既会把 ③ 摘掉的人写回来，
+            #    也会把这一房所有人的练度拍回默认（`ui/batch.py` 修过的老 bug）。
+            spec_snapshot = {fi: _seat_specs(facs[fi]) for fi in range(len(facs))}
+            snapshot = {fi: [_spec_name(s) for s in spec_snapshot[fi]]
+                        for fi in range(len(facs))}
             for fi, item in enumerate(changes[i]):
                 if fi >= len(facs):
                     break
@@ -1326,16 +1349,33 @@ class Session:
                 # 比较用**名字**（位次对齐），写回用**spec**（保留 `{"elite":…}` 对象写法 ——
                 # 用名字写回会把这一房所有人的练度悄悄拍回默认 E2/Lv30）。
                 new_values = _seat_values(item)
-                old_values = _seat_values(facs[fi])
-                fac = dict(item)                      # 面板给的整份（等级/名称/其它键都带上）
-                _write_seats(fac, _seat_specs(item))  # 收敛成唯一正式写法（紧凑/带空洞）
+                item_specs = _seat_specs(item)
+                old_values = snapshot[fi]
+                fac = dict(facs[fi])                  # 以**当前**那份为底（别丢 ③ 的摘人结果）
+                fac.update({k: v for k, v in item.items() if k != "manual"})
+                width = max(len(new_values), len(old_values))
+                diff = [k for k in range(width)
+                        if (new_values[k] if k < len(new_values) else "")
+                        != (old_values[k] if k < len(old_values) else "")]
+                # 以**摘之前**那份 spec 为底、**只改"确实变了的位次"**：没碰过的位次保持原样。
+                # ⚠️ **写不写**看 spec 差异 —— 面板给的可能是"把纯名字升级成练度对象"而名字没变
+                #    （练度就是从纯名字改成 `{"elite": 1}` 的，名字一模一样）；只看名字就写不进去。
+                # ⚠️ **打不打标**仍只看**名字**差异（`diff`）：那才是"碰过哪一格"的口径，不能因为
+                #    "面板这次把对象一起交上来了"就把整房连坐锁上。
+                seats = list(spec_snapshot[fi])
+                for k in range(max(len(item_specs), len(seats))):
+                    new_spec = item_specs[k] if k < len(item_specs) else ""
+                    old_spec = seats[k] if k < len(seats) else ""
+                    if _spec_name(new_spec) != _spec_name(old_spec):
+                        if k not in set(diff):
+                            continue          # 名字差异由 `diff` 说了算（别越权改没碰过的位次）
+                    elif new_spec == old_spec:
+                        continue              # 完全一样：保持"摘之前"那份（别整房重写）
+                    while len(seats) <= k:
+                        seats.append("")
+                    seats[k] = new_spec
+                _write_seats(fac, seats)
                 if new_values != old_values:
-                    # 占位变了 ⇒ 只把**这次真的改了的位次**记进台账（累积；清空的那一位
-                    # 在 `_write_manual` 里过不了「现在还有人」这一关 ⇒ 自动交还自动入宿）
-                    width = max(len(new_values), len(old_values))
-                    diff = [k for k in range(width)
-                            if (new_values[k] if k < len(new_values) else "")
-                            != (old_values[k] if k < len(old_values) else "")]
                     _write_manual(fac, raw_slots=[k for k, n in enumerate(new_values) if n],
                                   raw_names=[n for n in new_values if n],
                                   touched=width, touched_indices=diff)
@@ -1980,6 +2020,35 @@ def _write_one_seat(facs: List[dict], fac_index: int, slot: int, spec, *,
     else:
         _write_manual(fac, touched=bound, touched_indices=[int(slot)])
     facs[fac_index] = fac
+
+
+def _rebuild_ledger(fac: dict, *, extra_slots: Sequence[int] = ()) -> None:
+    """按设施**当前**的占位重建手动台账：`slots` ＝ "这一格归人管" 的位次。
+
+    规则（沿用 `_write_manual` 的**累积**语义，但把它一次算清）：
+      `slots = (旧 slots ∩ 现在仍有人的位次) ∪ (extra_slots ∩ 现在仍有人的位次)`、
+      `names = (旧 names ∩ 现在仍在本设施里的人) ∪ (那几格上现在坐着的人)`。
+
+    `extra_slots`＝**这次明确碰过**的位次（工单 §3.1 的"指定时清原位"这条路上，
+    目标格必须进来 —— 写它的过程会把台账摘掉一次）。空集合＝"不额外加锁、
+    只把旧台账里已经不成立的条目清掉"。
+
+    ⚠️ 为什么不用 `_write_manual(touched_indices=…)` 就地算：那条路的**顺序**是
+    "先写布局、再算台账"，而「指定时清原位」必须先摘后写 ⇒ 中间态会把目标格的
+    名字摘掉。这里改成**最后**从最终布局重建，一次算清、不留中间态。
+    """
+    seats = _seat_values(fac)
+    cap = max(_capacity_of_dict(fac), len(seats))
+    old = dict(fac.get("manual") or {})
+    old_slots = {int(i) for i in (old.get("slots") or [])}
+    old_names = {str(n) for n in (old.get("names") or [])}
+    live_slots = {i for i, v in enumerate(seats) if v and i < cap}
+    live = {v for v in seats if v}
+    mine = {int(i) for i in extra_slots if 0 <= int(i) < cap}
+    slots = (old_slots & live_slots) | (mine & live_slots)
+    names = (old_names & live) | {seats[i] for i in sorted(mine)
+                                 if i < len(seats) and seats[i]}
+    _put_manual(fac, slots, names)
 
 
 def _trim_to_capacity(fac: dict, capacity: int) -> dict:
