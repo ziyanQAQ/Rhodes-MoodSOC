@@ -515,6 +515,10 @@ python scripts/verify_settings.py                             # 全绿 → 退�
 #   ⚠️ 末尾会单独列出它**钉住的 14 条「已知缺陷 / 已知例外」现状** —— 0 fail ≠ 没有缺陷
 #   （那 14 条就是 2026-10 测出来的真问题，逐条见 documents/16-现状与校准记录.md §3）
 
+# 文档自检（结构 / 引用 / 索引 / 预算：每份 1 个 H1 · 无重复章节号 · 无悬空引用 ·
+#          `documents/README.md` 清单⇄实盘 · `AGENTS.md` 在 65536 字节预算内）
+python scripts/verify_docs.py                                 # 全绿 → 退出码 0
+
 # 模块边界自检（七模块：谁可以写谁的数据；见 documents/14-架构总览.md §9）
 python scripts/verify_modules.py                              # 全绿 → 退出码 0
 python scripts/verify_modules.py --list                       # 只列"现状待办"（跨模块写白名单）
