@@ -1227,6 +1227,165 @@ def test_capacity_shrink_keeps_people():
     check("先摆成 [空, 空, 丙]", fac.get("slots") == [None, None, "丙"], str(fac))
 
 
+# ============================================================================
+# ⑧ 「导入原样」：取消指定 ⇒ 回原位 / 恢复默认 / 逐班覆盖读 `key`（2026-10 第二批）
+# ============================================================================
+def test_restore_origin_and_per_shift():
+    """**「导入原样」**（`Session.imported_layouts`，深拷贝、只存在会话里）撑起的两件事。
+
+    用户两次原话（工单 §2/§3）：
+      · 「锁定入宿当选择的是别的设施中的干员后，再取消应该让对应干员**回到自己原来的位置上**」；
+      · 「**恢复默认（回到导入时）**」—— 只挂在**矩阵那一处**的选人框上（哨兵 `RESTORE_DEFAULT`），
+        一次点下去把这一格与被她顶掉/被她挪走的人都还原。
+
+    外加 `entry_events.per_shift` 的**列表写法改读内层 `key`**：`store/sources.py`（MAA 导入器）
+    写的正是带 `key` 的列表，只按位置编号会让"第 2 班"的设置落到第 1 班上。
+
+    ⚠️ **原位只存在会话里、一个字节都不写进导出 JSON**（用户明确要求"原位不写进 JSON、不动
+    导出格式"）⇒ 副作用：**导出→再导入之后「回原位 / 恢复默认」就失效了**（新会话没有那份快照）。
+    """
+    import json
+
+    from api.ops import op_export_schedule
+    from data.paths import MAA_SAMPLE as SAMPLE
+    from mood_soc.models import build_entry_shift_overrides
+    from store.schedule import load_schedule_ex
+    from store.session import Session, seat_values
+
+    DORM1, DORM4 = 13, 16                 # 示例 MAA 第 1 班的 宿舍#1 / 宿舍#4（导入时只有 2 人）
+    FEI, MUR, PAO = "菲亚梅塔", "缪尔赛思", "泡泡"   # 泡泡**不在示例排班里** ⇒ 导入时本班未排班
+
+    def fresh():
+        s = Session()
+        s.load_paths([SAMPLE])
+        return s
+
+    def row(s, shift, fi):
+        return seat_values(s.facilities_of(shift)[fi])
+
+    def seat(s, shift, fi, sl):
+        r = row(s, shift, fi)
+        return r[sl] if sl < len(r) else ""      # 越界＝空（紧凑写法会把尾部空槽裁掉）
+
+    def manual(s, shift, fi):
+        return s.facilities_of(shift)[fi].get("manual") or {}
+
+    print("「导入原样」：取消回原位 / 恢复默认 / 逐班覆盖读 key")
+
+    # ① 取消「我的指定」⇒ 她回**导入原位**（第 1 条）
+    s = fresh()
+    s.place_operator(0, DORM4, 2, FEI)    # 从 宿舍#1 第 1 位 挪进 宿舍#4 第 3 位
+    note = s.release_seat(0, DORM4, 2)
+    check("取消指定 ⇒ 她回导入原位（回执写明「宿舍#1 第 1 位」）",
+          row(s, 0, DORM1)[0] == FEI and "导入原位" in note and "宿舍#1" in note,
+          f"{row(s, 0, DORM1)} / {note!r}")
+    # ⚠️ 「留洞不左移」在第 1 班那一格看不出来（它是**末位**）—— 换第 2 班取证：
+    #    第 2 班 宿舍#4 导入时是 [塞雷娅, 褐果, 炎熔, 烛煌, 锡人]，取消后第 3 位必须是
+    #    **空洞**、后面两位不许前移（左移＝`set_detached` 那条紧凑化的老毛病）。
+    s1 = fresh()
+    s1.place_operator(1, DORM4, 2, FEI)
+    s1.release_seat(1, DORM4, 2)
+    check("取消只把那一位留成空洞（不左移）、只动这一个班次、两处台账都不含她",
+          seat(s1, 1, DORM4, 2) == "" and row(s1, 1, DORM4)[3:] == ["烛煌", "锡人"]
+          and row(s1, 0, DORM1)[0] == FEI
+          and FEI not in (manual(s1, 1, DORM1).get("names") or [])
+          and FEI not in (manual(s1, 1, DORM4).get("names") or []),
+          f"{row(s1, 1, DORM4)} / {row(s1, 0, DORM1)} / {manual(s1, 1, DORM4)}")
+
+    # ② 原位被别人占着 ⇒ **换回去**（占位者去她刚空出来的那一格）
+    s = fresh()
+    s.place_operator(0, DORM4, 2, FEI)
+    s.place_operator(0, DORM1, 0, PAO)    # 泡泡（无导入原位）占了她的原位
+    note = s.release_seat(0, DORM4, 2)
+    check("原位被占 ⇒ 换回去：她回 (13,0)、占位者换到 (16,2)，回执含「换到」",
+          row(s, 0, DORM1)[0] == FEI and seat(s, 0, DORM4, 2) == PAO and "换到" in note,
+          f"{row(s, 0, DORM1)} / {seat(s, 0, DORM4, 2)} / {note!r}")
+
+    # ③ 导入原位**查不到** ⇒ 她不回原位、本班不再占位 + 回执写明（＝"本班未排班"）
+    s = fresh()
+    s.place_operator(0, DORM4, 2, PAO)
+    note = s.release_seat(0, DORM4, 2)
+    check("查不到导入原位 ⇒ 本班不再占位、回执写「未排班」（不静默）",
+          seat(s, 0, DORM4, 2) == "" and "未排班" in note
+          and all(PAO not in row(s, 0, k) for k in range(len(s.facilities_of(0)))),
+          f"{note!r} / {row(s, 0, DORM4)}")
+
+    # ④ 「恢复默认（回到导入时）」的四个动作（选人框那个按钮的落地口＝`Session.restore_seat`）
+    #    ①② 这一格退出台账 + 把**导入时原本坐这一格的人**放回这一格
+    s = fresh()
+    s.place_operator(0, DORM1, 1, FEI)    # 挪到本宿舍第 2 位 ⇒ 顶掉导入原主 缪尔赛思
+    note = s.restore_seat(0, DORM1, 1)
+    check("恢复默认 ①②：这一格退出台账（`manual.slots` 空）、导入原主 缪尔赛思 回本格",
+          not manual(s, 0, DORM1).get("slots") and row(s, 0, DORM1)[1] == MUR,
+          f"{manual(s, 0, DORM1)} / {row(s, 0, DORM1)} / {note!r}")
+    #    ③ 把这一格上「我锁进来的那位」送回她的导入原位（原位被占 ⇒ 同"换回去"）
+    s = fresh()
+    s.place_operator(0, DORM4, 2, FEI)
+    s.place_operator(0, DORM1, 0, PAO)
+    note = s.restore_seat(0, DORM4, 2)
+    check("恢复默认 ③：她回 (13,0)、原位被占则把占位者换到她刚空出来的那一格",
+          row(s, 0, DORM1)[0] == FEI and seat(s, 0, DORM4, 2) == PAO and "换到" in note,
+          f"{row(s, 0, DORM1)} / {seat(s, 0, DORM4, 2)} / {note!r}")
+    #    ④ 这一格导入时本来就空 ⇒ **保持空着**（不凭空冒出一个人）
+    s = fresh()
+    s.place_operator(0, DORM4, 2, PAO)
+    note = s.restore_seat(0, DORM4, 2)
+    check("恢复默认 ④：导入时本来就空 ⇒ 保持空着（她不再占位）",
+          s.imported_seat_occupant(0, DORM4, 2) == "" and seat(s, 0, DORM4, 2) == ""
+          and "未排班" in note,
+          f"{s.imported_seat_occupant(0, DORM4, 2)!r} / {row(s, 0, DORM4)} / {note!r}")
+
+    # ⑤ **回退不打标**：回原位的人不进 `names`、被换回的那一格不在 `slots`
+    #    （否则"取消"会顺手把她重新钉住，用户会以为取消失败了）
+    s = fresh()
+    s.place_operator(0, DORM4, 2, FEI)
+    s.release_seat(0, DORM4, 2)
+    check("回退到导入原样 ⇒ 一律不打新标（她不再算「我手动放的人」）",
+          FEI not in (manual(s, 0, DORM1).get("names") or [])
+          and not manual(s, 0, DORM4).get("slots"),
+          f"{manual(s, 0, DORM1)} / {manual(s, 0, DORM4)}")
+
+    # ⑥ 「导入原样」是**深拷贝**、只存在会话里；导出格式一字不动（**兼容性红线**）
+    s = fresh()
+    snapshot = s.imported_seat_occupant(0, DORM1, 0)
+    s.place_operator(0, DORM4, 2, FEI)
+    check("导入原样是深拷贝：改 `schedule` 之后快照一字不动、两份不共享对象",
+          s.imported_layouts[0][DORM1] is not s.schedule.shifts[0].facilities[DORM1]
+          and s.imported_seat_occupant(0, DORM1, 0) == snapshot
+          and s.imported_seat_occupant(0, DORM4, 2) == "",
+          f"{snapshot!r} / {s.imported_seat_occupant(0, DORM1, 0)!r}")
+    out = op_export_schedule(s, {})
+    manual_keys = set()
+    for sh in out["shifts"]:
+        for f in sh["scenario"]["facilities"]:
+            if f.get("manual"):
+                manual_keys |= set(f["manual"])
+    blob = json.dumps(out, ensure_ascii=False)
+    check("导出里 `manual` 恰是 `{slots, names}`、顶层键恰是那四个、且没有「原位」的痕迹",
+          manual_keys == {"slots", "names"}
+          and sorted(out) == ["cycles", "detached", "shifts", "start_clock"]
+          and not [w for w in ("imported", "origin", "restore") if w in blob],
+          f"{sorted(manual_keys)} / {sorted(out)} / "
+          f"{[w for w in ('imported', 'origin', 'restore') if w in blob]}")
+
+    # ⑦ `entry_events.per_shift` 的**列表写法改读内层 `key`**（修掉 MAA 逐班覆盖整体错一位）
+    outs = build_entry_shift_overrides([{"key": 2, "enabled": True, "swap_with": "甲"},
+                                        {"key": 3, "enabled": False}])
+    outs2 = build_entry_shift_overrides([{"enabled": True}, {"enabled": False}])
+    check("列表写法：写了 `key` 就按 `key`（改前是 [1, 2]）；没写 `key` 才按位置（向后兼容）",
+          [o.key for o in outs] == [2, 3] and [o.key for o in outs2] == [1, 2],
+          f"{[o.key for o in outs]} / {[o.key for o in outs2]}")
+    sch = load_schedule_ex([SAMPLE]).schedule
+    check("MAA 示例：逐班设置落在**第 2 班**（`swap_with=龙舌兰`、生效）、第 3 班关闭（改前会红）",
+          [o.key for o in sch.entry_config().per_shift] == [2, 3]
+          and sch.entry_config_for_shift(1).enabled
+          and sch.entry_config_for_shift(1).swap_with == "龙舌兰"
+          and not sch.entry_config_for_shift(2).enabled,
+          f"{[o.key for o in sch.entry_config().per_shift]} / "
+          f"{sch.entry_config_for_shift(1).swap_with!r} / "
+          f"{sch.entry_config_for_shift(2).enabled}")
+
+
 def main() -> int:
     for _name, func in sorted(globals().items()):
         if _name.startswith("test_") and callable(func):
