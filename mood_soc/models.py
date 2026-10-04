@@ -416,7 +416,8 @@ class EntryShiftOverride:
     ```
 
     - `key`：定位班次 —— 1 基序号（`1`/`"1"`，对应第 1/2/3 班）或**班次名**（如 `"Shift 2 · 6h"`）。
-      用列表写法时按位置自动编号。
+      **两种写法都能写 `key`**：列表写法里**写了 `key` 就按它定位**，没写才按位置（第 `i` 项
+      ＝第 `i+1` 班）自动编号。
     - `swap_with`：`None` = 继承全局；`""`（JSON 里的 `null`/空串）= **明确"不指定"**
       （回到默认口径：同宿舍「前一位进驻」）。
     - `when`：`"immediate"`（强制立刻换）/ `"wait"`（等她回满再换）/ `"full"`（只在她满心情时换）；
@@ -676,9 +677,12 @@ def build_entry_shift_overrides(raw) -> List["EntryShiftOverride"]:
     两种写法：
 
     ```json
-    "per_shift": [ {"enabled": true, "swap_with": "巫恋"}, {"enabled": false} ]   // 列表＝按班次位置
+    "per_shift": [ {"key": 2, "enabled": true, "swap_with": "巫恋"}, {"enabled": false} ]  // 列表：key 优先、没写才按位置
     "per_shift": { "1": {...}, "Shift 2 · 6h": {...} }                            // 字典＝按序号或班次名
     ```
+
+    ⚠️ **列表写法里的 `key` 说了算**（某一项没写 `key` 才按位置编号）：只按位置编号会让
+    "第 2 班"的设置落到第 1 班上 —— `store/sources.py`（MAA 导入器）写的正是带 `key` 的列表。
 
     `swap_with` 的三种写法：**不写** = 继承全局；写 `null`/`""` = 明确"不指定"（回默认口径）；
     写人名/`"any"` = 就按它。
@@ -687,7 +691,12 @@ def build_entry_shift_overrides(raw) -> List["EntryShiftOverride"]:
         return []
     items: List[tuple] = []
     if isinstance(raw, list):
-        items = [(i + 1, v) for i, v in enumerate(raw)]
+        # ⚠️ 列表写法**优先读内层 `key`**（`store/sources._entry_from_plans` 写的正是带 `key`
+        #    的列表）：只按位置编号会让"第 2 班"的设置落到第 1 班上（**整体错一位** ——
+        #    MAA 示例排班里那两条逐班设置就是这么被写歪的）。某一项**没写 `key`**（或写 `null`）
+        #    ⇒ 退回按位置编号，向后兼容老写法。
+        items = [((v.get("key") if isinstance(v, dict) and v.get("key") is not None
+                   else i + 1), v) for i, v in enumerate(raw)]
     elif isinstance(raw, dict):
         items = list(raw.items())
     else:
