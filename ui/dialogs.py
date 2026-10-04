@@ -54,6 +54,23 @@ MIN_TABLE_H = 190
 # —— `SLOT_COLS` 由它算出来，量错了格子就又会被裁。
 SLOT_CELL_W = 146
 
+# 「③ 手动入宿」那行提示的**固定口径**（`IdleToDormMixin._notice_text` 拼在动态那句后面）：
+# `MANUAL_CAVEAT` 是**界面上看得见**的那半句（≤26 字）；
+# `MANUAL_CAVEAT_HINT` 是它挂的**悬停提示全文**（口径一字不丢，原文见
+# `documents/10-图形界面.md` §6.2）。两处**必须一起改**。
+# 为什么不全写在界面上：整行原先 84 字、占 3 行 74px，把半栏的纵向空间吃掉了。
+MANUAL_CAVEAT = "整间归手动；取消 ☑ = 交还自动入宿"
+MANUAL_CAVEAT_HINT = ("改动过的宿舍整间归手动（☑ 全亮）；取消某几位的 ☑ = 把那几位"
+                      "交还自动入宿（人留在原位、可被换出）。")
+# 「全部解锁…」的悬停提示：说清它清的是**台账**、连"这个人是我手动放的"也一起清
+UNLOCK_HINT = ("清掉勾选班次的**全部手动入宿台账**：被 ☑ 钉住的位次一起解锁、"
+               "连「这个人是我手动放的」也作废（位次上的人名本身不动）。")
+
+# 逐次表「说明」列的**显示截断**：引擎给的原文可达 109~120 字，不截的话每行高矮不齐、
+# 一屏只看得到三四行。⚠️ 只截**显示**（`_clip_note`），`Trajectory.idle_note_at`
+# 与任何引擎侧字符串都不动；完整原文挂 `attach_hint` 的悬停提示。
+NOTE_CLIP = 30
+
 
 def parse_mood(text) -> Optional[Decimal]:
     """把输入框里的文字解析成心情值 → `Decimal`；不合法（非数字 / 越界 / 空）返回 `None`。
@@ -92,6 +109,29 @@ def _tidy_note(note) -> str:
         return f"{v:f}".rstrip("0").rstrip(".")
 
     return _NOTE_NUM.sub(_short, text)
+
+
+def _clip_note(text: str, limit: int = NOTE_CLIP) -> str:
+    """把「说明」列的**显示**压到一行（超出 `limit` 字就截断 + `…`）。
+
+    ⚠️ **只截显示**：引擎给的原文（`Trajectory.idle_note_at`）一字不动，完整那句由
+    调用方挂到悬停提示上（`_hint`）。截断判据是**字数**而不是像素：`tk.Label` 在这里
+    是流式 `pack`、可以用 `wraplength` 折行，但折行会让每行高矮不齐 —— 这一列要的是
+    "每行一行高"，所以按字数切。
+    """
+    text = str(text or "")
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _hint(widget, text) -> None:
+    """给控件挂悬停提示 —— **复用 `ui/batch.attach_hint`**（别在 `ui/` 里另写一套 tooltip）。
+
+    ⚠️ 导入放在函数里：`ui/batch.py` 顶层 `from ui.dialogs import ...` 反向依赖本模块，
+    顶层再 import 回去就成环（`ui/settings.py` 把两者凑到一起时就炸）。悬停提示是
+    **运行时**才需要的东西，函数内 import 既不成环、也不会多付导入代价。
+    """
+    from ui.batch import attach_hint
+    attach_hint(widget, text)
 
 
 def _center(win: tk.Toplevel, parent: tk.Misc) -> None:
@@ -841,14 +881,15 @@ class IdleToDormMixin:
 
         `parent`＝两栏布局的**左栏**（固定宽度 `IDLE_MANUAL_W`，`pack_propagate(False)`）。
 
-        形态：`③ 手动入宿` 一块 LabelFrame，五行 ——
+        形态：`③ 手动入宿` 一块 LabelFrame，六行 ——
 
         | 行 | 控件 | 语义 |
         |---|---|---|
         | ① | 三个班次 `☑` + 「全选 / 全不选」 | **改动会落到所有勾选的班次**（编辑便利，数据格式不变） |
-        | ② | 「正在看」下拉 | 只决定**显示哪一班**的宿舍与位次（默认＝第一个勾中的班） |
-        | ③ | 宿舍下拉 + 「全部解锁」 | 宿舍按**设施下标**索引（写入口吃这个）；解锁要确认一次 |
-        | ④ | `第 N 位` ＋ `人名按钮` ＋ `☑ 锁` | 点人名开 `ask_operator`（含「清空该位置」）；`☑` 走 `set_seat_lock` |
+        | ② | 「正在看」下拉 + 宿舍下拉 | 「正在看」只决定**显示哪一班**；宿舍按**设施下标**索引（写入口吃这个） |
+        | ③ | 提示行 | 「改动落到哪几个班次」（动态）+ 固定口径（全文挂悬停提示） |
+        | ④ | `第 N 位` ＋ `人名按钮` ＋ `☑ 锁` | 点人名开 `ask_operator`（含「清空该位置」）；`☑` 走 `set_seat_lock`；**列数由 `SLOT_COLS` 按栏宽算出来** |
+        | ⑤ | 「全部解锁…」 | 解锁要确认一次；代价（连 `names` 一起清）挂在它的悬停提示上 |
 
         ⚠️ `☑ 锁` 的初值来自 `manual_dorm_editor_state` 的 `locked`（**只读显示**）；
         用户动过的那些格子记在 `_slot_locks[...][1]` 里，刷新时**不许被旧值盖回去**。
@@ -915,9 +956,10 @@ class IdleToDormMixin:
         # ⚠️ `set_facility_slots(manual=True)` 锁的是**传进来的整段位次**（`touched=len(slots)`），
         #    所以放一个人，**整间宿舍的 ☑ 都会点亮** —— 这是已批准的口径（「摆位即上锁」），
         #    界面必须把后果固定写出来（不管提示行说什么它都在），并给出怎么交还。
+        # ⚠️ 可见的那半句**压到 ≤26 字**（`MANUAL_CAVEAT`）；完整口径（含"人留在原位、
+        #    可被换出"）挂在**悬停提示**上（`ui/batch.py: attach_hint`，别另写一套 tooltip）。
         self.manual_notice.pack(fill="x", padx=theme.GAP, pady=(2, 4))
-        self._MANUAL_CAVEAT = ("改动过的宿舍整间归手动（☑ 全亮）；取消某几位的 ☑ = 把那几位"
-                               "交还自动入宿（人留在原位、可被换出）。")
+        _hint(self.manual_notice, self._notice_hint)
 
         self.slots_frame = tk.Frame(box, bg=theme.BG)
         self.slots_frame.pack(fill="x", padx=theme.GAP, pady=(4, 2))
@@ -928,6 +970,7 @@ class IdleToDormMixin:
         self.unlock_btn = ttk.Button(row3, text="全部解锁…", width=10,
                                      command=self._clear_locks)
         self.unlock_btn.pack(side="left")
+        _hint(self.unlock_btn, UNLOCK_HINT)
 
         self.manual_msg = self.manual_notice
         self._refresh_manual_state()
@@ -1049,21 +1092,40 @@ class IdleToDormMixin:
         return changed
 
     def _notice_text(self, message=None) -> str:
-        """提示行 = 「改动落到哪些班次」＋ 可选的即时反馈 ＋ **固定口径说明**（永远都在）。"""
+        """提示行 = 「改动落到哪些班次」＋ 可选的即时反馈 ＋ **固定口径说明**（永远都在）。
+
+        ⚠️ 界面上看到的这一行**压到 ≤26 字**（整行原先 84 字、占 3 行）：省下来的原文
+        挂悬停提示 —— 「正在看」那半句在 `_notice_hint` 里，固定口径那半句在模块常量
+        `MANUAL_CAVEAT_HINT`（`_notice_hint` 把它拼在最后）。
+        """
         if not self.shift_pick:
             return ""
         all_n = len(self.shift_pick)
         chosen = self._checked_shifts()
         if not chosen:
-            head = "⚠ 一个班次都没勾：改动无处落地，请先勾上至少一个班次。"
+            head = "⚠ 一个班次都没勾：改动无处落地。"
         elif len(chosen) == all_n:
-            head = f"改动落到**全部 {all_n} 个班次**；「正在看」只决定显示哪一班。"
+            head = f"改动落到全部 {all_n} 个班次。"
         else:
             which = "、".join(f"第 {i + 1} 班" for i in chosen)
-            head = f"改动落到勾选的 **{len(chosen)} 个班次**（{which}）。"
+            head = f"改动落到勾选的 {len(chosen)} 个班次（{which}）。"
         if message:
             head = f"{head}　{message}"
-        return f"{head}　{self._MANUAL_CAVEAT}"
+        return f"{head}　{MANUAL_CAVEAT}"
+
+    def _notice_hint(self) -> str:
+        """那行提示的**悬停全文**：可见那句 + 被压掉的「正在看」口径 + 固定口径。
+
+        ⚠️ 动态读 `manual_notice` 当前的文本（可见句里带着"落到几个班次 / 哪个班"）——
+        不读的话提示会停在建面板时那一句（它随勾选与防抖重算变）。
+        """
+        try:
+            shown = str(self.manual_notice.cget("text"))
+        except tk.TclError:
+            shown = ""
+        return (f"{shown}\n"
+                f"「正在看」只决定显示哪一班，不影响改动落到哪几个班次。\n"
+                f"{MANUAL_CAVEAT_HINT}")
 
     def _set_manual_msg(self, text: str) -> None:
         """面板内那一行即时反馈（状态栏那句由 `app.apply_manual_dorm` 负责）。"""
@@ -1343,11 +1405,16 @@ class IdleToDormMixin:
                                      command=lambda d=dirty: (d.__setitem__(0, True),
                                                               self._schedule_rebuild()))
                 chk.pack(side="left", padx=(6, 4))
-                # 只读说明：引擎这一刻的安排（进了哪/为什么没进）
-                detail = _tidy_note(note)
-                tk.Label(row, text=detail, bg=bg, fg=theme.MUTED, anchor="w",
-                         justify="left", wraplength=IDLE_MANUAL_W + 60,
-                         font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+                # 只读说明：引擎这一刻的安排（进了哪 / 为什么没进）
+                # ⚠️ **显示层截断到一行**（改前一行 109~120 字、按 `wraplength` 折成 2~5 行
+                #    ⇒ 每行高矮不齐、一屏只看得见三四行）；完整原文挂悬停提示，引擎侧不动。
+                full = _tidy_note(note)
+                lbl = tk.Label(row, text=_clip_note(full), bg=bg, fg=theme.MUTED, anchor="w",
+                               justify="left", wraplength=IDLE_MANUAL_W,
+                               font=(theme.FONT_FAMILY, theme.FS_SMALL))
+                lbl.pack(side="left")
+                if len(full) > NOTE_CLIP:
+                    _hint(lbl, full)
                 self._rows.append((key, use, dirty))
                 self._widgets.append(chk)
         self._sync()

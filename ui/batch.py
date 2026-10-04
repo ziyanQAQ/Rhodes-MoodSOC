@@ -134,11 +134,15 @@ def split_names(text: str) -> List[str]:
     return out
 
 
-def attach_hint(widget, text: str) -> None:
+def attach_hint(widget, text) -> None:
     """给控件挂一个**悬停说明**（Tk 没有原生 tooltip，这是最小的一份）。
 
     为什么需要：这次精简把"纯解释性"的长句从**界面上**删掉了，但口径不能丢 ——
     会影响读数解读的那半句（如"若她在别的班有活，那些班照常算"）改挂在悬停提示上。
+
+    `text` 可以是**字符串**，也可以是**无参可调用**（每次显示时才求值）——
+    后者给"内容会变"的控件用（如「闲置入宿」那行提示：它在防抖/重算后会被重写，
+    挂死字符串就会显示成旧的那句）。提示框是 `<Enter>` 现建的，求值不会白跑。
 
     ⚠️ 只用一个 `tk.Toplevel(overrideredirect=True)` 的 Label，**不抢焦点、不进 `_focusables`**
     （`ui/settings.py` 的焦点环只收 Entry/Combobox/Button/Checkbutton/Scale 那几类）；
@@ -149,13 +153,16 @@ def attach_hint(widget, text: str) -> None:
     def _show(_event=None):
         if tip["win"] is not None or not widget.winfo_exists():
             return
+        body = text() if callable(text) else text
+        if not body:
+            return
         win = tk.Toplevel(widget)
         win.wm_overrideredirect(True)
         try:
             win.attributes("-topmost", True)
         except tk.TclError:            # 某些窗口管理器不认这个属性；提示照样显示
             pass
-        tk.Label(win, text=text, bg=theme.PANEL, fg=theme.TEXT, justify="left",
+        tk.Label(win, text=body, bg=theme.PANEL, fg=theme.TEXT, justify="left",
                  wraplength=460, bd=1, relief="solid",
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack()
         win.update_idletasks()
