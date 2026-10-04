@@ -95,6 +95,11 @@ SESSION_METHOD_OWNER = {
     "set_seat_lock": "布局", "clear_seat_locks": "布局", "locked_seats_of": "布局",
     # 2026-10：界面整批摆位的落地口（Q15=(a)：界面摆位也写手动台账）
     "apply_manual_shifts": "布局", "manual_dorm_editor_state": "布局",
+    # 2026-10「锁定入宿」：把某人钉到「本班 · 某设施 · 某位次」时**先把她从本班别处摘掉**
+    "place_operator": "布局", "place_operators": "布局",
+    # 工单 §3.2：她要被放回基建 ⇒ **先把名单里那条剔掉**（名单是名册的字段，
+    # 同时要同步各班的 `world.detached` ⇒ 归「编排」——与 `_sync_from_schedule` 同类）
+    "_detach_guard": "编排",
     # —— 心情 ——
     "set_initial_mood": "心情", "set_initial_moods": "心情", "set_mood_at": "心情",
     "clear_mood_events": "心情", "restore_imported_moods": "心情",
@@ -116,8 +121,7 @@ SESSION_METHOD_OWNER = {
 }
 
 #: 其他层里的写入口 → 它服务的模块
-WRITE_ENTRY_OWNER = {
-    # —— 时间轴 ——
+WRITE_ENTRY_OWNER = {    # —— 时间轴 ——
     "apply_shift_hours": "时间轴", "apply_start_clock": "时间轴", "op_set_timeline": "时间轴",
     "_apply_clock": "时间轴", "_on_cycles": "时间轴", "on_cycles_changed": "时间轴",
     # —— 布局 ——

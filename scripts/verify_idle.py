@@ -1,4 +1,4 @@
-"""scripts/verify_idle.py —— 「闲置入宿」自检（三层解耦版：手动编辑 > 自动入宿 > 导入布局）。
+"""scripts/verify_idle.py —— 「闲置入宿」自检（三层解耦版：锁定入宿 > 自动入宿 > 导入布局）。
 
 用法：
     .venv/Scripts/python.exe scripts/verify_idle.py          # 全绿 → 退出码 0，有红 → 1
@@ -6,7 +6,7 @@
 
 口径（2026-10 重写，见 `documents/04-特殊机制.md` 第 30 条）：
 
-  ① **手动编辑**（`models.ManualLedger`，跟着班次布局走）—— **摆位即上锁、清空即解锁**
+  ① **锁定入宿**（`models.ManualLedger`，跟着班次布局走）—— **摆位即上锁、清空即解锁**
      （2026-10 口径反转）：摆了人的**位次**与手动放进去的**人**绝对不碰（不占、不换）；
      **把该位置空＝那一位交还自动入宿**（不再"保持空着"）；导入不打标。
      ⚠️ **粒度＝只锁你碰过的那些位次（累积）**（2026-10 第三次收敛）：界面两条路交来
@@ -23,7 +23,7 @@
      定点＝**宿舍里（锁定区外）最低的那位也 ≥ 外面剩下的候选**。
   ④ **导入布局**＝基线不是护身符：住进宿舍的人照样可以被换出去。
 
-⚠️ 已作废、别再加回来：手动指定位置 / 手动点名（归**手动编辑逻辑**，走布局快照）、
+⚠️ 已作废、别再加回来：手动指定位置 / 手动点名（归**锁定入宿**这一层，走布局快照）、
    竖向反序取"首个严格大于"、被换出者追加队尾、连续排列（留空洞即跳过）、
    以及更早的四级优先级 / 挂件门 / 阵营门 / 菲亚梅塔例外。
 """
@@ -301,10 +301,10 @@ def test_terminal_state():
 
 
 # ============================================================================
-# ④ 手动编辑逻辑（最高优先级；导入不打标）
+# ④ 锁定入宿（最高优先级；导入不打标）
 # ============================================================================
 def test_manual_locks_slot():
-    print("手动编辑：钉住的位次不被自动入宿占用")
+    print("锁定入宿：钉住的位次不被自动入宿占用")
     world = make_layout([[("甲", 5)]], capacity=3, dorm_count=1, protected_slots=0,
                         manual={0: {"slots": [1], "names": []}})
     run(world, {"乙": 6})
@@ -315,7 +315,7 @@ def test_manual_locks_slot():
 
 
 def test_manual_locks_person():
-    print("手动编辑：手动放进去的人不被换出（哪怕心情更低）")
+    print("锁定入宿：放进去的人不被换出（哪怕心情更低）")
     world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=0,
                         manual={0: {"slots": [0], "names": ["甲"]}})
     events = run(world, {"乙": 5})
@@ -327,7 +327,7 @@ def test_manual_locks_person():
 
 
 def test_manual_beats_lockzone():
-    print("手动编辑优先于锁定区：手动可以放/换到锁定区里")
+    print("锁定入宿优先于锁定区：手动可以放/换到锁定区里")
     world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=0,
                         manual={0: {"slots": [0], "names": ["乙"]}})
     check("手动钉住的人不被换出（心情 5 的丙进不来）",
@@ -590,10 +590,10 @@ def _raises(func) -> bool:
 
 
 # ============================================================================
-# ⑦ 手动编辑走**布局写入**这条路（Session.set_slots / set_facility_slots）
+# ⑦ 锁定入宿走**布局写入**这条路（Session.set_slots / set_facility_slots）
 # ============================================================================
 def test_session_write_paths():
-    print("手动编辑的写入路径（位次留洞 + 台账 + 容量收缩）")
+    print("锁定入宿的写入路径（位次留洞 + 台账 + 容量收缩）")
     from store.session import Session
 
     data = {"facilities": [
@@ -728,7 +728,7 @@ def test_seat_lock_primitives():
 
 
 def test_manual_dorm_editor_state():
-    print("「手动入宿」编辑器的只读数据（宿舍 × 位次：谁在、锁没锁）")
+    print("「锁定入宿」的只读数据（宿舍 × 位次：谁在、锁没锁）")
     from store.session import Session
 
     s = Session()
@@ -981,23 +981,69 @@ def test_detached_vs_lock():
           "名单优先" in (s2.loaded.summary() if s2.loaded else ""),
           s2.loaded.summary() if s2.loaded else "")
 
-    # ③ 同一族的第三条口径：**手动安排**（`set_slots` / `set_facility_slots`，`manual=True`）
-    #    也不许把名单里的人放到在用位次上 —— 三处一起守，"名单 ∧ 在位 ∧ 被锁"才真没入口。
+    # ③ 同一族的第三条口径：**手动安排**（`set_slots` / `set_facility_slots` / `place_operator`，
+    #    `manual=True`）。⚠️ **2026-10「锁定入宿」工单 §3.2 改了口径**：原来这里**拒绝**
+    #    （抛 `ValueError`），用户拍板改成「**先把那个干员从名单里剔掉，再执行操作**」——
+    #    因为「锁定入宿」的主语就是"把她放回基建"。**另外两处拒绝仍保留**（见上面两条），
+    #    「名单 ∧ 在位 ∧ 被锁」这个不变式照旧守得住。
     s9 = Session()
     s9.load_layout({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
                                     "operators": ["乙"]}]}, hours=1)
+    s9.idle_to_dorm = False
     s9.set_detached(["甲"], remove_from_slots=False)
     err9 = ""
     try:
         s9.set_slots(0, 0, ["甲", "乙"])
     except ValueError as exc:
         err9 = str(exc)
-    check("手动安排名单里的人 ⇒ **拒绝**（否则又造出「名单 ∧ 在位 ∧ 被锁」）",
-          "已在「不在基建」名单里" in err9, err9 or "（没有抛异常）")
-    s9.set_slots(0, 0, ["甲", "乙"], manual=False)
-    check("`manual=False` 时不拦（那份「名单 ∧ 在位」是 remove_from_slots=False 明确允许的）",
-          "manual" not in s9.schedule.shifts[0].facilities[0],
-          str(s9.schedule.shifts[0].facilities[0]))
+    check("手动安排名单里的人 ⇒ **先剔名单、再写入**（不再抛错，工单 §3.2 改了这一条）",
+          err9 == "" and s9.detached == [] and _seat_values(
+              s9.schedule.shifts[0].facilities[0])[:2] == ["甲", "乙"],
+          f"err={err9!r} detached={s9.detached} fac={s9.schedule.shifts[0].facilities[0]}")
+    s9b = Session()
+    s9b.load_layout({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
+                                     "operators": ["乙"]}]}, hours=1)
+    s9b.idle_to_dorm = False
+    s9b.set_detached(["甲"], remove_from_slots=False)
+    s9b.set_slots(0, 0, ["甲", "乙"], manual=False)
+    check("`manual=False` 时不拦、也**不打标**（那份「名单 ∧ 在位」是"
+          " remove_from_slots=False 明确允许的）",
+          "manual" not in s9b.schedule.shifts[0].facilities[0]
+          and s9b.detached == ["甲"],
+          f"{s9b.schedule.shifts[0].facilities[0]} detached={s9b.detached}")
+
+    # ④「指定时清原位」（工单 §3.1）：她**本班只在一处**、工作位次**空出来**、留洞不左移
+    s10 = Session()
+    s10.load_layout({"facilities": [
+        {"type": "贸易站", "level": 3, "operators": ["丙", "丁", "戊"]},
+        {"type": "宿舍", "level": 1, "capacity": 5, "operators": ["甲"]}]}, hours=1)
+    s10.idle_to_dorm = False
+    s10.place_operator(0, 1, 2, "丙")
+    facs10 = s10.schedule.shifts[0].facilities
+    check("`place_operator`：她从贸易站**空出**（留洞、后面的人不左移）",
+          _seat_values(facs10[0]) == ["", "丁", "戊"], str(facs10[0]))
+    check("`place_operator`：她只在本班**一处**（宿舍第 3 位），并进手动台账",
+          _seat_values(facs10[1])[2] == "丙"
+          and facs10[0].get("manual") is None
+          and facs10[1].get("manual") == {"slots": [2], "names": ["丙"]},
+          f"{facs10[0]} / {facs10[1]}")
+    check("`place_operator` 只动**这一个班次**（另一班不受影响）",
+          [o.name for o in s10.schedule.shifts[0].world.facilities[0].operators]
+          == ["丁", "戊"], str(facs10[0]))
+
+    # ⑤ 同一班次里把同一人指定到两个位次 ⇒ **后者覆盖**（工单 §3.3）
+    s11 = Session()
+    s11.load_layout({"facilities": [
+        {"type": "宿舍", "level": 1, "capacity": 5, "operators": ["甲"]}]}, hours=1)
+    s11.idle_to_dorm = False
+    s11.place_operator(0, 0, 1, "乙")
+    s11.place_operator(0, 0, 3, "乙")
+    vals11 = _seat_values(s11.schedule.shifts[0].facilities[0])
+    check("同一人指定到两个位次 ⇒ 只有**后一个**留着（第 2 位腾空）",
+          vals11[1] == "" and vals11[3] == "乙"
+          and s11.schedule.shifts[0].facilities[0].get("manual")
+          == {"slots": [3], "names": ["乙"]},
+          f"{vals11} {s11.schedule.shifts[0].facilities[0].get('manual')}")
 
 
 def test_facility_auto_name():
