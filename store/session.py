@@ -271,26 +271,32 @@ class Session:
         不该重同步「换心情」（自动化的事）。
 
         ⚠️ `idle_*` 那一组**同样是"只写在 Session 上"**（`ui/app.py::apply_idle_to_dorm` /
-        `api/ops.py::op_set_idle_to_dorm`），所以本方法**在 `set_detached` 这条路上仍然**
-        用快照覆盖它们 —— 同一个病、同一个触发路径，**本次未改**（用户口径：先报告、
-        不顺手改）。要一并修就把这个开关扩成"自动化设置整组"。
+        `api/ops.py::op_set_idle_to_dorm`），**本次按用户口径没改**（只报告）。它的触发路径
+        有**两段**，比 `entry_*` 更绕：① `set_detached` 会 `Schedule.with_detached` 重建每个
+        `Shift`，而 `Shift.__post_init__` 建 `world` 时**只搬 `facilities / initial_global /
+        detached`** ⇒ `world.idle_to_dorm` 在那一步就已经变回**默认值**；② 本方法再把它读回
+        Session。实测：面板设成 `(True, 9, [])` 之后碰一次名单 ⇒ Session 变 `(True, 5, [])`
+        （连文件里那份 `protected_slots=2 / blacklist=['甲']` 都没保住）。
+        ⇒ 要一并修**不能只加这个开关**，还得让 `Shift`（或 `with_detached`）留住
+        `idle_to_dorm`；另见 `16-现状与校准记录.md` §3.2 第 15 条。
         """
         if self.schedule is None:
             return
         self.detached = list(getattr(self.schedule, "detached", []) or [])
         if from_import and self.detached:
             self._resolve_imported_detached()
-        if not entry_settings:
-            return
-        cfg = self.schedule.entry_config()
-        self.entry_events = bool(cfg.enabled)
-        self.entry_swap_with = cfg.swap_with
-        self.entry_scope = getattr(cfg, "scope", "dorm")
-        # 「位置也一起互换」按用户要求从界面收掉：界面固定"只换心情、两人留原位"。
-        # 场景 JSON 里写 restore_back: false 会被这条界面口径覆盖（CLI / API 不受影响）。
-        self.entry_restore_back = True
-        self.entry_when = normalize_entry_when(getattr(cfg, "when", None)) or "full"
-        self.entry_per_shift = list(getattr(cfg, "per_shift", []) or [])
+        # ⚠️ 开关**只罩住「换心情」那一组**（下面 if 里的 6 个字段）——`idle_*` 照旧同步，
+        #    一字未动（见 docstring 末段：同病、本次按用户口径只报告）。
+        if entry_settings:
+            cfg = self.schedule.entry_config()
+            self.entry_events = bool(cfg.enabled)
+            self.entry_swap_with = cfg.swap_with
+            self.entry_scope = getattr(cfg, "scope", "dorm")
+            # 「位置也一起互换」按用户要求从界面收掉：界面固定"只换心情、两人留原位"。
+            # 场景 JSON 里写 restore_back: false 会被这条界面口径覆盖（CLI / API 不受影响）。
+            self.entry_restore_back = True
+            self.entry_when = normalize_entry_when(getattr(cfg, "when", None)) or "full"
+            self.entry_per_shift = list(getattr(cfg, "per_shift", []) or [])
         idle = getattr(self.schedule.shifts[0].world, "idle_to_dorm", None) if self.schedule.shifts else None
         # ⚠️ 默认**开**（用户口径"闲置入宿默认是开启的"）：文件里没写这个键 → 开；
         #    显式写 `"idle_to_dorm": false` / `{"enabled": false}` → 关。
