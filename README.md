@@ -122,8 +122,11 @@ $ python main.py --demo --target 泡泡 --period 8 --explain
 - 干员可写名字（自动套用内置技能，默认满练 `elite=2, level=30`），也可写对象
   `{"name": "x", "mood": 20.5, "elite": 2, "level": 30, "skill_ids": [...]}` —— 练度决定技能解锁；
 - 顶层可选：`entry_events`（进驻事件）、`idle_to_dorm`、`detached`（「不在基建」名单）、
-  `initial_global`（变量初值）。**四种导入格式**（本工具 / MAA / v3 求解输出 / v4 蓝图+干员池）
-  的识别与字段对照见 `10-图形界面.md` §2。
+  `initial_global`（变量初值）、`initial_moods` / `mood_events`（按时刻指定的心情锚点）、
+  `label`（班次名）、`hours`（班次时长）。**四种导入格式**（本工具 / MAA / v3 求解输出 / v4 蓝图+干员池）
+  的识别与字段对照见 `10-图形界面.md` §2；后四个键是 **2026-10 起"导出产物自带"** 的
+  （`export_schedule` 把它们写进每班 `scenario` 正文）⇒ 逐班存盘再导入，**设置与班次名/时长都逐字段不变**；
+  ⚠️ 老场景文件没有 `label`/`hours` ⇒ 行为**一字不变**（班次名仍取文件名、时长仍按班次均分）。
 
 ### 图形界面（`python -m ui`）
 
