@@ -28,6 +28,7 @@ Session（本模块）            ui/app.py（视图）              api/ops.py�
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -99,6 +100,13 @@ class Session:
     traj: Optional[Trajectory] = None
     #: 最后一次导入的附赠信息（干员池 / 变量初始值 / 导入报告）
     loaded: Optional[LoadedSchedule] = None
+    #: **导入原样**（任务 A）：三条 `load_*` 在**装配完成、任何用户编辑之前**取的一份
+    #: **深拷贝布局快照**（每个班次一份；与 `schedule` **不共享对象**）。
+    #: 用途＝「取消指定 ⇒ 回导入原位」与「恢复默认（回到导入时）」的基准；
+    #: **不写进 JSON、不动导出格式、不进 `api/` 协议**（只活在会话里）。
+    #: ⚠️ 时机＝导入层"名单优先"摘人**之后**（用户说的"导入时"＝**他刚导入看到的样子**）。
+    #: ⚠️ 别改读 `loaded.schedule`：它与 `schedule` 曾经是**同一个对象**（不设防，踩过）。
+    imported_layouts: List[List[dict]] = field(default_factory=list)
 
     # ---------------------------------------------------------------- 策略设置
     #: 周期数（1~`MAX_CYCLES`）：把同一排班连跑几个周期
@@ -155,6 +163,7 @@ class Session:
         self.initial_moods.clear()
         self.mood_events.clear()
         self._sync_from_schedule(from_import=True)
+        self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         self.recompute()
         return ld
 
@@ -189,6 +198,7 @@ class Session:
         self.initial_moods.clear()
         self.mood_events.clear()
         self._sync_from_schedule(from_import=True)
+        self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         if not apply_file_settings:
             # 换心情（进驻事件）：本入口默认**关**，且不继承文件里的逐班覆盖。
             self.entry_events = False
@@ -235,6 +245,7 @@ class Session:
         self.initial_moods.clear()
         self.mood_events.clear()
         self._sync_from_schedule(from_import=True)
+        self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         self.recompute()
 
     def _sync_from_schedule(self, *, from_import: bool = False) -> None:
@@ -327,6 +338,53 @@ class Session:
         if self.loaded is not None:
             self.loaded.notes.append(note)
         return [note]
+
+    # ---------------------------------------------------------------- 导入原样
+    def _capture_import_layouts(self) -> None:
+        """把**"导入那一刻的布局"**固化成 `imported_layouts`（任务 A）。
+
+        **时机**（三条 `load_*` 在 `_sync_from_schedule(from_import=True)` **之后**、`recompute()`
+        之前调它）：用户说的"导入时"＝**他刚导入看到的样子** —— 而导入层有一条会改布局的
+        规则（`_resolve_imported_detached`：文件里同时写了 `detached` 与占位 ⇒ **名单优先**，
+        把人从位次上摘掉）。摘人**属于"导入原样"的一部分**（那正是他打开文件后第一眼看到的
+        布局），所以快照取在它**之后**；`initial_moods` / 心情锚点等设置不在这份快照里
+        （它们不是布局，各有各的"恢复导入值"入口）。
+
+        ⚠️ **必须深拷贝**：`loaded.schedule` 与 `session.schedule` 曾经是**同一个对象**
+        （12 条编辑入口都返回新 `Schedule`，所以它"顺带"还留着导入原样 —— 那是**不设防的
+        巧合**，任何就地改都会毁掉它）。这里显式拷一份，从此与 `schedule` **不共享对象**。
+        """
+        if self.schedule is None:
+            self.imported_layouts = []
+            return
+        self.imported_layouts = [deepcopy(list(shift.facilities))
+                                 for shift in self.schedule.shifts]
+
+    def imported_seat_of(self, shift_index: int, name: str) -> Optional[Tuple[int, int]]:
+        """**导入时**她在这个班次里的 `(设施下标, 位次)`；查不到 ⇒ `None`。
+
+        `None` 的语义是**"导入时她不在本班"**（那才是"本班未排班"）—— 与"她坐在第 0 位"
+        必须分得开，所以**不返回 `(-1, -1)` 之类的哨兵**。
+        ⚠️ 同一份导入数据里同名出现在多处（本不该有的数据）时取**竖向最先**的一处。
+        """
+        i = int(shift_index)
+        if not name or not (0 <= i < len(self.imported_layouts)):
+            return None
+        for fi, fac in enumerate(self.imported_layouts[i]):
+            for si, who in enumerate(_seat_values(fac)):
+                if who and who == str(name):
+                    return (fi, si)
+        return None
+
+    def imported_seat_occupant(self, shift_index: int, facility_index: int, slot: int) -> str:
+        """**导入时这一格坐的是谁**；本来是空（或越界）⇒ `""`。"""
+        i, fi, si = int(shift_index), int(facility_index), int(slot)
+        if not (0 <= i < len(self.imported_layouts)):
+            return ""
+        layout = self.imported_layouts[i]
+        if not (0 <= fi < len(layout)):
+            return ""
+        return _seat_at(layout[fi], si)
 
     # ================================================================ 重算
     @staticmethod
@@ -1240,6 +1298,176 @@ class Session:
                     out.append((i, fi, fac.display_name, idx))
         return out
 
+    # ------------------------------------------------- 「取消指定 ⇒ 回导入原位」一族
+    def release_seat(self, shift_index: int, facility_index: int, slot: int) -> str:
+        """**取消「本班 · 某设施 · 某位次」的「我的指定」** ⇒ 被挪进来的人**回导入原位**。
+
+        用户原话：「锁定入宿当选择的是别的设施中的干员后，再取消应该让对应干员回到自己
+        原来的位置上」。步骤（工单 §2 任务 B）：
+
+          ① 这一格**退出台账**（＝解锁，沿用「清空该位置」的既有语义：位次留空、**不左移**）；
+          ② 若这一格上坐着的人**是我挪进来的**（本班台账 `names` 里有她）⇒ 把她送回
+             **导入原位**；原位被别人占着 ⇒ **换回去**：占位者去她刚空出来的那一格；
+          ③ 她的导入原位**查不到**（导入时她不在本班）⇒ 她不回原位、**本班不再占位**，
+             回执里写明（这就是"她变成本班未排班"）。
+
+        ⚠️ **只动 `shift_index` 这一个班次**（逐班写入；每班各自一份布局与台账）。
+        ⚠️ **留洞、不左移** —— 别学 `set_detached`（`_remove_from_slots`）那条会紧凑化的路。
+        ⚠️ **回退不打标**：被送回去的人**不进 `names`**、换回来的那一格也**不进 `slots`**
+          （与"导入不打标"同口径）—— 否则"取消"会顺手把她重新钉住，用户会以为取消失败了。
+        ⚠️ **不动自动入宿的临时安排**：那只在引擎副本里、每次重算都会重来；本方法只对
+          **快照里被挪动过的人**生效。
+        ⚠️ **不重算**（与 `place_operators` 一致）：界面走异步重算，直接调用的测试自己
+          `recompute()`。
+
+        返回一句**回执**（"送回原位"那一段；没有可送的人 ⇒ `""`）。
+        """
+        if self.schedule is None:
+            return ""
+        i = int(shift_index)
+        if not (0 <= i < len(self.schedule.shifts)):
+            return ""
+        facs = self.facilities_of(i)
+        fi = int(facility_index)
+        if not (0 <= fi < len(facs)):
+            return ""
+        sl = int(slot)
+        who = _seat_at(facs[fi], sl)
+        moved_by_me = bool(who) and who in _shift_ledger_names(facs)
+        # ① 清空这一格 + 这一格退出台账（`_write_manual` 顺带把她的名字从 names 摘掉）
+        fac = dict(facs[fi])
+        bound = max(_capacity_of_dict(fac), len(_seat_values(fac)), sl + 1)
+        _set_seat_value(fac, sl, "")
+        _write_manual(fac, touched=bound, touched_indices=[sl])
+        facs[fi] = fac
+        # ② 她是我挪进来的 ⇒ 送回导入原位（原位被占 ⇒ 换回去）
+        note = ""
+        if moved_by_me:
+            note = self._return_to_origin(facs, i, who, vacated=(fi, sl))
+        self.schedule = self.schedule.replaced_shift(i, facs)
+        return note
+
+    def restore_seat(self, shift_index: int, facility_index: int, slot: int) -> str:
+        """**「恢复默认（回到导入时）」**：把这一格恢复成导入时的样子，并撤销相关的挪动。
+
+        用户口径（工单 §3 任务 C，一次点下去全做）：
+
+          ① 解除这一格的「我的指定」（该位次退出台账）；
+          ② 把**导入时原本坐这一格的人**放回这一格（她若被我挪到别处，先摘出来）；
+          ③ 把这一格上**我锁进来的那位**送回她的**导入原位**（原位被占 ⇒ 同任务 B 的
+             「换回去」）；原位查不到 ⇒ 她不回原位、本班不再占位；
+          ④ 这一格导入时本来就空 ⇒ **保持空着**（不凭空冒出一个人；被动作 ③ 的"换回去"
+             带进来的人不算 —— 那是用户拍板的换位口径）。
+
+        ⚠️ **动作 ② 优先于动作 ③ 的换位**：若"换回去"把占位者送进了这一格、而这一格导入时
+        本来有人 ⇒ 先把那位占位者也送回她的导入原位，再放回导入原主；她若没有原位，就
+        留在这一格并在回执里写明（**不静默顶掉**）。
+        ⚠️ **只动这一个班次**；**留洞、不左移**；**回退不打标**（同 `release_seat`）；
+        **不做批量恢复**（用户明确：恢复只能一格一格来）。
+        ⚠️ **不重算**（同 `release_seat`）。
+        """
+        if self.schedule is None:
+            return ""
+        i = int(shift_index)
+        if not (0 <= i < len(self.schedule.shifts)):
+            return ""
+        facs = self.facilities_of(i)
+        fi, sl = int(facility_index), int(slot)
+        if not (0 <= fi < len(facs)):
+            return ""
+        cur = _seat_at(facs[fi], sl)
+        want = self.imported_seat_occupant(i, fi, sl)
+        bits: List[str] = []
+        # ① 解除这一格的指定（位次退出台账）＋ 把这一格**空出来**（她的去路由 ③ 决定）
+        fac = dict(facs[fi])
+        bound = max(_capacity_of_dict(fac), len(_seat_values(fac)), sl + 1)
+        _set_seat_value(fac, sl, "")
+        _write_manual(fac, touched=bound, touched_indices=[sl])
+        facs[fi] = fac
+        # ③ 我锁进来的那位回她的导入原位（同一格上的人就是她；导入原主不算"我锁的"）
+        if cur and cur != want:
+            note = self._return_to_origin(facs, i, cur, vacated=(fi, sl))
+            if note:
+                bits.append(note)
+        # ② 导入时原本坐这一格的人放回这一格
+        if want:
+            holder = _seat_at(facs[fi], sl)
+            if not holder:
+                self._put_back_local(facs, i, want, (fi, sl))
+                if cur != want:
+                    bits.append(f"{want} 已放回导入原位"
+                                f"（{self._room_label(i, fi)} 第 {sl + 1} 位）")
+            elif holder != want:
+                # 换位把别人带进了这一格 ⇒ 动作 ② 优先：先让那位也回她的导入原位（不再二次换位）
+                extra = self._return_to_origin(facs, i, holder, vacated=None)
+                if extra:
+                    bits.append(extra)
+                if not _seat_at(facs[fi], sl):
+                    self._put_back_local(facs, i, want, (fi, sl))
+                    bits.append(f"{want} 已放回导入原位"
+                                f"（{self._room_label(i, fi)} 第 {sl + 1} 位）")
+                else:
+                    bits.append(f"⚠ 导入原主 {want} 暂时放不回这一格"
+                                f"（{self._room_label(i, fi)} 第 {sl + 1} 位 仍被 "
+                                f"{_seat_at(facs[fi], sl)} 占着）")
+        self.schedule = self.schedule.replaced_shift(i, facs)
+        return "；".join(bits)
+
+    def _put_back_local(self, facs: List[dict], shift_index: int, name: str,
+                        cell: Tuple[int, int]) -> None:
+        """把 `name` 放回**本班**的某一格（先把她从别处摘掉，留洞不左移），**不打标**。"""
+        fi, sl = int(cell[0]), int(cell[1])
+        _strip_from_other_facilities(facs, name, keep=(fi, sl))
+        fac = dict(facs[fi])
+        _set_seat_value(fac, sl, name)
+        _prune_ledger(fac, drop_names=[name])
+        facs[fi] = fac
+        for k, other in enumerate(facs):
+            if k != fi and other.get("manual"):
+                _prune_ledger(other, drop_names=[name])
+
+    def _return_to_origin(self, facs: List[dict], shift_index: int, name: str,
+                          vacated: Optional[Tuple[int, int]]) -> str:
+        """把 `name` 送回她的**导入原位**（原位有人 ⇒ 换回去）；**就地改 `facs`**，返回回执。
+
+        `vacated` ＝ "她刚空出来的那一格"（原位被占时，占位者换到这里）；传 `None` ＝
+        **不换位**（原位被占就让她留在原地，调用方自己收尾）。
+        ⚠️ **不打标**（回退到导入时；见 `release_seat`）—— 她不再是我手动放的人。
+        """
+        origin = self.imported_seat_of(shift_index, name)
+        if origin is None:
+            if vacated is None:
+                return f"{name} 导入时本班未排班 ⇒ 没有原位可回（留在原处）"
+            return f"{name} 导入时本班未排班 ⇒ 不回原位（本班不再占位）"
+        ofi, osl = int(origin[0]), int(origin[1])
+        if not (0 <= ofi < len(facs)):
+            if vacated is None:
+                return f"{name} 的导入原位已不存在 ⇒ 没有原位可回（留在原处）"
+            return f"{name} 的导入原位已不存在 ⇒ 不回原位（本班不再占位）"
+        holder = _seat_at(facs[ofi], osl)
+        if holder == name:                              # 已经在原位
+            return ""
+        if holder and vacated is None:
+            return f"{name} 的导入原位（{self._room_label(shift_index, ofi)} 第 {osl + 1} 位）" \
+                   f"被别人占着 ⇒ 她留在原处"
+        # 放回原位：`_put_back_local` 会先把她在**别处**的那一份摘掉（留洞、不左移）
+        self._put_back_local(facs, shift_index, name, (ofi, osl))
+        there = f"{self._room_label(shift_index, ofi)} 第 {osl + 1} 位"
+        if not holder:
+            return f"{name} 已回导入原位（{there}）"
+        vfi, vsl = int(vacated[0]), int(vacated[1])
+        self._put_back_local(facs, shift_index, holder, (vfi, vsl))
+        return (f"{name} 已回导入原位（{there}），"
+                f"{holder} 换到 {self._room_label(shift_index, vfi)} 第 {vsl + 1} 位")
+
+    def _room_label(self, shift_index: int, facility_index: int) -> str:
+        """某班某设施下标 → 显示名（回执用；宿舍拿到补名后的 `宿舍#1`）。"""
+        try:
+            return str(self.schedule.shifts[int(shift_index)].world.facilities[
+                int(facility_index)].display_name)
+        except (AttributeError, IndexError, TypeError):
+            return f"第 {int(facility_index) + 1} 间"
+
     def set_room_level(self, shift_index: int, facility_index: int, level: int) -> None:
         """改某个班次某间房的等级（容量随之变化）。
 
@@ -1790,6 +2018,58 @@ def _write_seats(fac: dict, values: Sequence[object]) -> None:
         fac["slots"] = [v or None for v in trimmed]
     else:
         fac["operators"] = list(trimmed)
+
+
+# ---------------------------------------------------------------- 位次小工具
+# （「锁定入宿 ⇒ 取消 / 恢复默认」那一族共用；都**只动布局**，台账由调用方显式处理）
+def _seat_at(fac: dict, slot: int) -> str:
+    """这一格坐的是谁（空槽 / 越界 ⇒ `""`）。"""
+    values = _seat_values(fac)
+    slot = int(slot)
+    return values[slot] if 0 <= slot < len(values) else ""
+
+
+def _set_seat_value(fac: dict, slot: int, name) -> None:
+    """把某一格写成 `name`（空串＝留空）—— 越界补空槽、**不左移**，**不碰台账**。"""
+    values = _seat_values(fac)
+    slot = int(slot)
+    while len(values) <= slot:
+        values.append("")
+    values[slot] = str(name or "")
+    _write_seats(fac, values)
+
+
+def _ledger_names(fac: dict) -> set:
+    """这一间的手动台账里"我手动放进去的人"（`manual.names`）。"""
+    return {str(n) for n in ((fac.get("manual") or {}).get("names") or []) if str(n)}
+
+
+def _shift_ledger_names(facs: List[dict]) -> set:
+    """**一个班次全部设施**的台账人名并集 —— 判"她是不是我挪进来的"用它。"""
+    out: set = set()
+    for f in facs:
+        out |= _ledger_names(f)
+    return out
+
+
+def _prune_ledger(fac: dict, drop_names: Sequence[str] = ()) -> None:
+    """把 `drop_names` 从这一间的台账里摘掉，并清掉"已经不成立"的条目（**不改布局**）。
+
+    用在"系统把人挪回去了"之后：那位已经不是我手动放的人了（回退**不打标**，与导入同口径），
+    留着她的名字会让 `_seat_verdict` 第 1 层继续把她钉住 —— "取消指定"看起来没生效。
+    ⚠️ `slots` 只保留"现在仍然坐着人"的位次（与 `_write_manual` 同一套累积口径）。
+    """
+    led = fac.get("manual")
+    if not led:
+        return
+    values = _seat_values(fac)
+    cap = max(_capacity_of_dict(fac), len(values))
+    live = {v for v in values if v}
+    live_slots = {i for i, v in enumerate(values) if v and i < cap}
+    old_slots = {int(i) for i in (led.get("slots") or [])}
+    old_names = {str(n) for n in (led.get("names") or [])}
+    _put_manual(fac, old_slots & live_slots,
+                (old_names - {str(n) for n in drop_names}) & live)
 
 
 # ---------------------------------------------------------------- 公开的位次读写（给 ui/ 与脚本用）

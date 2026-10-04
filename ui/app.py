@@ -39,7 +39,7 @@ from store.session import seat_values  # noqa: E402
 from ui import theme  # noqa: E402
 from ui.board import BaseBoard, facility_tag  # noqa: E402
 from ui.chart import MoodChart  # noqa: E402
-from ui.dialogs import ask_operator, ask_mood  # noqa: E402
+from ui.dialogs import RESTORE_DEFAULT, ask_mood, ask_operator  # noqa: E402
 from ui.roster import RosterStrip  # noqa: E402
 # 视图**只从 store 取计算与状态**：排班引擎、装配、心情查询都在 Session 与 store.schedule 里。
 from ui.schedule import all_operator_names  # noqa: E402  （转发自 store.schedule）
@@ -1101,7 +1101,9 @@ class MoodSocApp(tk.Tk):
         names = all_operator_names(self.schedule.operator_names())
         picked = ask_operator(self, names, current,
                               title=f"{facility.display_name} · 第 {slot_index + 1} 位")
-        if picked is None:
+        if picked is None or picked == RESTORE_DEFAULT:
+            # ⚠️ 本入口**没有**「恢复默认」这一项（`ask_operator` 不开 `restore_default`）——
+            #    这道判断是**兜底**：万一哪天有人给它开了开关，也不能把哨兵当人名写进布局。
             return
         ops = [o.name for o in facility.operators]
         while len(ops) <= slot_index:
@@ -1289,14 +1291,21 @@ class MoodSocApp(tk.Tk):
     def apply_lock_dorm(self, req: dict) -> str:
         """**「锁定入宿」的落地口**（`LockPanel` 的唯一写入口；工单 §2.3/§3）。
 
-        `req` 两种形态（可同时给）：
+        `req` 三种形态（可同时给）：
         · `placement`：`{"shifts": [班次下标…], "facility_index": 设施下标,
                          "slot_names": {位次 0 基: 人名或 ""}}` —— 逐格指定 / 清空；
         · `batch`：`{"shifts": [...], "facility_index": 设施下标, "names": [人名…],
-                     "clear_first": bool}` —— 按**位次正序**填进第 1..k 位（工单 §2.4）。
+                     "clear_first": bool}` —— 按**位次正序**填进第 1..k 位（工单 §2.4）；
+        · `restore`：`{"shifts": [...], "facility_index": 设施下标, "slots": [位次 0 基…]}`
+          —— 「**恢复默认（回到导入时）**」（选人框里那一个按钮，工单 §3 任务 C），
+          走 `Session.restore_seat`：这一格回到导入时的样子 + 把我挪过的人送回原位。
+          `restore` 与 `placement`/`batch` 是**两条不同的意图**，别互相冒充。
 
         `mode`＝`"pin"`（默认）时走 `Session.place_operator` 的语义：**先把她从本班其它设施
         里摘掉**（留空洞、不左移）再写这一格；`"set"`＝只写这一格（老行为，兼容口）。
+        ⚠️ `pin` 且**把人名写成空串**（＝清空这一格）时改走 `Session.release_seat`（工单 §2
+        任务 B）：取消「我的指定」⇒ 被我挪进来的那位**回她的导入原位**（原位被占 ⇒ 换回去）。
+        `"set"` 那条兼容口**保持老行为**（只清空、不回原位）。
 
         返回一句**回执**（工单 §2.3 要求写清三件事）：谁被放进 / 移出、**被腾出的人**、
         **被抽走上班的人**让哪个工作位空出。⚠️ 面板内那句会被随后的重算重建冲掉，
@@ -1309,6 +1318,7 @@ class MoodSocApp(tk.Tk):
         notes: List[str] = []
         placement = req.get("placement") or {}
         batch = req.get("batch") or {}
+        restore = req.get("restore") or {}
         plan: List[tuple] = []                 # [(班次下标, 设施下标, {位次: 人名})]
         if placement:
             plan.append(([int(i) for i in (placement.get("shifts") or ())],
@@ -1333,7 +1343,23 @@ class MoodSocApp(tk.Tk):
                 for k in range(len(cell), cap):
                     cell[k] = ""
             plan.append(([int(i) for i in (batch.get("shifts") or ())], fi, cell))
-        if not plan:
+        if restore:
+            # —— 「恢复默认（回到导入时）」：逐格还原（`Session.restore_seat`）——
+            #    ⚠️ 它与 `placement`/`batch` **互不冒充**：恢复不是"写一个人名"，而是
+            #    "这一格回到导入时 + 把我挪过的人送回各自原位"，所以走独立的一条路。
+            rfi = int(restore.get("facility_index"))
+            rslots = [int(k) for k in (restore.get("slots") or ())]
+            before = len(notes)
+            for i in [int(x) for x in (restore.get("shifts") or ())]:
+                if not (0 <= i < len(self.schedule.shifts)):
+                    continue
+                for k in rslots:
+                    text = self.session.restore_seat(i, rfi, k)
+                    if text:
+                        notes.append(text)
+            if rslots and len(notes) == before:
+                notes.append("这一格本来就是导入时的样子（只解除了「我的指定」）")
+        if not plan and not restore:
             return "「锁定入宿」：这次没有任何改动。"
 
         for shifts, fi, cells in plan:
@@ -1389,11 +1415,21 @@ class MoodSocApp(tk.Tk):
                          if (before_here[k] if k < len(before_here) else "") != v)
         if not touched:
             return ""
+        home_notes: List[str] = []
         if pin:
             # ⚠️ 走 `Session.place_operator` 的语义：**逐格"先摘后写"**
             #    （她自己原来的那一处会被腾出来、留空洞不左移）
+            # ⚠️ **写成空串 ＝ 取消「我的指定」** ⇒ 走 `Session.release_seat`（工单 §2 任务 B）：
+            #    这一格退出台账**并且**把被我挪进来的那位送回她的导入原位（原位被占 ⇒ 换回去）。
+            #    `place_operator(..., "")` 那条老口径只清空、不回原位，不能拿它顶替。
             for k in touched:
-                self.session.place_operator(shift, fac_index, k, out_names[k])
+                value = out_names[k]
+                if value:
+                    self.session.place_operator(shift, fac_index, k, value)
+                else:
+                    home = self.session.release_seat(shift, fac_index, k)
+                    if home:
+                        home_notes.append(home)
         else:
             merged = list(before_here)
             for k, v in out_names.items():
@@ -1426,6 +1462,7 @@ class MoodSocApp(tk.Tk):
                 now = f[si] if si < len(f) else ""
                 if was and not now:
                     bits.append(f"{self._fac_label(k)} 第 {si + 1} 位 空出")
+        bits.extend(home_notes)                    # 「取消指定 ⇒ 回导入原位」那一段回执
         return "；".join(bits)
 
     def _fac_label(self, fac_index: int) -> str:

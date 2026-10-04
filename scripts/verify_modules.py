@@ -97,6 +97,9 @@ SESSION_METHOD_OWNER = {
     "apply_manual_shifts": "布局", "manual_dorm_editor_state": "布局",
     # 2026-10「锁定入宿」：把某人钉到「本班 · 某设施 · 某位次」时**先把她从本班别处摘掉**
     "place_operator": "布局", "place_operators": "布局",
+    # 2026-10「取消指定 ⇒ 回导入原位」/「恢复默认（回到导入时）」：写的是**布局 + 手动台账**
+    # （也要同步 `schedule`）⇒ 与上一条同属「布局」
+    "release_seat": "布局", "restore_seat": "布局",
     # 工单 §3.2：她要被放回基建 ⇒ **先把名单里那条剔掉**（名单是名册的字段，
     # 同时要同步各班的 `world.detached` ⇒ 归「编排」——与 `_sync_from_schedule` 同类）
     "_detach_guard": "编排",

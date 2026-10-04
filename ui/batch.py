@@ -44,7 +44,7 @@ from store.session import seat_specs, seat_values, write_seats   # 位次口径�
 
 from ui import theme
 from ui.board import facility_tag
-from ui.dialogs import ask_operator, parse_mood
+from ui.dialogs import RESTORE_DEFAULT, ask_operator, parse_mood
 from ui.schedule import MoodSetEvent, all_operator_names
 from ui.scroll import VScroll
 
@@ -1004,7 +1004,9 @@ class BatchMixin:
                 names.append(n)
         picked = ask_operator(self, names, "",
                               title="添加「不在基建」的干员（不在工作设施、也不在宿舍）")
-        if not picked:
+        if not picked or picked == RESTORE_DEFAULT:
+            # ⚠️ 本入口**没有**「恢复默认」这一项（不开 `restore_default`）；哨兵只是兜底防线
+            #    （"添加干员"没有导入原位的语义，也绝不能把哨兵当人名加进名单）。
             return
         self._detach_operator(picked)
         self._sync_facilities()                  # 位置可能被摘掉了 → 上面那段表格也要刷
@@ -1800,7 +1802,9 @@ class BatchMixin:
                 names.append(n)
         others = [n for f in self._fac_names for n in f.get("operators", []) if n != current]
         picked = ask_operator(self, names + [n for n in others if n not in names], current)
-        if picked is None:
+        if picked is None or picked == RESTORE_DEFAULT:
+            # ⚠️ 位置列的选人框**不开**「恢复默认」（那一项只在「锁定入宿」矩阵里）；
+            #    哨兵判断是兜底：绝不能让 "" 以外的哨兵被当成人名写进位置列。
             return                                  # 取消
         while len(ops) <= slot_index:               # 中间的空位用 "" 占住（不能塌缩）
             ops.append("")

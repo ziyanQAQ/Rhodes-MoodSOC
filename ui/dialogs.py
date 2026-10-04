@@ -83,6 +83,12 @@ MATRIX_EMPTY = "—"
 #: 「批量填写…」的班次下拉里那个"全部"选项
 BATCH_ALL_SHIFTS = "全部班次"
 
+#: 选人框「**恢复默认（回到导入时）**」的返回值**哨兵**（任务 C）。
+#: ⚠️ **不能用 `""`**：`""` 已经是「清空该位置」的既有返回值（`None` ＝取消），
+#: 三个含义必须分得开 —— 混用会让"清空"与"恢复默认"变成同一个动作。
+#: 只有开了 `restore_default=True` 的调用点才可能拿到它（`LockPanel` 那一处）。
+RESTORE_DEFAULT = "__restore_default__"
+
 
 
 def parse_mood(text) -> Optional[Decimal]:
@@ -163,9 +169,16 @@ def _modal(win: tk.Toplevel, parent: tk.Misc) -> None:
 
 
 class OperatorPicker(tk.Toplevel):
-    """选人：搜索框 + 列表（支持键盘上下/回车，双击确认）。"""
+    """选人：搜索框 + 列表（支持键盘上下/回车，双击确认）。
 
-    def __init__(self, parent, names: Sequence[str], current: str = "", title: str = "选择干员"):
+    `restore_default=True` 时**多一个**「恢复默认（回到导入时）」按钮（任务 C）：
+    返回 `RESTORE_DEFAULT` 哨兵。**默认关** —— 只有「锁定入宿」矩阵那一处开它
+    （「＋ 添加干员…」/`on_slot_left`/「干员与心情」位置列都**不该**多出这一项：
+    它们没有"导入原位"的语义，点了也没用）。
+    """
+
+    def __init__(self, parent, names: Sequence[str], current: str = "", title: str = "选择干员",
+                 restore_default: bool = False):
         super().__init__(parent, bg=theme.BG)
         self.title(title)
         self.resizable(True, True)
@@ -193,6 +206,16 @@ class OperatorPicker(tk.Toplevel):
         btns = tk.Frame(self, bg=theme.BG)
         btns.pack(fill="x", padx=theme.PAD, pady=(0, theme.PAD))
         ttk.Button(btns, text="清空该位置", command=self._clear).pack(side="left")
+        if restore_default:
+            # ⚠️ 与「清空该位置」**并存**（用户口径）：清空＝交还自动入宿；
+            #    恢复默认＝这一格回到导入时的样子（并把我挪过的人送回原位）。
+            self.restore_btn = ttk.Button(btns, text="恢复默认（回到导入时）",
+                                          command=self._restore)
+            self.restore_btn.pack(side="left", padx=(6, 0))
+            _hint(self.restore_btn,
+                  "把这一格恢复成**导入时**的样子：解除这一格的「我的指定」，"
+                  "把导入时原本坐这一格的人放回来，并把我挪动过的人送回各自的导入原位"
+                  "（原位被占 ⇒ 换回去）。只对这一格、这一个班次生效。")
         ttk.Button(btns, text="取消", command=self._cancel).pack(side="right")
         ttk.Button(btns, text="确定", style="Accent.TButton", command=self._ok).pack(side="right",
                                                                                     padx=(0, 6))
@@ -229,22 +252,31 @@ class OperatorPicker(tk.Toplevel):
         self.result = ""          # "" = 明确要求清空该位置（None = 取消，调用方据此区分）
         self.destroy()
 
+    def _restore(self) -> None:
+        """「恢复默认（回到导入时）」：返回哨兵（**不是** `""`，见 `RESTORE_DEFAULT`）。"""
+        self.result = RESTORE_DEFAULT
+        self.destroy()
+
     def _cancel(self) -> None:
         self.result = None
         self.destroy()
 
 
 def ask_operator(parent, names: Sequence[str], current: str = "",
-                 title: str = "选择干员") -> Optional[str]:
-    """返回选中的干员名；`""` 表示「清空该位置」；`None` 表示取消。
+                 title: str = "选择干员",
+                 restore_default: bool = False) -> Optional[str]:
+    """返回选中的干员名；`""` 表示「清空该位置」；`None` 表示取消；
+    开了 `restore_default` 时还可能返回 `RESTORE_DEFAULT`（「恢复默认（回到导入时）」）。
 
     ⚠️ `title` 是**转发形参**：`OperatorPicker.__init__` 本来就有它（第 4 个位置参数），
     而本壳原先没接 —— 三处调用点（位次按钮 / 「＋ 添加干员…」/ `on_slot_left`）
     都传了 `title=`，于是 `TypeError: ask_operator() got an unexpected keyword argument
     'title'`，而 **Tk 吞掉回调异常只打 stderr** ⇒ 用户看到的是「点了完全没反应」、
     台账一字不动。别把 `title` 插到 `current` **前面**（那会打乱既有位置参数顺序）。
+    ⚠️ `restore_default` 同理必须是**转发形参**（工单 §3 任务 C）：拼错名字、或忘了往下传，
+      那一项就会变成"点了没反应"。
     """
-    dlg = OperatorPicker(parent, names, current, title=title)
+    dlg = OperatorPicker(parent, names, current, title=title, restore_default=restore_default)
     parent.wait_window(dlg)
     return dlg.result
 
@@ -1267,7 +1299,9 @@ class LockPanel(tk.Frame):
 
     · **「当前」**＝该班**第一个执行点、换班之后**那一刻的引擎世界（`Trajectory.world_at`
       落在执行点上取右侧，工单 §2.5；**不与主界面滑块联动**）。
-    · **「我的指定」**＝你为这一班这一位指定的人（没指定 ⇒ `—`）；点它开选人框。
+    · **「我的指定」**＝你为这一班这一位指定的人（没指定 ⇒ `—`）；点它开选人框
+      （框里除了「清空该位置」，还有「**恢复默认（回到导入时）**」＝把这一格还原成导入时的
+      样子、并把我挪过的人送回原位，见 `Session.restore_seat`）。
     · 列数＝班次数：列宽按**可视宽度** `(width - 首列) // 班次数` 自适应，再夹到
       `[MATRIX_MIN_COL_W, MATRIX_MAX_COL_W]`；装不下时**横向滚动**（工单 §2.2）。
     · 整页高度 ≤ `PAGE_H`：建完表**自己量一遍**，超了就把画布压低到下限
@@ -1472,7 +1506,8 @@ class LockPanel(tk.Frame):
         btn.pack(fill="x", padx=2, pady=(0, 2))
         self._vs.join(btn)
         self._slot_btns[(shift, r)] = btn
-        _hint(btn, f"第 {shift + 1} 班 第 {r + 1} 位 · 点它选人 / 清空。\n{MANUAL_CAVEAT_HINT}")
+        _hint(btn, f"第 {shift + 1} 班 第 {r + 1} 位 · 点它选人 / 清空 / 恢复默认（回到导入时）。\n"
+                   f"{MANUAL_CAVEAT_HINT}")
 
     # ------------------------------------------------------------------ 刷新
     def refresh_view(self) -> None:
@@ -1495,7 +1530,11 @@ class LockPanel(tk.Frame):
 
     # ------------------------------------------------------------------ 写入
     def _pick_slot(self, shift: int, slot: int) -> None:
-        """点某一格 → `ask_operator`（`""`＝清空该位；`None`＝取消）。"""
+        """点某一格 → `ask_operator`（`""`＝清空该位；`RESTORE_DEFAULT`＝恢复默认；`None`＝取消）。
+
+        ⚠️ **只有这一处**开 `restore_default=True`：「恢复默认（回到导入时）」的四个动作
+        都在"这一格 + 这一个班次"上，别的选人框（添加干员 / 位置列）没有导入原位的语义。
+        """
         dorm = self._current_dorm()
         if dorm is None:
             return
@@ -1506,13 +1545,24 @@ class LockPanel(tk.Frame):
                 break
         picked = ask_operator(self, list(self._view.get("op_names") or ()), current,
                               title=f"锁定入宿 · 第 {shift + 1} 班 "
-                                    f"{dorm['name']} 第 {slot + 1} 位")
+                                    f"{dorm['name']} 第 {slot + 1} 位",
+                              restore_default=True)
         self._write_slot(shift, int(dorm["index"]), slot, picked)
 
     def _write_slot(self, shift: int, facility_index: int, slot: int, picked) -> str:
         """把一格的结果交给写入口（`None`＝取消，什么都不做）；返回回执文案。"""
         if picked is None:
             return ""
+        if picked == RESTORE_DEFAULT:
+            # 任务 C：恢复默认走**独立**的请求形态（`restore`）—— 它不是"写一个人名"，
+            # 而是"这一格回到导入时 + 把当事人送回原位"，别塞进 `slot_names` 里冒充人名。
+            msg = str(self._on_manual({
+                "mode": "pin",
+                "restore": {"shifts": [int(shift)], "facility_index": int(facility_index),
+                            "slots": [int(slot)]},
+            }) or "")
+            self._set_msg(msg)
+            return msg
         name = str(picked)
         msg = str(self._on_manual({
             "mode": "pin",
