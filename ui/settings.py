@@ -19,19 +19,27 @@
 |---|---|---|
 | **时间轴** | 周期时长 / 各班次时长 / **周期数**（1~7，见 `store.session.MAX_CYCLES`） / **初始时间点**（周期从几点开始） | `dialogs.TimelinePanel` + 本文件 |
 | **干员与心情** | 房间等级 + 干员表 + 练度 + **按时刻指定心情**（周期 / 时刻 / 锚点） | `batch.BatchPanel` |
+| **入宿设置** | **全局配置**（① 总开关 + ② 锁定位置数 + 黑名单）**在上** ＋ **锁定入宿矩阵**（行＝位次 × 列＝班次）**在下** | `dialogs.IdleToDormPanel` + `dialogs.LockPanel` |
 | **换心情** | 进驻事件（M15a）：开关 + 每班一行表 | `dialogs.EntryEventPanel` |
-| **闲置入宿** | 未满的闲置干员进宿舍：开关 + 逐次表 | `dialogs.IdleToDormPanel` |
+
+⚠️ **2026-10「入宿设置」改版**：原先这是**两个分区** —— 「锁定入宿」（`LockPanel` 矩阵，
+**独立整页**：唯一的理由是"矩阵是横向的（列＝班次），半栏放不下"）与「闲置入宿」
+（`IdleToDormPanel`：① 总开关 + ② 锁定位置数 + 黑名单 + **④ 逐次表**）。
+现在两块**合成一页**（分区键 `dorm`，标题「**入宿设置**」，排在**第 3 位**＝原「锁定入宿」
+的位置），并且**④ 逐次表整块删除**（用户口径：那块没用）。之所以能搬回来：
+这一页现在是**整页宽**，横向矩阵放得下。⚠️ **别再把矩阵挤成半栏**。
 
 ## 切换为什么"丝滑"（三个要点）
 
-1. **内容区尺寸固定**（`PAGE_H`）：四个分区共用同一块尺寸固定的内容区，
+1. **内容区尺寸固定**（`PAGE_H`）：所有分区共用同一块尺寸固定的内容区，
    切换时**窗口不缩放、不跳**——短的分区就在下面留白，长的分区在自己的表格里滚动。
-   一条测试盯着"每个分区的自然高度都不超过它"（`test_每个分区都装得进内容区`）。
+   一条测试盯着"每个分区的自然高度都不超过它"（`test_每个分区都装得进固定内容区`）。
 2. **分区只建一次**（`self._pages` 缓存）：切换只做 `pack_forget` / `pack`，
    **不销毁重建**（「干员与心情」那页有 50 行控件，重建要 ~290ms，就是"切页一顿"的来源）。
 3. **改坏了才重建**（`invalidate`）：时间轴一改，班次数量与时长就变了，别的分区里的
-   班次下拉/逐次表必须拿到新排班——那时把这些分区**标脏**，下次进入时重建。
-   `ui/app.py` 在 `apply_shift_hours` / `on_cycles_changed` 里调用 `invalidate`。
+   班次下拉必须拿到新排班——那时把这些分区**标脏**，下次进入时重建。
+   `ui/app.py` 在 `apply_shift_hours` / `on_cycles_changed` / `apply_start_clock` 里调用
+   `invalidate`。
 
 ⚠️ **改动立即生效**（心情输入等走 250ms 防抖），窗口底部**只有「关闭」**——
 没有"应用 / 取消"两步；关掉即接受。破坏性动作（清空本班次 / 恢复导入值）保留二次确认。
@@ -52,21 +60,21 @@ from store.session import MAX_CYCLES
 # (分区键, 标题, 一句话说明)
 # ⚠️ 说明**一律一行 ≤20 字**（页标题下面那一行）：纯解释性段落全删了、搬进
 # `documents/10-图形界面.md` §6.2 —— 那里是界面口径的正式落点，这里只留"这一页管什么"。
-# ⚠️ **顺序即优先级**（三层解耦：**锁定入宿 > 自动入宿 > 导入布局**）：
-#    「锁定入宿」放在「闲置入宿」**之前**（工单 §2.1）。
+# ⚠️ **顺序即优先级**（三层解耦：**锁定入宿 > 自动入宿 > 导入布局**）—— 但 2026-10
+#    「入宿设置」改版之后**只有一页管这件事**了（键 `dorm`，第 3 位＝原「锁定入宿」的位置），
+#    页内**全局配置在上、矩阵在下**；所以这条"顺序"不再靠分页先后表达，只是留个座位。
 PAGES = (
     ("timeline", "时间轴", "周期多长、分几班、每班几小时"),
     ("batch", "干员与心情", "房间等级 · 放谁 · 练度 · 心情"),
-    ("lock", "锁定入宿", "行＝位次 × 列＝班次，把某人钉在宿舍某位"),
+    ("dorm", "入宿设置", "锁定位次 · 没上班的人进宿舍"),
     ("entry", "换心情", "进驻那一刻与谁互换心情"),
-    ("idle", "闲置入宿", "没上班、没在宿舍、心情未满的人进宿舍"),
 )
 
-# 内容区固定高度：四个分区共用（切换时窗口不跳）。
+# 内容区固定高度：所有分区共用（切换时窗口不跳）。
 # 取"最高的那个分区"（干员与心情：等级区 + 心情区 + 干员区 + 表格 + 提示行）。
 # 窗口高 ≈ PAGE_H + 页标题/说明/页脚/内外边距（实测加价 **118**）⇒ 700 → 818。
-# ⚠️ 定这个值的判据（见 `_assert_fits` 与 `test_四个分区都装得进固定内容区`）：
-#    ① 四页**自然高度都 ≤ PAGE_H**（含"表格已被压到下限"那种最坏情况）；
+# ⚠️ 定这个值的判据（见 `_assert_fits` 与 `test_每个分区都装得进固定内容区`）：
+#    ① **每一页**的自然高度都 ≤ PAGE_H（含"表格已被压到下限"那种最坏情况）；
 #    ② 「干员与心情」那张表**不许被压到下限** —— 它的"不伸缩部分"实测 656px，
 #       所以 `PAGE_H` 每降 1px 表格就矮 1px。实测三个候选：
 #       `700` → 表格 96px（`TABLE_H_MIN`，约 4 行）**且没有溢出**；
@@ -76,10 +84,11 @@ PAGES = (
 #       文字精简省下来的高度全给了这张表（改前 740 下它也只有 96px）。
 #    ③ 窗口高 = `PAGE_H` + 118 = 818（工单目标是"约 760"，实际按 ② 收敛到 818）。
 # 「干员与心情」的表格是**自动高度**（吃掉内容区的剩余），所以等级区排成几行都不怕；
-# 「闲置入宿」是**两栏**（③ 手动入宿 ∥ 逐次表），页高不再被两边相加顶起来。
-# ⚠️ 左栏宽度是 `ui/dialogs.py: IDLE_MANUAL_W`（380），**别在这里再写一个**：
-#    它同时决定位次网格的列数（`SLOT_COLS` 由它算出来），散成两处就会又出现
-#    "格子被裁"那种事故（2026-10 修过一次：写死 5 列塞进 330px 半栏）。
+# ⚠️ **2026-10「入宿设置」改版**：两页合成一页（全局配置 190px ＋ 矩阵 449px ＋ 间距 8px），
+#    实测自然高 **647px ≤ 700** ⇒ **`PAGE_H` 不用抬、这一页也不用加纵向滚动**
+#    （矩阵的画布拿满 `MATRIX_H_INIT` 320px，5 行位次全都看得见）。
+#    改这一页的排版 / 往全局配置那块加控件之后，**必须重新量**（超了就抬 `PAGE_H`
+#    或给这一页加滚动，见工单口径）。
 PAGE_H = 700
 # 窗口最小尺寸：内容区是固定尺寸排版，再小就会被裁（右侧房间等级那几档会看不见）。
 # ⚠️ `MIN_H` 不许高于默认窗口高，否则窗口一开就被撑大（现窗口高 818）。
@@ -93,7 +102,7 @@ def setting_row(parent, label: str, hint: str = ""):
     """统一的"一行设置"：`标签(右对齐) | 控件位 | 说明`。
 
     返回 `(行 Frame, 控件位 Frame)`：调用方把控件 pack 进第二个 Frame，
-    说明文字自动排在后面——四个分区都用它，排版就不会一页一个样。
+    说明文字自动排在后面——各分区都用它，排版就不会一页一个样。
     """
     row = tk.Frame(parent, bg=theme.BG)
     tk.Label(row, text=label, bg=theme.BG, fg=theme.TEXT, width=LABEL_W, anchor="e",
@@ -377,9 +386,11 @@ class SettingsDialog(tk.Toplevel):
         nxt = theme.fmt_clock(self.app.schedule.cycle_hours, self.app.schedule.cycle_hours, hours)
         self.clock_msg.configure(text=f"✔ 周期＝{theme.fmt_clock(hours)} → {nxt}"
                                       f"（显示口径，数值不变）", fg=theme.OK)
-        # 逐次表的组头写的是时刻、「干员与心情」的时刻框也按它显示 → 标脏
-        # （当前页不标：它就是改动来源）
-        self.invalidate("idle", "batch")
+        # 时间轴三类改动（时长 / 周期数 / 钟点）口径统一：凡依赖班次的那两页都标脏。
+        # ⚠️ 合并后的「入宿设置」页其实只依赖**班次**（列头写的是「第 N 班」，不随钟点变），
+        #    严格说不必重建；但那一页重建很便宜（一块配置 + 一张矩阵），而且"改钟点就把
+        #    依赖时刻的页一起标脏"这条口径留着更不容易漏。
+        self.invalidate("dorm", "batch")
 
     def _build_batch(self) -> tk.Frame:
         app = self.app
@@ -425,34 +436,45 @@ class SettingsDialog(tk.Toplevel):
                                per_shift=app.entry_per_shift,
                                on_change=app.apply_entry_event)
 
-    def _build_lock(self) -> tk.Frame:
-        """「锁定入宿」分区（**独立整页**：行＝位次 × 列＝班次；工单 §2）。
+    def _build_dorm(self) -> tk.Frame:
+        """「**入宿设置**」分区：**全局配置在上、锁定入宿矩阵在下**（2026-10 合并成一页）。
 
-        ⚠️ 2026-10：这一块原先挤在「闲置入宿」页里（左栏 380px 的 ③ 手动入宿子面板），
-        现在独占整页宽 —— 矩阵本身就是横向的（列＝班次），半栏放不下。
-        只读数据源 `app.lock_dorm_view`，唯一写入口 `app.apply_lock_dorm`。
+        ⚠️ 合并前它们是**两个独立分区**：「锁定入宿」（`LockPanel` 矩阵，独立整页）与
+        「闲置入宿」（`IdleToDormPanel`：全局配置 + **④ 逐次表**）。现在：逐次表**整块删除**
+        （用户口径：那块没用），矩阵搬回这一页的下半 —— 之所以搬得回来，是因为
+        「③ 手动入宿」当年独立成页的唯一理由是"矩阵是横向的（列＝班次），**半栏放不下**"，
+        而这一页本来就是**整页宽**。⚠️ **不许再把矩阵挤成半栏**（回归
+        `test_入宿设置两块_全局配置在上矩阵在下且整页宽`）。
+
+        · 全局配置那块的写入口＝`app.apply_idle_to_dorm`（⚠️ 它收到的 `entries` **恒为
+          `None`** ＝"不动逐次设置"，见 `ui/dialogs.py::IdleToDormMixin`）；
+        · 矩阵的只读数据源＝`app.lock_dorm_view`、唯一写入口＝`app.apply_lock_dorm`。
         """
-        panel = LockPanel(self.host, on_manual=self.app.apply_lock_dorm,
-                          view_provider=self.app.lock_dorm_view, page_height=PAGE_H)
+        app = self.app
+        box = tk.Frame(self.host, bg=theme.BG)
+        # —— 上半：全局配置（① 总开关 + ② 锁定位置数 + 黑名单）——
+        global_block = IdleToDormPanel(box, app.idle_to_dorm.get(),
+                                       on_change=app.apply_idle_to_dorm,
+                                       protected_slots=app.idle_protected_slots(),
+                                       blacklist=app.idle_blacklist(),
+                                       all_names=app.idle_name_pool())
+        global_block.pack(fill="x")
+        # —— 下半：锁定入宿矩阵（行＝位次 × 列＝班次）——
+        # ⚠️ `page_height` 传**扣掉上半块之后**的余量：矩阵的 `_fit_height()` 拿它当
+        #    "这一块最多能有多高"（两块摞起来仍要 ≤ `PAGE_H`）。
+        self.update_idletasks()
+        room = max(0, PAGE_H - global_block.winfo_reqheight() - theme.GAP)
+        matrix = LockPanel(box, on_manual=app.apply_lock_dorm,
+                           view_provider=app.lock_dorm_view, page_height=room)
+        matrix.pack(fill="both", expand=True, pady=(theme.GAP, 0))
         # ⚠️ 重算是**异步**的：面板拿到的那份数据是改动前的，真正的新数据要等结果落地
         #    —— 注册一个落地回调按新轨迹重建（弱引用，面板销毁即失效）。
-        self.app.add_recalc_listener(panel.refresh_view)
-        return panel
-
-    def _build_idle(self) -> tk.Frame:
-        app = self.app
-        # 闲置入宿的表也按内容区剩余高度算：它要跟别的分区共用同一块内容区
-        panel = IdleToDormPanel(self.host, app.idle_to_dorm.get(), app.idle_groups(),
-                                on_change=app.apply_idle_to_dorm,
-                                table_height="auto", page_height=PAGE_H,
-                                groups_provider=app.idle_groups,
-                                protected_slots=app.idle_protected_slots(),
-                                blacklist=app.idle_blacklist(),
-                                all_names=app.idle_name_pool())
-        # ⚠️ 重算是**异步**的（`app.recompute_async`）：面板拿到的那份 `groups` 是改动前的，
-        #    真正的新表要等结果落地 —— 注册一个落地回调按新轨迹重建（弱引用，面板销毁即失效）。
-        app.add_recalc_listener(panel.refresh_from_provider)
-        return panel
+        app.add_recalc_listener(matrix.refresh_view)
+        # 两块都挂在这一页上：测试按 `dlg._page("dorm").global_block / .lock_matrix` 取它们
+        # （页容器本身只是个 `Frame`，不再是某一块面板）。
+        box.global_block = global_block
+        box.lock_matrix = matrix
+        return box
 
     # ------------------------------------------------------------------ 杂务
     def _center(self, parent) -> None:

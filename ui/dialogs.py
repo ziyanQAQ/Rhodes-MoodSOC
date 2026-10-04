@@ -6,12 +6,16 @@
 进驻事件设置（`EntryEventDialog`）：一个总开关 + **一张"每班一行"的表**
 （`用 / 换谁 / 强制切换`）——真正逐班的就是这一整组，所以不再分"全局值 + 例外"两层。
 批量改干员与心情在 `ui/batch.py`。
+
+⚠️ 本文件里还有设置中心「**入宿设置**」页的两块（2026-10 合并成一页，分区键 `dorm`）：
+上半＝`IdleToDormPanel`（总开关 / 锁定位置数 / 黑名单），下半＝`LockPanel`
+（行＝位次 × 列＝班次的锁定入宿矩阵）。原先它们分属两个独立分区，且
+「闲置入宿」页上还有一张**逐次表** —— 那张表已按用户口径整块删除。
 """
 from __future__ import annotations
 
-import re
 import tkinter as tk
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation
 from tkinter import messagebox, ttk
 from typing import List, Optional, Sequence
 
@@ -28,20 +32,13 @@ LABEL_W = 12
 MOOD_MIN_TEXT = Decimal("0")
 MOOD_MAX_TEXT = Decimal("24")
 
-# 表格行的上下留白（「闲置入宿」那一张分组表用）
-ROW_PAD = 1
-
-# 「闲置入宿」页的纵向尺寸：`IDLE_TABLE_H_INIT` 是逐次表的**初始可视高度**
-# （建表格之前只能给个估值，见 `_resolve_table_height`）；建表之后由它自己的
-# `_fit_table_height()` 自校正。
-#
-# ⚠️ **2026-10「锁定入宿」工单**：这一页原先还有 ③ 手动入宿编辑器（左栏固定 380px、
-#    与逐次表**左右并排**），现在 ③ 整块搬去独立分区 `LockPanel` ⇒ 表**独占整页宽**，
-#    `IDLE_MANUAL_W` / `SLOT_CELL_W` / `SLOT_EMPTY_TEXT` / `MANUAL_CAVEAT*` 与
-#    `SLOT_COLS` 那一整套**随之删除**（矩阵的尺寸常量见下面 `MATRIX_*`）。
-IDLE_TABLE_W = 700                  # 逐次表那一行的说明文字折行宽（独占整页后变宽）
-IDLE_TABLE_H_INIT = 320
-MIN_TABLE_H = 190
+# ⚠️ **2026-10「入宿设置」改版**：原先的两块 —— 「闲置入宿」页（`IdleToDormPanel`：
+#    总开关 + 锁定位置数 + 黑名单 + **④ 逐次表**）与独立分区「锁定入宿」（`LockPanel`
+#    矩阵）—— **合并成一个分区「入宿设置」**，页内**全局配置在上、矩阵在下**。
+#    逐次表**整块删除**（用户口径：那块没用），因此这套只服务它的尺寸常量
+#    `IDLE_TABLE_W` / `IDLE_TABLE_H_INIT` / `MIN_TABLE_H` / `ROW_PAD` 与「说明」列的
+#    `NOTE_CLIP` 一并删除 —— 不留"说明一张已经不在的表"的死注释/死常量。
+#    矩阵的尺寸常量见下面 `MATRIX_*`。
 
 # 「锁定入宿」那行格子的**固定口径**（`LockPanel._draw_cell` 挂在下行按钮的悬停提示上）：
 # ⚠️ 2026-10 口径＝**摆位即上锁、清空即解锁**（用户原话：「放上去之后自动上锁。**不需要
@@ -55,13 +52,9 @@ MANUAL_CAVEAT_HINT = ("把某人放进某个位次**即自动上锁**（自动�
                       "（程序接口仍保留 `set_seat_lock` / `clear_seat_locks`："
                       "API 可把一个**空位**单独锁住，那是「预留空位」的能力。）")
 
-# 逐次表「说明」列的**显示截断**：引擎给的原文可达 109~120 字，不截的话每行高矮不齐、
-# 一屏只看得到三四行。⚠️ 只截**显示**（`_clip_note`），`Trajectory.idle_note_at`
-# 与任何引擎侧字符串都不动；完整原文挂 `attach_hint` 的悬停提示。
-NOTE_CLIP = 30
-
 # ---------------------------------------------------------------------------
-# 「锁定入宿」矩阵（设置中心**独立整页**分区，2026-10）：
+# 「锁定入宿」矩阵（**「入宿设置」页的下半块**，2026-10 起与全局配置同页；
+# 再早一代它是独立整页的分区）：
 # 行＝位次、列＝班次，**每格上下两行**（上行「当前」只读、下行「我的指定」可点）。
 #
 # 尺寸是**实测口径**（改了行里的控件就要重量一遍）：
@@ -70,7 +63,8 @@ NOTE_CLIP = 30
 # · 列宽按**可视宽**自适应，夹到 `[MATRIX_MIN_COL_W, MATRIX_MAX_COL_W]`：下限保证
 #   "班次多时横向滚动而不是把字挤没"，上限保证"只有 1~2 班时列不会宽得离谱"；
 # · `MATRIX_H_INIT` 是画布的初始高度，建完表由 `LockPanel._fit_height()` 自校正到
-#   "整页 ≤ `ui.settings.PAGE_H`"。
+#   "**整页** ≤ `ui.settings.PAGE_H`" —— ⚠️ 同页上面还有全局配置那块，所以传进来的
+#   `page_height` 是**扣掉它之后**的余量（见 `ui/settings.py::_build_dorm`）。
 MATRIX_CELL_H = 46
 MATRIX_HEAD_H = 24
 MATRIX_ROW_W = 76
@@ -106,40 +100,11 @@ def parse_mood(text) -> Optional[Decimal]:
     return v
 
 
-# 「说明」列里那串心情小数的显示位数：引擎是 Decimal 精确运算，跨事件分割会留下
-# `20.10000000000000000000000001` 这类 28 位尾巴 —— 那是精度极限、不是算错，
-# 只在**显示边界**舍入（口径与 `ui.theme.fmt_mood` 一致：0.01 精度、去掉多余的 0）。
-_NOTE_NUM = re.compile(r"\d+\.\d{3,}")
-_NOTE_PLACES = Decimal("0.01")
-
-
-def _tidy_note(note) -> str:
-    """把「说明」列里那串 28 位心情小数截到 2 位（`20.1000…01` → `20.1`）。
-
-    ⚠️ 只动**小数点后 ≥3 位**的数字（`_NOTE_NUM`）：位次（`第 5 位`）与整点心情
-    （`心情 24`）不匹配、原样留着；`2` 位以内的正常值也不动。
-    """
-    text = (note or "").strip()
-    if not text:
-        return "—"
-
-    def _short(m: "re.Match") -> str:
-        v = Decimal(m.group(0)).quantize(_NOTE_PLACES, rounding=ROUND_HALF_UP)
-        return f"{v:f}".rstrip("0").rstrip(".")
-
-    return _NOTE_NUM.sub(_short, text)
-
-
-def _clip_note(text: str, limit: int = NOTE_CLIP) -> str:
-    """把「说明」列的**显示**压到一行（超出 `limit` 字就截断 + `…`）。
-
-    ⚠️ **只截显示**：引擎给的原文（`Trajectory.idle_note_at`）一字不动，完整那句由
-    调用方挂到悬停提示上（`_hint`）。截断判据是**字数**而不是像素：`tk.Label` 在这里
-    是流式 `pack`、可以用 `wraplength` 折行，但折行会让每行高矮不齐 —— 这一列要的是
-    "每行一行高"，所以按字数切。
-    """
-    text = str(text or "")
-    return text if len(text) <= limit else text[:limit] + "…"
+# ⚠️ 原先这里还有「说明」列的三件小事：`_NOTE_NUM` / `_NOTE_PLACES`（28 位心情小数的
+#    显示舍入）与 `_tidy_note()` / `_clip_note()`（按字数截断到一行 + 全文挂悬停）。
+#    **2026-10「入宿设置」改版把它们整块删除**：那一列只存在于**逐次表**上，而逐次表
+#    已按用户口径从界面删除（引擎侧的 `Trajectory.idle_note_at` 一字不动，由下一个
+#    工单决定去留）—— 没人调用的函数不留着。
 
 
 def _hint(widget, text) -> None:
@@ -763,100 +728,75 @@ def ask_level(parent, name: str, current: int, max_level: int, slots_of) -> Opti
 
 
 class IdleToDormMixin:
-    """**闲置入宿**设置 —— 总开关 + 全局口径（锁定位置数 / 黑名单）+ 一张"候选一行"的逐次表。
+    """「入宿设置」页的**全局配置**（总开关 + 锁定位置数 + 黑名单）。
 
     引擎规则（`mood_soc/rules.apply_idle_to_dorm`；三层解耦：**锁定入宿 > 自动入宿 > 导入布局**）：
 
-    | 层 | 谁 | 本面板管不管 |
+    | 层 | 谁 | 界面上谁管 |
     |---|---|---|
-    | ① 锁定入宿 | 设置中心的**独立分区「锁定入宿」**（`LockPanel`：行＝位次 × 列＝班次）把某人钉在某个宿舍位次（写班次布局 + 手动台账） | **不管**（它在另一个分区；见 `LockPanel`） |
-    | ② 自动入宿 | 竖向正序填空床 → 全满则取**心情最低**的候选，换出"锁定区外、心情 ≥ 她、心情最大"的住户 | 本面板显示它这一刻打算安排谁 |
-    | ③ 全局配置 | 总开关 / 锁定位置数 / 黑名单 / 逐人"不参与" | ① ② 与 ④ 那张逐次表 |
+    | ① 锁定入宿 | 把某人钉在「本班 · 某宿舍 · 某位次」（写班次布局 + 手动台账） | **同一页下半的** `LockPanel` 矩阵（行＝位次 × 列＝班次） |
+    | ② 自动入宿 | 竖向正序填空床 → 全满则取**心情最低**的候选，换出"锁定区外、心情 ≥ 她、心情最大"的住户 | 无控件（引擎自己跑，结果在看板 / 曲线 / 状态栏） |
+    | ③ 全局配置 | 总开关 / 锁定位置数 / 黑名单 | **本类**（这一页上半那一块） |
 
     | 控件 | 落到引擎 |
     |---|---|
     | ① 启用闲置入宿 | `IdleToDormConfig.enabled` |
     | ② 锁定位置数 | `IdleToDormConfig.protected_slots`（按竖向正序锁前 N 个位置） |
     | ② 黑名单 | `IdleToDormConfig.blacklist`（永远不能**通过闲置入宿进宿舍**的人） |
-    | 每行的「参与」 | `per_operator[(周期,班次,干员)].enabled` |
 
-    **逐次表**按时间排（第 1 周期第 1 班 → …），**一个换班执行点一组**：真实班初一组，
-    长班（> 12h）的每个**内部换班点**各一组（标题带 `（12h 内部换班）`）；组内只放那一刻
-    **真的有候选**的人；每行只有「参与」可改，另给一列**只读提示**（这一位会被安排去哪、
-    或为什么没安排）。⚠️ **同班各执行点共用同一份逐人设置**：组里的 `(周期, 班次, 干员)`
-    键相同 ⇒ 改任一组会同步影响同班其他执行点。
+    ⚠️ **2026-10「入宿设置」改版：④ 逐次表整块删除**（用户口径：那块没用）。
+    改前是**两个独立分区** —— 「闲置入宿」（本类，含那张"每行只有「参与」可改 +
+    一列只读「说明」"的逐次表）与「锁定入宿」（`LockPanel` 矩阵）；现在两块合成
+    一页「**入宿设置**」（分区键 `dorm`、第 3 位），页内**全局配置在上、矩阵在下**，
+    而**界面不再产生任何"逐次设置"**：
 
-    ⚠️ **锁定入宿（旧称手动入宿）2026-10 搬去独立分区**（工单 §2.1）：原先它是本页的
-    **③ 子面板**（勾班次 → 选宿舍 → 逐位选人，与本页的逐次表左右并排）；现在是一整页
-    `LockPanel`（行＝位次 × 列＝班次），本页只剩 ①②④。两条入口（「锁定入宿」矩阵、
-    「干员与心情」的位置列）写的都是同一份台账 —— 走 `Session.place_operator` 的语义
-    （**钉人时先把她从本班别处摘掉**）。
+    · `value()` 与 `on_change(...)` 里那份 `entries` **恒为 `None`** ＝「**不动逐次设置**」；
+    · ⚠️ `ui/app.py::apply_idle_to_dorm` 的契约是 `entries=None` = **不改**、
+      `{}` = 清空。**绝不允许**因为"面板不再给这一项"就把用户 / 文件里已有的逐次设置
+      **清掉**——那是静默的数据破坏。引擎里的 `per_operator` 由**下一个工单**再撤，
+      这一步只把界面与它**脱钩**。
+    · 随之删掉的东西（只为那张表存在）：`groups` / `table_height` / `page_height` /
+      `groups_provider` 四个参数、`refresh_from_provider()` / `refresh_groups()`、
+      `_rows` / `_build_table()` / `_fill_table()` / `_resolve_table_height()` /
+      `_collect()` / `_set_group()`，以及「说明」列的 `_clip_note()`（见文件上方注释）。
 
-    ⚠️ **锁在界面上不再暴露**（2026-10 用户口径：「放上去之后自动上锁。**不需要手动上锁**」
-    「解锁时只需要**将该位置空**就可以了」「锁功能只作为内部自动入宿进行位置判定时使用，
-    而**不对外输出暴露**」）：逐位 `☑ 锁`、「全部解锁…」按钮都已删除 ——
-    **摆位即上锁、清空该位即解锁**（⚠️ 且**只锁你碰过的那一格**、累积：同房间导入进来的人
-    不受影响，见 `_write_manual`）。`Session.set_seat_lock` / `clear_seat_locks` 仍保留
-    给程序接口（`api/`）：API 可以把一个**空位**单独锁住（"预留空位"）。
-
-    ⚠️ 改动会**实时生效**：每次改动 / 改锁定数 / 改黑名单都会回调 `on_change(状态)` ——
-    调用方（`ui.app`）把它套进模拟重算并返回**新的分组表**，本面板据此重建表格。
-
-    ⚠️ 本类**只建控件、只收状态**，自己不是窗口：宿主是设置中心的「闲置入宿」分区（Frame）。
+    ⚠️ 改动会**实时生效**：每次改动（总开关 / 锁定位置数 / 黑名单）都会回调
+    `on_change(enabled, None, protected_slots, blacklist)`，调用方（`ui.app`）把它套进
+    模拟重算。⚠️ 本类**只建控件、只收状态**，自己不是窗口：宿主是「入宿设置」分区（Frame）。
     """
 
-    TITLE = "闲置入宿设置（未满的闲置干员进宿舍）"
+    TITLE = "入宿设置（全局配置 + 锁定入宿矩阵）"
     REBUILD_MS = 250              # 改动后的防抖：连续点几下只重算一次
 
-    def _init_idle_body(self, parent, enabled: bool, groups: Sequence,
-                        on_change=None, note: str = "", table_height="auto",
-                        page_height: int = 0, groups_provider=None,
+    def _init_idle_body(self, enabled: bool, on_change=None, note: str = "",
                         protected_slots: int = 5, blacklist: Sequence = (),
                         all_names: Sequence = ()):
         """把状态收好并建出整块控件（宿主的 `__init__` 里调用；`self` 必须是 tk 容器）。
 
-        `groups_provider`：无参可调用，返回**当前**分组表（设置中心传 `app.idle_groups`）。
-        异步重算落地后由 `refresh_from_provider()` 用它取新表 —— 见那个方法。
         `protected_slots` / `blacklist`：全局口径的初值（来自 `Session`）。
         `all_names`：可以加入黑名单的干员名（下拉的候选池）。
-
-        ⚠️ **2026-10「锁定入宿」工单**：手动入宿编辑器**整块搬去独立分区**
-        （`LockPanel`：行＝位次 × 列＝班次），所以这里的 `state_provider` / `on_manual` /
-        `operator_names` 三个参数**连同 ③ 区一起删掉**了 —— 这一页只剩
-        「① 总开关 + ② 锁定位置数 + 黑名单 + ④ 逐次表」，表也改成**独占整页宽**
-        （不再与 ③ 并排两栏）。
-
-        ⚠️ 2026-10 删掉了这里的 `locked_probe` / `session` / `on_after` 三个参数（连同
-        `SettingsDialog._shift_has_manual`）——它们只服务「全部解锁…」按钮，而锁已按用户口径
-        **不再对外暴露**（`set_seat_lock` / `clear_seat_locks` 仍留在 `Session` 给 API 用）。
+        `on_change(enabled, entries, protected_slots, blacklist)`：改动回调 ——
+        `entries` **恒为 `None`**（＝"不动逐次设置"，见类文档）。
         """
-        self.result = None
-        # 表格高度：显式数字（独立对话框）或 "auto"（设置中心：吃内容区剩余高度）
-        self._table_h = None if table_height == "auto" else int(table_height)
-        self._page_h = int(page_height) or 0
-        # { (周期, 班次, 干员): 参不参与 } —— 面板里的"当前状态"（源真源；只记改过的）
-        self.state: dict = {}
-        self._groups = list(groups)
         self._on_change = on_change
-        self._groups_provider = groups_provider
-        # [(周期, 班次, 干员, 参与 BooleanVar, [用户改过?])] ——
-        # ⚠️ 最后那个是**单元素列表**（可变标记）：同班的多个执行点共用同一个键，
-        #    收状态时必须优先采用"用户刚动过"的那一行，否则会被同键的其它行盖回去。
-        self._rows: list = []
-        self._widgets: list = []       # ① 关掉时要置灰的控件
-        self._job = None
-        self._busy = False
+        self._widgets: list = []       # 总开关关掉时要置灰的控件
+        self._job = None               # 防抖任务 id
         self._all_names = [str(n) for n in all_names]
         self.blacklist: List[str] = [str(n) for n in blacklist]
         self._protected_cache = max(0, int(protected_slots))
         pad = dict(padx=theme.PAD)
 
-        # ⚠️ 这一行只留"谁会被安排"（会影响预期）；完整的候选/换人口径搬
-        #    `documents/10-图形界面.md` §6.2（原先这里是 174 字一段，白占 74px）。
-        tk.Label(self, text="没上班、没在宿舍、心情未满的人进宿舍",
-                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=700,
-                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
-                                                                pady=(0, theme.GAP))
+        # ⚠️ 这一行是**这一块的标题 + 口径**：合并成一页之后页题只写着
+        #    「锁定位次 · 没上班的人进宿舍」（≤20 字），所以这里不再重复页题，
+        #    改说页题没说的那一半 —— **空位优先、全满则换人**。完整的候选/换人口径搬
+        #    `documents/10-图形界面.md` §6.2。
+        # ⚠️ `wraplength` 必须有：不给的话标签按整句要宽度，会把整块面板撑过内容区
+        #    （回归 `test_每个分区都装得进固定内容区`）。
+        tk.Label(self, text="全局配置（没上班、没在宿舍、心情未满的人进宿舍；"
+                            "空位优先，全满则换出锁定区外心情最接近的那位）",
+                 bg=theme.BG, fg=theme.TEXT, justify="left", wraplength=700,
+                 font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(
+                     anchor="w", **pad, pady=(0, theme.GAP))
 
         self.enabled = tk.BooleanVar(value=bool(enabled))
         ttk.Checkbutton(self, text="① 启用闲置入宿（每个换班执行点结算）",
@@ -874,7 +814,7 @@ class IdleToDormMixin:
         spin.bind("<KeyRelease>", lambda _e: self._schedule_rebuild())
         self._widgets.append(spin)
         # ⚠️ 这一行里的说明**必须短**：`side="left"` 的标签不给 `wraplength` 时按整句文字要宽度，
-        #    会把整块面板撑过内容区（回归 `test_四个分区都装得进固定内容区`：曾量到 906 > 816）。
+        #    会把整块面板撑过内容区（回归 `test_每个分区都装得进固定内容区`：曾量到 906 > 816）。
         #    细节写在上面那段规则说明里（它有 `wraplength`）。
         tk.Label(lock_row, text="（竖向正序前 N 个位置；锁定区里的人自动不换）",
                  bg=theme.BG, fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
@@ -905,131 +845,11 @@ class IdleToDormMixin:
         self._widgets.append(self.black_list)
         self._refresh_blacklist()
 
-        # ================= ④ 逐次表（**独占整页宽**）=================
-        # ⚠️ 2026-10「锁定入宿」工单：原先这里左栏是 ③ 手动入宿编辑器、右栏是这张表
-        #    （两栏并排省纵向空间）。③ 整块搬去独立分区之后，表改成**独占整页宽** ——
-        #    逐次表本来就是横着排的（干员 / 心情 / 参与 / 说明），独占之后一行放得下更多字，
-        #    「说明」列也不必再按半栏宽截断。
-        tk.Label(self, text="④ 逐次设置：每行只有「参与」可改；「说明」是只读的引擎结果",
-                 bg=theme.BG, fg=theme.TEXT, padx=0, justify="left",
-                 wraplength=IDLE_TABLE_W, anchor="w").pack(anchor="w", pady=(0, 2))
-        self.table_height = self._resolve_table_height()
-        self._build_table(self)
-
         if note:
             tk.Label(self, text=note, bg=theme.BG, fg=theme.MUTED, justify="left",
                      wraplength=600, font=(theme.FONT_FAMILY, theme.FS_SMALL)
                      ).pack(anchor="w", **pad)
         self._sync()
-
-
-    def _resolve_table_height(self) -> int:
-        """表格可视高度：没给就用**内容区剩余**（上面那些说明文字先量一遍）。
-
-        为什么 auto：逐次表的行数随周期数与候选人数浮动，固定高度要么撑爆内容区、
-        要么白留一大块。
-
-        ⚠️ **2026-10 起这一页是单列**（锁定入宿搬走之后不再两栏并排），所以"整页减已用"
-        直接成立 —— 改前两栏并排时它会把左栏那一份也算进去（表格高得离谱、整页被顶出
-        内容区），只能给估值 `IDLE_TABLE_H_INIT`。
-        """
-        if self._table_h is not None:
-            return self._table_h
-        self.update_idletasks()
-        if not self._page_h:
-            return IDLE_TABLE_H_INIT
-        used = sum(w.winfo_reqheight() for w in self.winfo_children())
-        # 表格之后还有一行说明（约 45px，wraplength 会折行）与内边距 → 留 82px
-        return max(MIN_TABLE_H, self._page_h - used - 82)
-
-    # ------------------------------------------------------------ 表格
-    def _build_table(self, parent) -> None:
-        """可滚动的分组表（结构固定，内容随 `self._groups` 重建）。
-
-        `parent`＝**本页自己**（2026-10 起独占整页宽；改前是两栏布局的右栏）。
-        ⚠️ 用 `pack_propagate(False)` 把高度钉在 `table_height` 上：不钉的话画布高度会被
-        "剩余空间"二次解释（实测表格忽高忽低）。
-        """
-        body = tk.Frame(parent, bg=theme.BG, height=self.table_height)
-        body.pack(fill="both", expand=True)
-        body.pack_propagate(False)
-        self.canvas = tk.Canvas(body, bg=theme.PANEL, highlightthickness=1,
-                                highlightbackground=theme.BORDER, height=self.table_height)
-        self.scroll = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.scroll.set)
-        self.scroll.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.inner = tk.Frame(self.canvas, bg=theme.PANEL)
-        self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.canvas.bind("<Configure>",
-                         lambda e: self.canvas.itemconfigure(self._win, width=e.width))
-        # 滚轮：整张表 + 行 + **滚动条本体**都能滚（见 ui/scroll.py）
-        self.vs = VScroll(self.canvas, self.scroll, self.inner, win=self._win)
-        self._fill_table()
-        self.vs.refresh()          # 行建完 → 立刻重算滚动区间（别等几何事件）
-        tk.Label(parent, text="「说明」列是引擎实际做的安排（进了哪间宿舍第几号位、"
-                              "与谁互换、或为什么没安排）",
-                 bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=IDLE_TABLE_W,
-                 anchor="w").pack(anchor="w", pady=(2, 0))
-
-    def _fill_table(self) -> None:
-        for w in self.inner.winfo_children():
-            w.destroy()
-        self._rows = []
-        self._widgets = []
-        if not self._groups:
-            tk.Label(self.inner, text="（当前设置下没有「未满且在闲置」的干员）", bg=theme.PANEL,
-                     fg=theme.MUTED, font=(theme.FONT_FAMILY, theme.FS_SMALL)
-                     ).pack(anchor="w", padx=6, pady=6)
-            return
-        for title, scope, rows, _t0, _t1 in self._groups:
-            head = tk.Frame(self.inner, bg=theme.PANEL_ALT)
-            head.pack(fill="x", pady=(2, 0))
-            self.vs.join(head)
-            tk.Label(head, text=title, bg=theme.PANEL_ALT, fg=theme.TEXT, anchor="w",
-                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left", padx=6)
-            rows = list(rows)
-            if not rows:
-                continue                      # 没有候选的执行点不占表格（否则会留下一串空组头）
-            for text, value in (("全选", True), ("全不选", False)):
-                btn = ttk.Button(head, text=text, width=6,
-                                 command=lambda v=value, s=scope: self._set_group(s, v))
-                btn.pack(side="right", padx=(0, 4))
-                self._widgets.append(btn)
-            for row_i, row_data in enumerate(rows):
-                name, mood_text, where, use_d, note, _targets = row_data
-                bg = theme.zebra(row_i)                 # 隔行底色
-                row = tk.Frame(self.inner, bg=bg)
-                row.pack(fill="x", padx=4, pady=ROW_PAD)
-                self.vs.join(row)
-                tk.Label(row, text=name, bg=bg, fg=theme.TEXT, width=13, anchor="w",
-                         font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
-                tk.Label(row, text=mood_text, bg=bg, fg=theme.MUTED, width=7,
-                         anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
-                key = (scope[0], scope[1], name)
-                use_d = self.state.get(key, use_d)
-                use = tk.BooleanVar(value=bool(use_d))
-                dirty = [False]         # 用户动过这一行没有（同键多行时用它决定谁说了算）
-                chk = tk.Checkbutton(row, text="参与", variable=use, bg=bg,
-                                     activebackground=bg, highlightthickness=0,
-                                     font=(theme.FONT_FAMILY, theme.FS_SMALL),
-                                     command=lambda d=dirty: (d.__setitem__(0, True),
-                                                              self._schedule_rebuild()))
-                chk.pack(side="left", padx=(6, 4))
-                # 只读说明：引擎这一刻的安排（进了哪 / 为什么没进）
-                # ⚠️ **显示层截断到一行**（改前一行 109~120 字、按 `wraplength` 折成 2~5 行
-                #    ⇒ 每行高矮不齐、一屏只看得见三四行）；完整原文挂悬停提示，引擎侧不动。
-                full = _tidy_note(note)
-                lbl = tk.Label(row, text=_clip_note(full), bg=bg, fg=theme.MUTED, anchor="w",
-                               justify="left", wraplength=IDLE_TABLE_W,
-                               font=(theme.FONT_FAMILY, theme.FS_SMALL))
-                lbl.pack(side="left")
-                if len(full) > NOTE_CLIP:
-                    _hint(lbl, full)
-                self._rows.append((key, use, dirty))
-                self._widgets.append(chk)
-        self._sync()
-        self.canvas.yview_moveto(0)
 
     # ------------------------------------------------------------ 交互
     def _protected_value(self) -> int:
@@ -1071,40 +891,9 @@ class IdleToDormMixin:
         self._refresh_blacklist()
         self._schedule_rebuild()
 
-    def _collect(self) -> None:
-        """把控件里的当前值收回 `self.state`（只剩"参不参与"）。
-
-        ⚠️ **同一个键可能出现在多组里**（长班的内部换班点与班初共用一份逐人设置）⇒
-        不能让"后遍历到的那一行"把用户刚改的那一行盖回去：**用户动过的行优先**，
-        都没动过时才按行序取值（此时各行本来就一致）。收完把"动过"标记清掉。
-        """
-        dirty: dict = {}
-        clean: dict = {}
-        for key, use, flag in self._rows:
-            value = bool(use.get())
-            if flag[0]:
-                dirty.setdefault(key, value)
-            else:
-                clean.setdefault(key, value)
-            flag[0] = False
-        self.state.update(clean)
-        self.state.update(dirty)
-
     def _on_toggle(self) -> None:
-        """① 总开关：置灰整张表并实时重算。"""
+        """① 总开关：置灰下面那几行控件并实时重算。"""
         self._sync()
-        self._schedule_rebuild()
-
-    def _set_group(self, scope, value: bool) -> None:
-        """某一组（某次换班执行点）的全选 / 全不选。
-
-        ⚠️ 组键是 `(周期, 班次)`：同班的班初与内部换班点共用一份设置 ⇒ 勾"全选"会把
-        这一班**所有执行点**的行一起勾上（这正是"同班共用一份逐人设置"的口径）。
-        """
-        for key, use, flag in self._rows:
-            if key[:2] == tuple(scope):
-                use.set(bool(value))
-                flag[0] = True
         self._schedule_rebuild()
 
     def _schedule_rebuild(self) -> None:
@@ -1119,52 +908,29 @@ class IdleToDormMixin:
     def _rebuild_from_timer(self) -> None:
         """定时器到点：先把 job id 清掉（这样 `destroy()` 不会去取消一个已经跑完的任务）。"""
         self._job = None
-        self._rebuild()
+        self._commit()
 
-    def _rebuild(self) -> None:
-        """把当前状态交给调用方重算，并用返回的新分组表重建表格。
+    def _commit(self) -> None:
+        """把当前状态交给调用方重算。
 
-        ⚠️ 现在重算是**异步**的（`app.recompute_async`，见 `ui/app.py`）：`on_change` 返回的
-        分组表是**改动前**那份，所以这里先用它把表画出来（不闪烁），真正的"新表"由
-        `refresh_groups`（设置中心注册的落地回调）在算完之后重建。
+        ⚠️ 中间那一项（逐次设置）**一律传 `None`** ＝"**不动**"：面板不再产生逐次设置，
+        传 `{}` 会**把用户 / 文件里已有的逐次设置清掉**（静默的数据破坏）。
+        见 `ui/app.py::apply_idle_to_dorm` 与类文档。
         """
-        self._collect()
         if self._on_change is not None:
-            groups = self._on_change(bool(self.enabled.get()), dict(self.state),
-                                     self._protected_value(), list(self.blacklist))
-            if groups is not None:
-                self._groups = list(groups)
-        if self.winfo_exists():
-            self._fill_table()
-
-    def refresh_groups(self, groups) -> None:
-        """**重算落地后**由设置中心回调：换掉分组表并重建（保留用户当前的选择）。"""
-        if groups is None or not self.winfo_exists():
-            return
-        self._groups = list(groups)
-        self._fill_table()
-
-    def refresh_from_provider(self) -> None:
-        """异步重算落地后的刷新入口（**绑定方法**，设置中心用 `add_recalc_listener` 注册它）。
-
-        ⚠️ 它必须是绑定方法：`app.add_recalc_listener` 存的是 `weakref.WeakMethod`，
-        面板销毁后回调自动失效；lambda 不行（会被立刻回收，而且强引用会吊住控件）。
-
-        ⚠️ 2026-10：原先这里还要跟着重建 **③ 手动入宿**那几行逐位控件；③ 搬去独立分区
-        「锁定入宿」之后，本页只重建逐次表（那几行逐位控件由 `LockPanel` 自己刷）。
-        """
-        if self._groups_provider is not None:
-            self.refresh_groups(self._groups_provider())
+            self._on_change(bool(self.enabled.get()), None,
+                            self._protected_value(), list(self.blacklist))
 
     def has_pending_edit(self) -> bool:
         """面板有没有"还在防抖窗口里"的改动？（`app` 的异步重算据此决定"先别落地"）。
 
-        ⚠️ 锁定入宿的改动**不走防抖**（一次点选就是一次写），所以这里只看逐次表那个任务。
+        ⚠️ 锁定入宿（矩阵）的改动**不走防抖**（一次点选就是一次写），所以这里只看
+        总开关 / 锁定位置数 / 黑名单那个防抖任务。
         """
         return self._job is not None
 
     def _sync(self) -> None:
-        """关掉总开关时把整张表置灰。"""
+        """关掉总开关时把下面那几行置灰。"""
         on = bool(self.enabled.get())
         for w in self._widgets:
             try:
@@ -1182,28 +948,28 @@ class IdleToDormMixin:
             self._job = None
 
     def value(self):
-        """收成 `(enabled, {(周期, 班次, 干员): 参不参与}, 锁定位置数, 黑名单)`。"""
-        self._collect()
-        return (bool(self.enabled.get()), dict(self.state),
+        """收成 `(enabled, None, 锁定位置数, 黑名单)`。
+
+        ⚠️ 中间那项**恒为 `None`**：面板不再产生"逐次设置" ⇒ 用契约里的"**不动**"
+        （`{}` 才是清空）。见类文档与 `ui/app.py::apply_idle_to_dorm`。
+        """
+        return (bool(self.enabled.get()), None,
                 self._protected_value(), list(self.blacklist))
 
 
 class IdleToDormPanel(tk.Frame, IdleToDormMixin):
-    """「闲置入宿」设置**内容本体**（设置中心「闲置入宿」分区）。
+    """「入宿设置」页的**全局配置**块（① 总开关 + ② 锁定位置数 + 黑名单）。
 
     改动经 `on_change` **实时生效**（防抖 250ms）；面板不需要"应用"
     （关掉设置中心即接受），也没有"取消回滚"。
+    ⚠️ 它不再带 ④ 逐次表 —— 那一块已按用户口径删除，见 `IdleToDormMixin` 的文档。
     """
 
-    def __init__(self, master, enabled: bool, groups: Sequence,
-                 on_change=None, note: str = "", table_height="auto",
-                 page_height: int = 0, groups_provider=None,
+    def __init__(self, master, enabled: bool, on_change=None, note: str = "",
                  protected_slots: int = 5, blacklist: Sequence = (),
                  all_names: Sequence = ()):
         super().__init__(master, bg=theme.BG)
-        self._init_idle_body(master, enabled, groups, on_change=on_change, note=note,
-                             table_height=table_height, page_height=page_height,
-                             groups_provider=groups_provider,
+        self._init_idle_body(enabled, on_change=on_change, note=note,
                              protected_slots=protected_slots, blacklist=blacklist,
                              all_names=all_names)
 
@@ -1288,11 +1054,16 @@ class BatchFillDialog(tk.Toplevel):
 
 
 class LockPanel(tk.Frame):
-    """「**锁定入宿**」设置页：**行＝位次、列＝班次**的矩阵（2026-10 新分区）。
+    """「**锁定入宿**」矩阵：**行＝位次、列＝班次**（2026-10 新分区；同月底并入「入宿设置」页）。
 
-    这一页的语义（工单 §2/§3）：**把某人钉到「本班 · 某宿舍 · 某位次」**，
+    这一块的语义（工单 §2/§3）：**把某人钉到「本班 · 某宿舍 · 某位次」**，
     写入时**先把她从本班其它设施里摘掉**（`Session.place_operator` 的语义，
     见 `ui/app.py::apply_lock_dorm`）；下一班没有这条台账 ⇒ 自动解锁。
+
+    ⚠️ **2026-10「入宿设置」改版**：它**原先独占一整个分区**（「锁定入宿」，整页宽），
+    现在与「闲置入宿」合并成一页 —— 它成了该页的**下半块**（上半块＝`IdleToDormPanel`
+    的全局配置）。所以 `page_height` 传进来的是**扣掉上半块之后**的余量
+    （见 `ui/settings.py::_build_dorm`），列宽/高度口径本身一字未变。
 
     ## 形态
 
@@ -1315,7 +1086,7 @@ class LockPanel(tk.Frame):
       样子、并把我挪过的人送回原位，见 `Session.restore_seat`）。
     · 列数＝班次数：列宽按**可视宽度** `(width - 首列) // 班次数` 自适应，再夹到
       `[MATRIX_MIN_COL_W, MATRIX_MAX_COL_W]`；装不下时**横向滚动**（工单 §2.2）。
-    · 整页高度 ≤ `PAGE_H`：建完表**自己量一遍**，超了就把画布压低到下限
+    · 高度 ≤ 传进来的 `page_height`：建完表**自己量一遍**，超了就把画布压低到下限
       （与 `ui/batch.py` 的 `_fit_table_height` 同一套路）。
 
     ⚠️ 这里**没有锁控件**（用户口径）：**摆位即上锁、清空该位即解锁** ——
@@ -1352,8 +1123,9 @@ class LockPanel(tk.Frame):
                  wraplength=760, font=(theme.FONT_FAMILY, theme.FS_SMALL)
                  ).pack(anchor="w", padx=theme.PAD)
 
-        body = tk.Frame(self, bg=theme.BG)
-        body.pack(fill="both", expand=True, padx=theme.PAD, pady=(theme.GAP, 0))
+        self._body = tk.Frame(self, bg=theme.BG)
+        self._body.pack(fill="both", expand=True, padx=theme.PAD, pady=(theme.GAP, 0))
+        body = self._body
         self.canvas = tk.Canvas(body, bg=theme.PANEL, highlightthickness=1,
                                 highlightbackground=theme.BORDER, height=MATRIX_H_INIT)
         self.hbar = ttk.Scrollbar(body, orient="horizontal", command=self.canvas.xview)
@@ -1611,12 +1383,21 @@ class LockPanel(tk.Frame):
 
     # ------------------------------------------------------------------ 尺寸
     def _fit_height(self) -> None:
-        """把画布高度压到"整页 ≤ `PAGE_H`"（自校正；与 `ui/batch.py` 同一套路）。"""
+        """把画布高度压到"这一块 ≤ 传进来的 `page_height`"（自校正；与 `ui/batch.py` 同一套路）。
+
+        ⚠️ **`used` 不许把 `self._body`（画布 + 横向滚动条那个容器）算进去** ——
+        改前它是"除 `canvas` / `hbar` 之外所有孩子的请求高之和"，而 `body` 正是包着画布的那个
+        Frame ⇒ **画布把自己挤掉了一半**：独占整页（`PAGE_H` = 700）时它实测只有 ~293px。
+        那时矩阵独占一页、余量宽裕，看不出问题；**合并成「入宿设置」页之后余量要跟上半块的
+        全局配置分**，这个双重计数会让矩阵只剩 ~200px（5 行都显示不全）。
+        所以这里改成"`body` 之外的部分 + 横向滚动条" —— 这也正是这一句真正想说的事。
+        """
         if not self._page_h:
             return
         self.update_idletasks()
         used = sum(w.winfo_reqheight() for w in self.winfo_children()
-                   if w is not self.canvas and w is not self.hbar)
+                   if w is not self._body)
+        used += self.hbar.winfo_reqheight()
         room = self._page_h - used
         h = max(MATRIX_H_MIN, min(MATRIX_H_INIT, room))
         try:

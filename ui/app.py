@@ -495,7 +495,7 @@ class MoodSocApp(tk.Tk):
         body.pack(fill="both", expand=True, padx=theme.PAD)
 
         # 看板**只做展示**（2026-10）：不传任何点击回调 —— 位置/房间头都点不动，
-        # 手动入宿与心情的入口在「设置 → 干员与心情 / 闲置入宿」。
+        # 手动入宿（锁定入宿）与心情的入口在「设置 → 入宿设置 / 干员与心情」。
         self.board = BaseBoard(body)
         self.board.pack(side="left", fill="both", expand=True)
 
@@ -1208,11 +1208,11 @@ class MoodSocApp(tk.Tk):
                 f"安排进宿舍：{self._idle_count()} 次；空位优先，全满则换出锁定区外"
                 f"心情最接近的那位；锁定 {self.idle_protected_slots()} 个位置"
                 + (f"、黑名单 {len(self.idle_blacklist())} 人" if self.idle_blacklist() else "")
-                + "；手动入宿请看板 / 「干员与心情」）")
+                + "；锁定入宿请看「入宿设置」的矩阵）")
 
     def edit_idle_to_dorm(self):
-        """（旧入口，现等价于）打开设置中心的「闲置入宿」分区。"""
-        return self.open_settings("idle")
+        """（旧入口，现等价于）打开设置中心的「**入宿设置**」分区（全局配置 + 锁定入宿矩阵）。"""
+        return self.open_settings("dorm")
 
     def lock_dorm_view(self) -> dict:
         """「锁定入宿」矩阵的**只读数据源**（`LockPanel.view_provider`，工单 §2.2/§2.5）。
@@ -1587,25 +1587,38 @@ class MoodSocApp(tk.Tk):
                          != (before[int(s)] if 0 <= int(s) < len(before) else ""))
         return current, touched
 
-    def apply_idle_to_dorm(self, enabled: bool, entries: dict,
+    def apply_idle_to_dorm(self, enabled: bool, entries: Optional[dict],
                            protected_slots: Optional[int] = None,
                            blacklist: Optional[Sequence[str]] = None):
-        """「闲置入宿」设置落地（设置中心里**每次改动**都会调它）。
+        """「入宿设置 → 全局配置」落地（设置中心里**每次改动**都会调它）。
 
         参数：总开关 / 逐次设置 `{(周期, 班次, 干员): 参不参与}` /
         **锁定位置数** / **黑名单**（`None` = 不动）。
-        返回**新的分组表**：改动会影响后面每一次的候选，所以面板要按新表重建。
+        返回**新的分组表**：改动会影响后面每一次的候选。
+
+        ⚠️ **`entries` 的三态契约**（与 `Session.idle_entries`、`api/ops.py::op_set_idle_to_dorm`
+        的 `per_operator` 同一口径）：
+        · `None` = **不动**（保留现有的逐次设置，一个字都不改）；
+        · `{}` / `[]` = **清空**；
+        · 有内容 = 整份替换。
+
+        ⚠️ **2026-10「入宿设置」改版之后，面板（`IdleToDormPanel`）不再产生逐次设置**，
+        它一律传 `None` —— 所以这里**必须**把 `None` 当成"不动"。改前这一句是
+        `dict(entries)` **无条件整份替换**：面板不再给这一项时，用户 / 导入文件里已有的
+        逐次设置会被**静默清空**（那是数据破坏，不是"面板没这一项"的正常后果）。
+        引擎里的 `per_operator` 由**下一个工单**再撤，这一步只是让界面与它脱钩。
         """
         self.session.idle_to_dorm = bool(enabled)
-        # ⚠️ 面板给的整份状态里可能有 `True`（参与）—— 只留**改过默认的**（`False`）：
-        #    `idle_globals` 的语义是"这些人不参与"，记一堆 `True` 会污染增量指纹与导出。
-        self.session.idle_entries = {k: v for k, v in dict(entries).items() if not v}
+        if entries is not None:
+            # ⚠️ 面板给的整份状态里可能有 `True`（参与）—— 只留**改过默认的**（`False`）：
+            #    `idle_globals` 的语义是"这些人不参与"，记一堆 `True` 会污染增量指纹与导出。
+            self.session.idle_entries = {k: v for k, v in dict(entries).items() if not v}
         if protected_slots is not None:
             self.session.idle_protected_slots = max(0, int(protected_slots))
         if blacklist is not None:
             self.session.idle_blacklist = [str(n) for n in blacklist]
         # ⚠️ 异步重算（P5）：`recompute_async` 立即返回，返回的 `groups` 还是**改动前**那份；
-        #    落地后由 `_settle_recalc` 通知监听者（设置中心注册了自己）按新表重建 ——
+        #    落地后由 `_settle_recalc` 通知监听者（设置中心注册了自己）按新数据重建 ——
         #    见 `ui/settings.py` 里 `add_recalc_listener` 那处。
         self.recompute_async()                     # 看板/曲线跟着刷新
         self._sync_idle_label()
@@ -1670,9 +1683,11 @@ class MoodSocApp(tk.Tk):
         now = self.clock_text(self.current_t)
         self.status.configure(text=f"周期起点＝{theme.fmt_clock(self.schedule.start_clock)}"
                                    f"（当前时刻 {now}；只改显示口径，数值不变）")
-        # 逐次表组头写的是时刻、「干员与心情」的时刻框也按它显示 → 两个分区都标脏
-        # （当前显示的那一页不标：它就是改动来源）
-        self._invalidate_settings("idle", "batch")
+        # 时间轴三类改动（时长 / 周期数 / 钟点）口径统一：改完就把依赖班次/时刻的那几页标脏
+        # （当前显示的那一页不标：它就是改动来源）。
+        # ⚠️ 「入宿设置」页严格说**不依赖钟点**（矩阵列头写的是「第 N 班」），标脏只是
+        #    沿用改前那条口径 + 那一页重建很便宜；真正有硬依赖的是「干员与心情」的时刻框。
+        self._invalidate_settings("dorm", "batch")
 
     # ------------------------------------------------------------ 进驻事件（换心情）
     def _entry_candidates(self):
@@ -1848,8 +1863,8 @@ class MoodSocApp(tk.Tk):
         self.session.set_timeline(hours=hours)      # 周期自动 = 各班长之和
         self._build_shift_buttons()
         self.recompute_async(fit_slider=True)
-        # 班次时长/数量变了 → 别的分区里的班次下拉、逐次表都得重建（设置窗口自己不用）
-        self._invalidate_settings("batch", "entry", "idle")
+        # 班次时长/数量变了 → 别的分区里的班次下拉、锁定入宿矩阵的列都得重建（设置窗口自己不用）
+        self._invalidate_settings("batch", "entry", "dorm")
 
     def _invalidate_settings(self, *pages: str) -> None:
         """把设置中心里这些分区标脏（窗口没开就什么都不用做）。"""
@@ -1865,8 +1880,9 @@ class MoodSocApp(tk.Tk):
         # 周期数变了 → 底部「周期」选择器要跟着出现/消失（`_build_shift_buttons` 按它决定）
         self._build_shift_buttons()
         self.recompute_async(fit_slider=True)
-        # 逐次表按周期展开、干员与心情的「周期」下拉也有 1~周期数 项 → 两个分区都得重建
-        self._invalidate_settings("idle", "batch")
+        # ⚠️ 硬依赖的是「干员与心情」（它的「周期」下拉有 1~周期数 项）；「入宿设置」页
+        #    其实不随周期数变（矩阵的列＝**班次**，不是周期），标脏同样是沿用改前口径。
+        self._invalidate_settings("dorm", "batch")
 
     # ================================================================== 曲线面板
     def _sync_operator_box(self):

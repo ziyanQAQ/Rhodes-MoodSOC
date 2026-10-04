@@ -264,8 +264,8 @@ def test_section0_surface():
     print("\n=== §0 设置面清单（分页 / 上限常量 / 每个设置字段都有写入口） ===")
     from ui import settings as ui_settings
 
-    eq("PAGES 五个分区、顺序＝时间轴→干员与心情→锁定入宿→换心情→闲置入宿",
-       [p[0] for p in ui_settings.PAGES], ["timeline", "batch", "lock", "entry", "idle"])
+    eq("PAGES 四个分区、顺序＝时间轴→干员与心情→入宿设置→换心情",
+       [p[0] for p in ui_settings.PAGES], ["timeline", "batch", "dorm", "entry"])
     eq("每个分区都有标题与一行说明",
        all(len(p) == 3 and p[1] and p[2] for p in ui_settings.PAGES), True)
     eq("MAX_CYCLES 是 7（唯一口径）", MAX_CYCLES, 7)
