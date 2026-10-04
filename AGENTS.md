@@ -212,7 +212,8 @@ documents/   ← 11 份（2026-10 由 17 份并成 11；**§编号 / 第 N 条 /
     · **③ 全局配置**：总开关 / **锁定位置** `protected_slots`（默认 5＝竖向正序前 N 个**逻辑位次**，
       里面的人自动不换、**空位照样能入住**）/ **黑名单**（不能**通过闲置入宿进宿舍**，但可被换出）/
       逐人 `per_operator` **只剩"参不参与"**（旧写法 `target`/`dorm`/`slot`/`swap_with` 读得进来
-      但**被忽略**，API 回一条 `notes`）。
+      但**被忽略**，API 回一条 `notes`）—— ⚠️ 与**黑名单同口径**：不能进宿舍（**相 1 与相 2 都查**；
+      相 1 一碰到没有空床就 `break` 交棒，只查相 1 会漏掉排在空床用完之后的候选），但**仍可被换出**。
       ⚠️ **这一份和 `entry_events` 一起挂在 `Shift` 上（`Shift.idle_to_dorm` / `.entry_events`）并被
       四条重建路径搬运**（`with_hours` / `replaced_shift` / `with_detached` / `with_start_clock`）——
       `world` 每次由 `facilities` 现搭，**只挂在 world 上的全局设置会在重建时退回默认值**（2026-10
@@ -508,6 +509,11 @@ python scripts/verify_skills.py --report                      # 重写 resources
 # 闲置入宿自检（口径＝三层解耦版：锁定入宿 / 自动入宿 / 全局配置 + 换班执行点那组）
 python scripts/verify_idle.py                                 # 全绿 → 退出码 0
 python scripts/verify_idle.py -v                              # 打印每一条通过项
+
+# 设置面自检（13 节：时间轴 / 干员与心情 / 锁定入宿 / 换心情 / 闲置入宿 / 导入 / 导出往返 / …）
+python scripts/verify_settings.py                             # 全绿 → 退出码 0
+#   ⚠️ 末尾会单独列出它**钉住的 14 条「已知缺陷 / 已知例外」现状** —— 0 fail ≠ 没有缺陷
+#   （那 14 条就是 2026-10 测出来的真问题，逐条见 documents/16-现状与校准记录.md §3）
 
 # 模块边界自检（七模块：谁可以写谁的数据；见 documents/14-架构总览.md §9）
 python scripts/verify_modules.py                              # 全绿 → 退出码 0
