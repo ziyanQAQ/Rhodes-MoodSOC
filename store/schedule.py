@@ -54,7 +54,7 @@ from mood_soc import (apply_entry_events, apply_idle_to_dorm, compute_net_rate, 
 from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import MOOD_MAX, MOOD_MIN, use_project_decimal_context
 from mood_soc.models import (BaseLayout, EntryEventConfig, EntryShiftOverride,
-                             IdleToDormConfig, IdleToDormEntry,
+                             IdleToDormConfig,
                              build_entry_event_config, build_idle_to_dorm_config,
                              normalize_entry_when, resolve_entry_config)
 from data.skills_data import DEFAULT_OPERATORS
@@ -1074,7 +1074,6 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                       entry_when: Optional[str] = None,
                       entry_per_shift: Optional[List[EntryShiftOverride]] = None,
                       idle_to_dorm: bool = True,
-                      idle_entries: Optional[Sequence["IdleToDormEntry"]] = None,
                       idle_protected_slots: Optional[int] = None,
                       idle_blacklist: Optional[Sequence[str]] = None,
                       mood_events: Optional[Sequence[MoodSetEvent]] = None,
@@ -1110,9 +1109,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                        ⚠️ **默认 `True`（开）**（用户口径"闲置入宿默认是开启的"）；
                        要"完全不动布局"的旧口径就显式传 `False`。
                        ⚠️ **不设班次数量门槛**（第二版 §2）：单班排班照样执行。
-        idle_entries  界面的逐人设置（`[IdleToDormEntry, ...]`，**只列改过默认的**：
-                       不参与的人、手动指定位置的人、或点名了交换对象的人）。给了它就**盖过**
-                       JSON 里的 `idle_to_dorm.per_operator`（界面口径优先）；`None` = 用 JSON。
+        idle_entries  ⚠️ **已撤（2026-10）**：原为"界面的逐人「参不参与」设置
+                       （`[IdleToDormEntry, ...]`），给了就盖过 JSON 里的
+                       `idle_to_dorm.per_operator`"。那个设置整条不存在了（类已删），
+                       形参也一并删掉 —— 别再加回来。
         idle_protected_slots  **锁定位置数**（文档 §5）：给了就盖过 JSON 的
                        `idle_to_dorm.protected_slots`（默认 5）；`None` = 用 JSON。
         idle_blacklist **黑名单**（文档 §6）：给了就盖过 JSON 的 `idle_to_dorm.blacklist`；
@@ -1179,10 +1179,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
     #: 每个班次一份**"从未被动过"的计划副本** —— 引擎每段（含每个周期）都从它**重建**当前布局，
     #: 见下面段循环里的说明（副本绝不能被就地改着复用）。
     pristine = [copy.deepcopy(s.world) for s in schedule.shifts]
-    # 闲置入宿：界面传了逐人设置 / 锁定位置数 / 黑名单就盖过 JSON 的（"界面口径优先"，与进驻事件同一约定）
+    # 闲置入宿：界面 / 调用方传了锁定位置数 / 黑名单就盖过 JSON 的（"调用方口径优先"，与进驻事件同一约定）
+    # ⚠️ 原先这里还有"逐人「参不参与」"（`idle_entries`）那一项，2026-10 随功能整条撤销。
     if idle_to_dorm:
-        needs_override = (idle_entries is not None or idle_protected_slots is not None
-                          or idle_blacklist is not None)
+        needs_override = (idle_protected_slots is not None or idle_blacklist is not None)
         if needs_override:
             for w in pristine:
                 base_idle = getattr(w, "idle_to_dorm", None) or IdleToDormConfig()
@@ -1192,9 +1192,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
                                      if idle_protected_slots is None
                                      else int(idle_protected_slots)),
                     blacklist=(list(base_idle.blacklist) if idle_blacklist is None
-                               else [str(n) for n in idle_blacklist]),
-                    per_operator=(list(base_idle.per_operator) if idle_entries is None
-                                  else list(idle_entries)))
+                               else [str(n) for n in idle_blacklist]))
     # 每个班次解析一次"这一班的有效配置"，挂到该班次的副本上（按班次覆盖在这里生效）。
     # ⚠️ 覆盖列表要**显式传给 resolve_entry_config**：它默认读的是"第一个参数"的 per_shift，
     #    而这里的 base 是拼出来的（per_shift 为空），不显式传就会把按班次配置整段忽略。

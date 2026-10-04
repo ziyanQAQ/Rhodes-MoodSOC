@@ -744,24 +744,24 @@ class IdleToDormMixin:
     | ② 锁定位置数 | `IdleToDormConfig.protected_slots`（按竖向正序锁前 N 个位置） |
     | ② 黑名单 | `IdleToDormConfig.blacklist`（永远不能**通过闲置入宿进宿舍**的人） |
 
-    ⚠️ **2026-10「入宿设置」改版：④ 逐次表整块删除**（用户口径：那块没用）。
-    改前是**两个独立分区** —— 「闲置入宿」（本类，含那张"每行只有「参与」可改 +
-    一列只读「说明」"的逐次表）与「锁定入宿」（`LockPanel` 矩阵）；现在两块合成
-    一页「**入宿设置**」（分区键 `dorm`、第 3 位），页内**全局配置在上、矩阵在下**，
-    而**界面不再产生任何"逐次设置"**：
+    ⚠️ **2026-10「入宿设置」改版 + 撤除逐人设置**：④ 逐次表**已整块删除**
+    （用户口径：那块没用），改前是**两个独立分区** —— 「闲置入宿」（本类，含那张
+    "每行只有「参与」可改 + 一列只读「说明」"的逐次表）与「锁定入宿」（`LockPanel` 矩阵）；
+    现在两块合成一页「**入宿设置**」（分区键 `dorm`、第 3 位），页内**全局配置在上、矩阵在下**，
+    而**逐次设置这个东西已经不存在了**：
 
-    · `value()` 与 `on_change(...)` 里那份 `entries` **恒为 `None`** ＝「**不动逐次设置**」；
-    · ⚠️ `ui/app.py::apply_idle_to_dorm` 的契约是 `entries=None` = **不改**、
-      `{}` = 清空。**绝不允许**因为"面板不再给这一项"就把用户 / 文件里已有的逐次设置
-      **清掉**——那是静默的数据破坏。引擎里的 `per_operator` 由**下一个工单**再撤，
-      这一步只把界面与它**脱钩**。
+    · `value()` 与 `on_change(...)` **都不再有 `entries` 那一项**（`Session.idle_entries`
+      / `IdleToDormConfig.per_operator` / `IdleToDormEntry` / `entry_for` 全部撤销）；
+    · 上一道工单只是"界面与它脱钩"（那时契约是 `entries=None` = **不动**、`{}` = 清空，
+      为的是不静默清空文件 / 用户已有的设置）——**这一步是把它整条撤掉**，
+      所以那个"三态契约"连同形参一起消失了，风险也随之在类型上消失。
     · 随之删掉的东西（只为那张表存在）：`groups` / `table_height` / `page_height` /
       `groups_provider` 四个参数、`refresh_from_provider()` / `refresh_groups()`、
       `_rows` / `_build_table()` / `_fill_table()` / `_resolve_table_height()` /
       `_collect()` / `_set_group()`，以及「说明」列的 `_clip_note()`（见文件上方注释）。
 
     ⚠️ 改动会**实时生效**：每次改动（总开关 / 锁定位置数 / 黑名单）都会回调
-    `on_change(enabled, None, protected_slots, blacklist)`，调用方（`ui.app`）把它套进
+    `on_change(enabled, protected_slots, blacklist)`，调用方（`ui.app`）把它套进
     模拟重算。⚠️ 本类**只建控件、只收状态**，自己不是窗口：宿主是「入宿设置」分区（Frame）。
     """
 
@@ -775,8 +775,8 @@ class IdleToDormMixin:
 
         `protected_slots` / `blacklist`：全局口径的初值（来自 `Session`）。
         `all_names`：可以加入黑名单的干员名（下拉的候选池）。
-        `on_change(enabled, entries, protected_slots, blacklist)`：改动回调 ——
-        `entries` **恒为 `None`**（＝"不动逐次设置"，见类文档）。
+        `on_change(enabled, protected_slots, blacklist)`：改动回调 ——
+        ⚠️ 2026-10 起**没有 `entries` 那一项**了（"逐次设置"已整条撤销，见类文档）。
         """
         self._on_change = on_change
         self._widgets: list = []       # 总开关关掉时要置灰的控件
@@ -913,12 +913,12 @@ class IdleToDormMixin:
     def _commit(self) -> None:
         """把当前状态交给调用方重算。
 
-        ⚠️ 中间那一项（逐次设置）**一律传 `None`** ＝"**不动**"：面板不再产生逐次设置，
-        传 `{}` 会**把用户 / 文件里已有的逐次设置清掉**（静默的数据破坏）。
+        ⚠️ 2026-10 起回调**只有三项**（总开关 / 锁定位置数 / 黑名单）——
+        原先中间还有一项"逐次设置"（面板恒传 `None` = 不动），那个设置已随功能整条撤销。
         见 `ui/app.py::apply_idle_to_dorm` 与类文档。
         """
         if self._on_change is not None:
-            self._on_change(bool(self.enabled.get()), None,
+            self._on_change(bool(self.enabled.get()),
                             self._protected_value(), list(self.blacklist))
 
     def has_pending_edit(self) -> bool:
@@ -948,12 +948,12 @@ class IdleToDormMixin:
             self._job = None
 
     def value(self):
-        """收成 `(enabled, None, 锁定位置数, 黑名单)`。
+        """收成 `(enabled, 锁定位置数, 黑名单)`。
 
-        ⚠️ 中间那项**恒为 `None`**：面板不再产生"逐次设置" ⇒ 用契约里的"**不动**"
-        （`{}` 才是清空）。见类文档与 `ui/app.py::apply_idle_to_dorm`。
+        ⚠️ 2026-10 起**没有"逐次设置"那一项**（原先是 `(enabled, None, 锁定位置数, 黑名单)`）：
+        逐人「参不参与」已随功能整条撤销 —— 面板不再产生、也无从清空它。见类文档。
         """
-        return (bool(self.enabled.get()), None,
+        return (bool(self.enabled.get()),
                 self._protected_value(), list(self.blacklist))
 
 

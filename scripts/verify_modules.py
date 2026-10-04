@@ -63,7 +63,8 @@ MODULE_FIELDS = {
     "名册": {"detached", "pool", "training", "elite", "level"},
     "自动化": {
         "idle_to_dorm", "idle_protected_slots", "idle_blacklist",
-        "idle_globals", "idle_entries",
+        # ⚠️ 2026-10：`idle_globals` / `idle_entries`（逐人「参不参与」）随功能整条撤销，
+        #    字段已删 ⇒ 从这份"模块独占字段"表里也一并去掉。
         "entry_events", "entry_swap_with", "entry_scope",
         "entry_restore_back", "entry_when", "entry_per_shift",
     },
@@ -111,7 +112,9 @@ SESSION_METHOD_OWNER = {
     "set_training": "名册", "_remove_from_slots": "名册", "fill_from_pool": "名册",
     "elite_badges": "名册", "operator_obj": "名册", "elite_text": "名册",
     # —— 自动化 ——
-    "idle_entry_list": "自动化", "idle_groups": "自动化", "idle_count": "自动化",
+    # ⚠️ 2026-10：`idle_entry_list`（逐次设置 → `[IdleToDormEntry, ...]`）已随功能整条撤销，
+    #    登记表随之去掉。
+    "idle_groups": "自动化", "idle_count": "自动化",
     "entry_candidates": "自动化",
     # —— 编排 ——
     "load_paths": "编排", "load_data": "编排", "load_layout": "编排",
@@ -172,7 +175,9 @@ APPLY_CALLBACK_OWNER = {
 #: 只读视图 + 显式写入口"后，这份表应随之清空。
 APP_SESSION_PROXY_OWNER = {
     "schedule": "布局", "traj": "编排", "initial_moods": "心情", "mood_events": "心情",
-    "cycles": "时间轴", "idle_entries": "自动化", "idle_globals": "自动化",
+    "cycles": "时间轴",
+    # ⚠️ 2026-10：`idle_entries` / `idle_globals` 两个代理 setter 已随功能整条撤销
+    #    （`ui/app.py` 上那两个属性也删了），登记表随之去掉。
     "entry_swap_with": "自动化", "entry_scope": "自动化", "entry_restore_back": "自动化",
     "entry_when": "自动化", "entry_per_shift": "自动化",
 }

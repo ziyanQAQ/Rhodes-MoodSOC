@@ -37,7 +37,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from data.skills_data import DEFAULT_OPERATORS
 from mood_soc.battery import to_decimal
 from mood_soc.config import MOOD_MAX, FacilityType
-from mood_soc.models import (IdleToDormConfig, IdleToDormEntry, build_entry_event_config,
+from mood_soc.models import (IdleToDormConfig, PER_OPERATOR_RETIRED_NOTE,
+                             build_entry_event_config,
                              normalize_entry_when, read_manual)
 from mood_soc.rules import mood_skill_summary
 
@@ -137,10 +138,10 @@ class Session:
     idle_protected_slots: int = 5
     #: **黑名单**（文档 §6）：永远不能**通过闲置入宿进宿舍**的干员（不是"保护其宿舍位次"）
     idle_blacklist: List[str] = field(default_factory=list)
-    #: 不限班次/周期的逐人设置：`{干员: 参不参与}`（只记**改过默认**的，即 `False`）
-    idle_globals: Dict[str, bool] = field(default_factory=dict)
-    #: 逐次设置 `{(周期, 班次, 干员): 参不参与}`（序号均为 1 基）
-    idle_entries: Dict[Tuple[int, int, str], bool] = field(default_factory=dict)
+    # ⚠️ **`idle_globals` / `idle_entries`（逐人「参不参与」）2026-10 已整条撤销** ——
+    #    这两个字段、`idle_entry_list()`、`IdleToDormEntry` 类、引擎里的 `entry_for` 判据
+    #    全部删掉（旧文件 / 旧 API 里带着 `per_operator` 只回一条 note，不再生效）。
+    #    要挡人：全局 `idle_blacklist`，或手动摆位（看板 / 「干员与心情」→ 布局 + 手动台账）。
 
     #: 「不在基建」名单（既不在工作设施、也不在宿舍的人；场景 JSON 顶层 `detached`）。
     #: 语义：轨迹里**一条平线**（心情恒定），且**不参与任何技能计数**。见 `store.schedule`。
@@ -272,8 +273,6 @@ class Session:
             self.entry_restore_back = True
             self.entry_when = "full"
             self.entry_per_shift = []
-            self.idle_globals = {}
-            self.idle_entries = {}
             # 文件里的闲置入宿全局口径也不继承（锁定位置数 / 黑名单回到项目默认）
             self.idle_protected_slots = 5
             self.idle_blacklist = []
@@ -324,6 +323,15 @@ class Session:
         self.schedule = Schedule([shift], to_decimal(hours if hours is not None else 24),
                                  detached=list(shift.world.detached or []))
         self.loaded = LoadedSchedule(schedule=self.schedule)
+        # ⚠️ 旧键 `per_operator`（逐人「参不参与」）2026-10 已撤：这条路上**没有**
+        #    `ImportReport`（它不走 `store.sources._import_scenario`），所以把"已撤、已忽略"
+        #    记进 `LoadedSchedule.notes` —— 与文件入口同一份措辞（`PER_OPERATOR_RETIRED_NOTE`），
+        #    不许静默丢弃。`op_load_schedule` 的返回值里没有 notes 字段，
+        #    调用方靠 `session.loaded.summary()` / `describe()["import_reports"]` 之外
+        #    还有 `session.loaded.notes` 可读。
+        idle_raw = data.get("idle_to_dorm")
+        if isinstance(idle_raw, dict) and idle_raw.get("per_operator") is not None:
+            self.loaded.notes.append(PER_OPERATOR_RETIRED_NOTE)
         #: 场景格式的 `initial_moods` / `mood_events`（单班布局同义，见 `load_paths`）。
         #: ⚠️ 本入口给的是**布局 dict 本身**（不是文件），所以取法只有一处：
         #: `store.sources.parse_scenario_moods`（"读原始 JSON"的同一份实现）。
@@ -395,13 +403,9 @@ class Session:
         protected_slots = getattr(idle, "protected_slots", None)
         self.idle_protected_slots = 5 if protected_slots is None else int(protected_slots)
         self.idle_blacklist = [str(n) for n in (getattr(idle, "blacklist", None) or [])]
-        self.idle_globals = {}
-        self.idle_entries = {}
-        for e in (getattr(idle, "per_operator", None) or []):
-            if e.cycle is None and e.shift is None:
-                self.idle_globals[e.name] = bool(e.enabled)
-            else:
-                self.idle_entries[(e.cycle or 1, e.shift or 1, e.name)] = bool(e.enabled)
+        # ⚠️ **不再读 `idle.per_operator`**（逐人「参不参与」2026-10 已撤）：`IdleToDormConfig`
+        #    上已经没有这个字段，旧文件里那份也读不进来 —— 提示见
+        #    `store.sources._import_scenario` 的 note。
 
     def _resolve_imported_detached(self) -> List[str]:
         """导入时解决"名单里的人却占着某个位次"（**名单优先**）；返回一句人类可读的说明。
@@ -537,12 +541,12 @@ class Session:
         """**逐段输入指纹**（P6b）：只要前 k 段的指纹与上一份轨迹一致，那 k 段就能复用。
 
         "一段"＝一个**换班执行点**（班初或长班的内部换班点，见 `schedule.execution_points`）。
-        "一段的输入"＝ 全局设置 ＋ 这一班的布局/按班覆盖 ＋ **这一格（周期×班次）**的闲置入宿
-        逐次设置 ＋ 落在这一段里的心情锚点。改哪一类，切点就落在第一个受影响段：
-        布局/练度/房间等级 ⇒ 那一班在**第 1 周期**的出现处；末周期的锚点/逐次设置 ⇒ 那一段；
+        "一段的输入"＝ 全局设置 ＋ 这一班的布局/按班覆盖 ＋ 落在这一段里的心情锚点。
+        改哪一类，切点就落在第一个受影响段：
+        布局/练度/房间等级 ⇒ 那一班在**第 1 周期**的出现处；末周期的锚点 ⇒ 那一段；
         全局设置（初始心情/总开关/名单/时间轴）⇒ 第 0 段（整条重算）。
-        ⚠️ 同一班的多个执行点共用同一份逐人设置（文档 §8/§14）⇒ 指纹里的 `cells` 那项**相同**，
-        只有心情锚点按各自时刻归属。
+        ⚠️ 原先还有"这一格（周期×班次）的闲置入宿逐人设置"那一项（2026-10 随
+        `per_operator` 整条撤销），所以"改逐次设置只算那一段"那条增量用例也随之消失。
         """
         sch = self.schedule
         n = len(sch.shifts)
@@ -557,19 +561,16 @@ class Session:
             bool(self.entry_events), self.entry_swap_with, self.entry_scope,
             bool(self.entry_restore_back), self.entry_when,
             bool(self.idle_to_dorm), tuple(self.detached),
-            # 闲置入宿的**全局口径**：锁定位置数 / 黑名单 / 不限班次的逐人设置 ——
-            # ⚠️ 三者都会影响**每一段**，所以进"整条重算"的指纹。
+            # 闲置入宿的**全局口径**：锁定位置数 / 黑名单 ——
+            # ⚠️ 两者都会影响**每一段**，所以进"整条重算"的指纹。
+            # （原先还有"不限班次的逐人设置"，2026-10 随 `per_operator` 一起撤了。）
             int(self.idle_protected_slots), tuple(sorted(self.idle_blacklist)),
-            tuple(sorted((str(k), bool(v)) for k, v in self.idle_globals.items())),
         )
         per_shift = []
         for i, s in enumerate(sch.shifts):
             overrides = tuple(sorted(repr(e) for e in self.entry_per_shift
                                      if int(getattr(e, "key", 0) or 0) == i + 1))
             per_shift.append((self._world_digest(s.world), overrides))
-        cells: Dict[tuple, list] = {}
-        for (cyc, shf, name), val in self.idle_entries.items():
-            cells.setdefault((cyc, shf), []).append((name, bool(val)))
         points = execution_points(sch, cycles)
         # 心情锚点落到**它所在的那个执行点段**上（按绝对时刻二分，不做下标算术 ——
         # 执行点的个数随班长/周期数变化，算术很容易错位）。
@@ -586,8 +587,9 @@ class Session:
             ev_by_seg.setdefault(idx, []).append(repr(ev))
         sigs = []
         for j, (_t0, _seg_end, i, cyc, _offset) in enumerate(points):
+            # ⚠️ 原先这里还有一项"这一段命中的逐人设置（`idle_entries`）"——
+            #    2026-10 随 `per_operator` 整条撤销（那个键不再存在，也就没有"只命中某一段"的设置）。
             sigs.append((glob, per_shift[i],
-                         tuple(sorted(cells.get((cyc, i + 1), ()))),
                          tuple(sorted(ev_by_seg.get(j, ())))))
         return sigs
 
@@ -631,7 +633,6 @@ class Session:
             #     而界面里"全不勾"就该是"没有覆盖"。
             entry_per_shift=list(self.entry_per_shift),
             idle_to_dorm=self.idle_to_dorm,
-            idle_entries=self.idle_entry_list(),
             idle_protected_slots=int(self.idle_protected_slots),
             idle_blacklist=list(self.idle_blacklist),
             mood_events=list(self.mood_events),
@@ -933,15 +934,12 @@ class Session:
         sch = self.schedule
         if sch is None:
             return
-        entries = [IdleToDormEntry(name=n, enabled=bool(use))
-                   for n, use in (self.idle_globals or {}).items()]
-        entries += [IdleToDormEntry(name=n, enabled=bool(use), cycle=c, shift=s)
-                    for (c, s, n), use in (self.idle_entries or {}).items()]
+        # ⚠️ 原先这里还要把"逐人「参不参与」"（`idle_globals` / `idle_entries`）拼成
+        #    `IdleToDormConfig.per_operator` 一起搬 —— 2026-10 随功能整条撤销。
         for sh in sch.shifts:
             idle = IdleToDormConfig(enabled=bool(self.idle_to_dorm),
                                     protected_slots=int(self.idle_protected_slots),
-                                    blacklist=[str(n) for n in self.idle_blacklist],
-                                    per_operator=deepcopy(entries))
+                                    blacklist=[str(n) for n in self.idle_blacklist])
             sh.idle_to_dorm = idle
             sh.world.idle_to_dorm = idle
             cfg = build_entry_event_config({
@@ -1093,13 +1091,10 @@ class Session:
                 "enabled": self.idle_to_dorm,
                 "protected_slots": int(self.idle_protected_slots),
                 "blacklist": list(self.idle_blacklist),
-                # ⚠️ 只剩"参不参与"（`enabled`）：手动入宿是**布局编辑**（看板 / 「干员与心情」），
-                #    不再有 `target` / `dorm` / `slot` 那种第二套写法。
-                "per_operator": [
-                    {"name": n, "enabled": use}
-                    for n, use in self.idle_globals.items()] +
-                    [{"name": n, "enabled": use, "cycle": c, "shift": s}
-                     for (c, s, n), use in self.idle_entries.items()],            },
+                # ⚠️ **`per_operator` 已撤**（2026-10）：逐人「参不参与」这个设置整条不存在了
+                #    （`IdleToDormEntry` 类 / `Session.idle_globals` / `.idle_entries` 都已删），
+                #    所以这里不再回它 —— 要挡人只有 `blacklist` 与手动摆位两条路。
+            },
         }
 
     # ================================================================ 编辑（设置）
@@ -2021,38 +2016,23 @@ class Session:
         return world.facilities[0].capacity if world.facilities else 0
 
     # ================================================================ 闲置入宿 / 进驻事件
-    def idle_entry_list(self) -> Optional[List[IdleToDormEntry]]:
-        """把界面的逐次设置转成 `[IdleToDormEntry, ...]`——**只列"改过默认"的**
-        （勾掉不参与的人）；没人改过就返回 `None`（＝全都参与）。
-
-        ⚠️ 三层解耦后这里只剩**"参不参与"**：手动入宿不走这条路，它写的是**布局快照 +
-        手动台账**（看板 / 「干员与心情」→ `set_slots` / `set_facility_slots`）。
-        """
-        out: List[IdleToDormEntry] = []
-        for name, use in self.idle_globals.items():
-            if use:
-                continue
-            out.append(IdleToDormEntry(name=name, enabled=False))
-        for (cyc, shf, n), use in self.idle_entries.items():
-            if use:
-                continue
-            out.append(IdleToDormEntry(name=n, enabled=False, cycle=cyc, shift=shf))
-        return out or None
-
-    def idle_groups(self, cycles: Optional[int] = None,
-                    entries: Optional[dict] = None) -> List[tuple]:
+    def idle_groups(self, cycles: Optional[int] = None) -> List[tuple]:
         """按时间排序的**逐次入宿表** → `[(标题, (周期, 班次), [行, ...], 起点, 终点), ...]`。
 
-        `行 = (干员, 心情显示值, 位置, 参与, None, [])` —— **位置列只读、不可选**：
-        三层解耦后手动入宿归**布局编辑**（看板 / 「干员与心情」写班次快照 + 手动台账），
-        闲置入宿面板只剩"这一位参不参与"。
+        `行 = (干员, 心情显示值, 位置, None, None, [])` —— 仍是 **6 元组**（对外形状一字不变，
+        `api/ops.py::_idle_group_dict` 与旧调用方照旧按下标取）。
+
+        ⚠️ **第 4 格已废、恒为 `None`**：它原来是"这一位参不参与"（逐人 `per_operator`），
+        2026-10 **随功能整条撤销** —— 现在每一位候选都参与，所以没有第二种取值。
+        槽位**保留**只为形状兼容（别把它改成 5 元组、也别拿它当判据）。
+        第 5 格是"引擎这一刻安排了什么"（`Trajectory.idle_note_at`），第 6 格是预留的选项列。
+
         只列出**真的有候选**的那几次（心情跨班跨周期连续 ⇒ 每次谁没满都不一样）。
         `cycles` 同样夹到 `1 ~ MAX_CYCLES`（与 `set_cycles` 一个口径）。
 
         **一个换班执行点一组**（文档 §3/§14）：真实班初一组，长班的每个内部换班点各一组
         （标题写成 `第 1 周期 · 第 2 班（12h 内部换班）`）；`起点`/`终点` 是绝对小时，
-        界面据它渲染时钟区间。⚠️ **同班各执行点共用同一份逐人设置** —— 组里的
-        `(周期, 班次, 干员)` 键是同一个，所以面板改任一组会同步影响同班其他执行点。
+        界面据它渲染时钟区间。
 
         **候选口径与引擎同一份**（`rules.apply_idle_to_dorm`）：该班
         **完全没有出现在任何设施**里、心情 < 24、且不在**黑名单**里的人；
@@ -2060,7 +2040,6 @@ class Session:
         ⚠️ 班初在加工站 / 训练室的人、副手、所有上班与在宿舍的人**都不是候选**。
         """
         cycles = min(MAX_CYCLES, max(1, int(cycles if cycles is not None else self.cycles)))
-        entries = self.idle_entries if entries is None else entries
         traj = self.traj
         if self.schedule is None or traj is None:
             return []
@@ -2090,11 +2069,10 @@ class Session:
             cands.sort(key=lambda row: (row[0], row[1]))
             rows = []
             for mood, name, where in cands:
-                use = entries.get((cyc, i + 1, name))
-                if use is None:
-                    use = self.idle_globals.get(name, True)
                 note = traj.idle_note_at(name, t0) or ""
-                rows.append((name, mood, where, use, note, []))
+                # ⚠️ 第 4 格**恒为 `None`**（原「参不参与」，2026-10 随 `per_operator` 撤销）
+                #    —— 仍是 6 元组、下标一个都没挪，只是那格不再有第二种取值。
+                rows.append((name, mood, where, None, note, []))
             title = f"第 {cyc} 周期 · 第 {i + 1} 班"
             if offset > 0:
                 title += f"（{format(offset.normalize(), 'f')}h 内部换班）"
@@ -2102,8 +2080,13 @@ class Session:
         return groups
 
     def idle_count(self) -> int:
-        """当前设置下会有多少次"有人入宿"、共涉及多少人（**按换班执行点**计）。"""
-        return sum(len([r for r in group[2] if r[3]]) for group in self.idle_groups())
+        """当前设置下会有多少次"有人入宿"、共涉及多少人（**按换班执行点**计）。
+
+        ⚠️ 2026-10 改口径：以前是"各行**参与**数之和"（第 4 格里为 `False` 的不算），
+        而那一格现在恒为 `None` —— 逐人「参不参与」已撤，所以**每一位候选都参与**
+        ⇒ 这里等于"候选行数之和"（黑名单的人根本不在表里，照旧不算）。
+        """
+        return sum(len(group[2]) for group in self.idle_groups())
 
     def entry_candidates(self) -> Tuple[List[str], List[str]]:
         """返回 `(触发者名单, 可交换对象名单)`。

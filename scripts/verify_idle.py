@@ -78,14 +78,16 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 # 合成布局（只用名字 + 心情；闲置入宿不读技能，所以合成干员足够且完全确定）
 # ============================================================================
 def make_layout(dorms, *, capacity=5, dorm_count=None, extra=(), protected_slots=5,
-                blacklist=(), enabled=True, per_operator=None, manual=None, labels=False):
+                blacklist=(), enabled=True, manual=None, labels=False):
     """造一份布局：`dorms` = `[[(名字, 心情), ...], ...]`（按宿舍序号 1 基）。
 
     `extra`：额外设施（dict 原样塞进去，如 `{"type": "制造站", ...}`）；
-    `per_operator`：逐人"参不参与"设置（`IdleToDormEntry` 的 JSON 写法）；
     `manual`：手动台账 `{宿舍下标(0 基): {"slots": [...], "names": [...]}}`；
     `labels=True`：给宿舍写上 `宿舍#N`（**多间不带名字的宿舍在引擎里是同一个键**，
     要按设施取用时必须给名字）。
+
+    ⚠️ 2026-10：`per_operator` 形参**已删**（逐人「参不参与」随功能整条撤销）——
+    旧用例 `test_per_operator_disabled*` 随之删除，见 `test_config` 里那条"读了也不生效"。
     """
     facilities = []
     total_dorms = len(dorms) if dorm_count is None else int(dorm_count)
@@ -101,8 +103,6 @@ def make_layout(dorms, *, capacity=5, dorm_count=None, extra=(), protected_slots
     facilities.extend(extra)
     idle = {"enabled": bool(enabled), "protected_slots": int(protected_slots),
             "blacklist": [str(n) for n in blacklist]}
-    if per_operator is not None:
-        idle["per_operator"] = per_operator
     return build_base_layout({"facilities": facilities, "idle_to_dorm": idle})
 
 
@@ -417,6 +417,8 @@ def test_import_and_keep_idle_globals():
          **重建每个 `Shift`** ⇒ 世界由 `facilities` 现搭、全局设置退回默认值；随后
          `_sync_from_schedule()` 又把它读回会话 ⇒ **碰一下「不在基建」名单，面板上的
          闲置入宿配置就被文件旧值打回**（实测 `(True, 9, ['丙'])` → `(True, 2, ['甲'])`）。
+         ⚠️ 2026-10 撤掉逐人设置之后，这一组里"逐人那份也要保持"的两项随字段一起消失
+         （`idle_globals` / `idle_entries` 已删），**其余三项的保真断言一字未动**。
 
     ⚠️ **换心情那一组要分开说**（本次实测澄清）：`Shift.entry_events` 这个字段**本来就在**
     并被四条重建路径搬运 ⇒ 旧代码上"碰名单"**并没有**把面板的换心情设置打回（三组场景实测
@@ -435,8 +437,10 @@ def test_import_and_keep_idle_globals():
     facs = [{"type": "宿舍", "level": 1, "capacity": 3,
              "operators": [{"name": "甲", "mood": "24"}]},
             {"type": "制造站", "level": 1, "capacity": 1, "operators": []}]
-    cfg = {"enabled": False, "protected_slots": 2, "blacklist": ["甲"],
-           "per_operator": [{"name": "庚", "enabled": False}]}
+    # ⚠️ 2026-10：`cfg` 里的 `per_operator` **已删**（逐人「参不参与」随功能整条撤销）。
+    #    原来这里钉的是"它进了 world 的 `IdleToDormConfig` 并生效"；现在同一个键只该换来
+    #    一条「已撤、已忽略」的 note —— 那条改在下面 A4 一起钉（`test_config` 里再钉解析层）。
+    cfg = {"enabled": False, "protected_slots": 2, "blacklist": ["甲"]}
     scen = {"facilities": facs, "idle_to_dorm": cfg,
             "entry_events": {"enabled": True, "swap_with": "缪尔赛思",
                              "scope": "anywhere", "when": "wait"}}
@@ -447,7 +451,7 @@ def test_import_and_keep_idle_globals():
     check("文件 `idle_to_dorm` 进了 world 与班次（来源层 → Shift 那一段，改前退回默认值）",
           (world_cfg.enabled, world_cfg.protected_slots, list(world_cfg.blacklist))
           == (False, 2, ["甲"])
-          and [e.name for e in world_cfg.per_operator] == ["庚"],
+          and not hasattr(world_cfg, "per_operator"),
           f"world={world_cfg!r}")
     s = Session()
     s.load_layout({"facilities": facs, "idle_to_dorm": cfg})
@@ -478,20 +482,35 @@ def test_import_and_keep_idle_globals():
           "idle_to_dorm" in notes and "关" in notes and "锁定位置 2" in notes and "甲" in notes,
           notes)
 
+    # —— A5. ⚠️ 2026-10 新钉：**带着已撤的 `per_operator` 的文件 → 回一条 note、不静默丢弃** ——
+    #    原来这一条不存在（那时它是有效设置，见上面 A 的旧断言）；现在钉的是"撤除口径"本身：
+    #    ① 读得进来不报错；② `IdleToDormConfig` 上**没有**这个字段、也没有 `entry_for`；
+    #    ③ 导入报告的 note 里出现「该设置已撤、已忽略」。
+    legacy_scen = {"facilities": facs,
+                   "idle_to_dorm": {"enabled": True, "protected_slots": 1,
+                                    "per_operator": [{"name": "庚", "enabled": False}]}}
+    s = Session()
+    s.load_data(dict(legacy_scen), apply_file_settings=True)
+    legacy_notes = " / ".join(s.loaded.reports[0].notes)
+    legacy_cfg = s.schedule.shifts[0].world.idle_to_dorm
+    check("旧文件带 `per_operator`：不报错、不落任何状态、note 写明「该设置已撤、已忽略」",
+          "该设置已撤、已忽略" in legacy_notes
+          and not hasattr(legacy_cfg, "per_operator")
+          and not hasattr(legacy_cfg, "entry_for")
+          and (s.idle_to_dorm, s.idle_protected_slots) == (True, 1),
+          f"notes={legacy_notes!r} / cfg={legacy_cfg!r}")
+
     # —— B. 碰名单不打回面板设置（快照值刻意与面板处处不同）——
+    #    ⚠️ 2026-10：`idle_globals` / `idle_entries`（逐人「参不参与」）已删，从快照里去掉。
     s = Session()
     s.load_data(dict(scen), apply_file_settings=True)
     s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist = True, 9, ["丙"]
-    s.idle_globals = {"丙": False}
-    s.idle_entries = {(2, 1, "丁"): False}
     s.entry_events, s.entry_swap_with, s.entry_scope, s.entry_when = (
         True, "any", "dorm", "immediate")
     before = (s.idle_to_dorm, s.idle_protected_slots, tuple(s.idle_blacklist),
-              dict(s.idle_globals), dict(s.idle_entries),
               s.entry_events, s.entry_swap_with, s.entry_scope, s.entry_when)
     s.set_detached(["乙"])
     after = (s.idle_to_dorm, s.idle_protected_slots, tuple(s.idle_blacklist),
-             dict(s.idle_globals), dict(s.idle_entries),
              s.entry_events, s.entry_swap_with, s.entry_scope, s.entry_when)
     check("碰名单后：闲置入宿 + 换心情**逐项保持**（改前闲置入宿整组被打回文件旧值）",
           after == before, f"{before} → {after}")
@@ -566,68 +585,11 @@ def test_protected_slots():
           str(slots_text(world)))
 
 
-def test_per_operator_disabled():
-    print("全局配置：逐人「这一位不参与」")
-    world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=0,
-                        per_operator=[{"name": "乙", "enabled": False}])
-    run(world, {"乙": 5})
-    check("勾掉参与的人不被安排",
-          dorm_names(world) == [["甲"]], str(dorm_names(world)))
-    world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=0,
-                        per_operator=[{"name": "乙", "enabled": True}])
-    run(world, {"乙": 5})
-    check("参与的人照常安排", dorm_names(world) == [["乙"]], str(dorm_names(world)))
-
-
-def test_per_operator_disabled_in_swap():
-    print("全局配置：逐人「这一位不参与」在**相 2（换人）**里同样生效")
-    # 场景：**空床 1 个 < 候选 3 位**，且「不参与」的丙 按 (心情, 名字) 排在「床位用完」之后
-    # —— 乙(5) 占掉唯一的空床、相 1 在 戊(6) 身上 `break` 把队列交棒给相 2，丙 只在**相 2**
-    # 里被处理。⚠️ 改前相 2 只查黑名单与心情、**不查 `cfg.entry_for`** ⇒ 用户勾的「不参与」
-    # 被忽略、丙 照旧被换进宿舍（与黑名单不同口径的漏洞）。
-    per_op = [{"name": "丙", "enabled": False}]
-    world = make_layout([[("甲", 24)], [], [("己", 24)]], capacity=1, dorm_count=3,
-                        protected_slots=0, per_operator=per_op)
-    run(world, {"乙": 5, "戊": 6, "丙": 7}, scope=(1, 1))
-    check("相 2 也尊重「不参与」：丙 没被换进宿舍（宿舍 = 戊 / 乙 / 己）",
-          slots_text(world) == [["戊"], ["乙"], ["己"]], str(slots_text(world)))
-    check("丙 整个没进基建（勾「不参与」＝不把她安排进宿舍）",
-          world.get_operator("丙") is None, str(mood_of(world, "丙")))
-    check("相 2 的换人照旧发生（戊 顶掉甲、不是「整相跳过」）",
-          world.get_operator("甲") is None and dorm_at(world, 1).slot_of("戊") == 0,
-          str(slots_text(world)))
-
-    # 带作用域（周期 × 班次）的设置：相 2 必须用**同一个 `scope`** 去问 `entry_for`
-    scoped = [{"name": "丙", "enabled": False, "cycle": 1, "shift": 1}]
-    world = make_layout([[("甲", 24)], [], [("己", 24)]], capacity=1, dorm_count=3,
-                        protected_slots=0, per_operator=scoped)
-    run(world, {"乙": 5, "戊": 6, "丙": 7}, scope=(1, 1))
-    check("带 (周期, 班次) 的「不参与」在相 2 同样生效（scope 传对了）",
-          slots_text(world) == [["戊"], ["乙"], ["己"]], str(slots_text(world)))
-    world = make_layout([[("甲", 24)], [], [("己", 24)]], capacity=1, dorm_count=3,
-                        protected_slots=0, per_operator=scoped)
-    run(world, {"乙": 5, "戊": 6, "丙": 7}, scope=(2, 1))
-    check("作用域不匹配（第 2 周期）时她照旧参与、照旧被换进去（别修成一刀切）",
-          slots_text(world) == [["戊"], ["乙"], ["丙"]], str(slots_text(world)))
-
-    # 相 1 原本就查（防回归：这个判据不许从相 1 挪走或删掉）
-    world = make_layout([[("甲", 24)]], capacity=2, dorm_count=1, protected_slots=0,
-                        per_operator=per_op)
-    run(world, {"丙": 5})
-    check("相 1（有空床）里不参与 ⇒ 也不填空床",
-          slots_text(world) == [["甲", None]], str(slots_text(world)))
-
-    # 用户拍板的另一半：**仍可被换出**（「不参与」只拦"她自己进宿舍"，不拦"别人换她出去"）
-    world = make_layout([[("丙", 5)]], capacity=1, dorm_count=1, protected_slots=0,
-                        per_operator=per_op)
-    events = run(world, {"丁": 4})
-    check("「不参与」的人坐在宿舍里仍可被换出（与黑名单同口径）",
-          world.get_operator("丙") is None and dorm_at(world, 1).slot_of("丁") == 0,
-          str(slots_text(world)))
-    check("换出她时照旧走**换人**那条路（「闲置入宿」事件，而不是「未执行」）",
-          events and all(ev.group == "idle_to_dorm" for ev in events),
-          str(groups_of(events)))
-
+# ⚠️ **2026-10 已删**：`test_per_operator_disabled` / `test_per_operator_disabled_in_swap`。
+# 它们钉的对象是逐人「这一位参不参与」（`IdleToDormConfig.per_operator` / `IdleToDormEntry`
+# / `entry_for`），随功能整条撤销 —— **不是变绿，是对象消失**（引擎里已经没有「参与」这个
+# 概念，两相都不再查它）。撤除后的口径改钉在两处：`test_config`（旧键读得进来但不生效）与
+# `test_import_and_keep_idle_globals` 的 A5（回一条「该设置已撤、已忽略」的 note）。
 
 def test_dorm_state():
     print("宿舍态（面板 / trace 的唯一来源）")
@@ -746,13 +708,19 @@ def test_groups_per_point():
 
 
 def test_config():
-    print("配置解析（宽松写法 + 别名）")
+    print("配置解析（宽松写法 + 别名 + 已撤的 per_operator 只被忽略）")
+    # ⚠️ **2026-10 改断言**：原来这条钉的是
+    #    `cfg.entry_for("乙").enabled is False` —— 即"`per_operator` 被解析成逐人条目、
+    #    `entry_for` 查得到"。**为什么变**：`per_operator` / `IdleToDormEntry` / `entry_for`
+    #    随功能整条撤销，对象已经不存在（不是放宽断言）。新断言钉**撤除口径**本身：
+    #    旧键读得进来、不报错、**不落任何字段**（`IdleToDormConfig` 上没有它）。
     cfg = build_idle_to_dorm_config({"enabled": True, "protected_slots": 3,
-                                     "blacklist": ["甲"], "per_operator": [{"name": "乙",
-                                                                             "enabled": False}]})
-    check("顶层字段被解析",
+                                     "blacklist": ["甲"],
+                                     "per_operator": [{"name": "乙", "enabled": False}]})
+    check("顶层字段被解析，且已撤的 `per_operator` 不落任何字段（读得进来、不生效、不报错）",
           cfg.protected_slots == 3 and cfg.blacklist == ["甲"]
-          and cfg.entry_for("乙").enabled is False, str(cfg))
+          and not hasattr(cfg, "per_operator") and not hasattr(cfg, "entry_for"),
+          str(cfg))
     check("true / false 简写",
           build_idle_to_dorm_config(True).enabled is True
           and build_idle_to_dorm_config(False).enabled is False, "")

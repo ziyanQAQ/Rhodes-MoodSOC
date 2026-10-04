@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import math
 from decimal import Decimal, InvalidOperation
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from mood_soc.battery import to_decimal
-from mood_soc.models import normalize_entry_when
+from mood_soc.models import PER_OPERATOR_RETIRED_NOTE, normalize_entry_when
 
 from store import serialize
 from store.session import Session
@@ -507,11 +507,11 @@ def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
     - `protected_slots`：**锁定位置数**（默认 5）：按竖向正序（位次优先、宿舍序号其次）
       锁前 N 个位置，自动入宿不换锁定区里的人（锁定区的空位照样能入住）；
     - `blacklist`：**黑名单**：永远不能通过闲置入宿进宿舍的人（可被换出）；
-    - `per_operator`：逐人设置，**只有一种含义** —— `{"跃跃": false}`（这一位不参与）/
-      `[{"name": "跃跃", "enabled": false, "cycle": 2, "shift": 3}]`（限定某几次）。
-      ⚠️ **旧写法已作废**：`target` / `dorm` / `slot` / `swap_with`（手动指定位置、手动点名）
-      读得进来但**被忽略**，另回一条 `notes`。要在某一刻把某人放进某个宿舍位次，请走**布局编辑**：
-      `load_json` 的 `facilities[].slots` 写死该位次，或 `set_slots`（见那两个 op）。
+    - ⚠️ **`per_operator`（逐人「参不参与」）2026-10 已整条撤销**：传进来**读得进来、
+      不生效、不报错**，只在 `notes` 里回一条「该设置已撤、已忽略」。
+      要挡住某个人请改用 `blacklist`；
+      要在某一刻把某人放进某个宿舍位次，请走**布局编辑**：`load_json` 的
+      `facilities[].slots` 写死该位次，或 `set_slots`（见那两个 op）。
     """
     _require_session(session)
     if "enabled" in args:
@@ -520,49 +520,13 @@ def op_set_idle_to_dorm(session: Session, args: dict) -> dict:
         session.idle_protected_slots = max(0, int(args["protected_slots"]))
     if args.get("blacklist") is not None:
         session.idle_blacklist = [str(n) for n in (args["blacklist"] or [])]
-    per = args.get("per_operator")
     notes: List[str] = []
-    if per is not None:
-        globals_: Dict[str, bool] = {}
-        entries: Dict[Tuple[int, int, str], bool] = {}
-        legacy = ("target", "swap_with", "swapWith", "dorm", "dormIndex", "slot", "slotIndex")
-        items: Sequence = list(per.items()) if isinstance(per, dict) else list(per)
-        for item in items:
-            if isinstance(item, tuple):                     # 字典写法 {名字: 值}
-                name, value = item[0], item[1]
-                if isinstance(value, bool):
-                    use, cyc, shf = value, None, None
-                elif isinstance(value, str) or value is None:
-                    notes.append(f"per_operator[{name}] 的「手动点名/指定位置」写法已作废"
-                                 f"（{value!r}）—— 手动入宿请改用布局编辑（facilities[].slots）")
-                    use, cyc, shf = True, None, None
-                elif isinstance(value, dict):
-                    use = bool(value.get("enabled", True))
-                    cyc = value.get("cycle")
-                    shf = value.get("shift")
-                    if any(value.get(k) is not None for k in legacy):
-                        notes.append(f"per_operator[{name}] 的 target/swap_with/dorm/slot 已作废"
-                                     f"（手动入宿请改用布局编辑）")
-                else:
-                    raise ValueError(f"per_operator[{name!r}] 格式无法识别：{value!r}")
-            else:                                           # 数组写法 [{name, ...}]
-                if not isinstance(item, dict) or not item.get("name"):
-                    raise ValueError(f"per_operator 数组里每项都要有 name：{item!r}")
-                name = item["name"]
-                use = bool(item.get("enabled", True))
-                cyc, shf = item.get("cycle"), item.get("shift")
-                if any(item.get(k) is not None for k in legacy):
-                    notes.append(f"per_operator[{name}] 的 target/swap_with/dorm/slot 已作废"
-                                 f"（手动入宿请改用布局编辑）")
-            # ⚠️ 只记**改过默认**的（`use is False`）：`idle_globals` 的语义就是"这些人不参与"，
-            #    记一堆 `True` 会污染增量指纹与导出（`Session.idle_entry_list` 也只收 False）。
-            if not use:
-                if cyc is None and shf is None:
-                    globals_[str(name)] = False
-                else:
-                    entries[(int(cyc or 1), int(shf or 1), str(name))] = False
-        session.idle_globals = globals_
-        session.idle_entries = entries
+    if args.get("per_operator") is not None:
+        # ⚠️ **回一条 note 而不是静默丢弃**（用户口径）：逐人「参不参与」这个设置整条不存在了
+        #    （`IdleToDormEntry` / `Session.idle_globals` / `.idle_entries` / `entry_for` 都已删），
+        #    所以这里**不解析、不落任何状态**，只如实告诉调用方"传了它、它已被忽略"。
+        #    措辞与文件入口共用同一份常量（`mood_soc.models.PER_OPERATOR_RETIRED_NOTE`）。
+        notes.append(PER_OPERATOR_RETIRED_NOTE)
     session.recompute()
     out = {"enabled": session.idle_to_dorm,
            "protected_slots": int(session.idle_protected_slots),
@@ -587,6 +551,8 @@ def _idle_effective(session: Session) -> bool:
 def _idle_group_dict(group: tuple) -> dict:
     """一组逐次表 → API 的 JSON（含**换班执行点**的标题/起止时刻，供调用方渲染）。
 
+    ⚠️ 每行的 `use` **恒为 `null`**（`Session.idle_groups()` 那一行的第 4 格 —— 原「参不参与」，
+    2026-10 随 `per_operator` 撤销；槽位保留只为形状兼容）。
     `target` / `options` 恒为 `null` / `[]`：三层解耦后手动入宿归**布局编辑**
     （看板 / 「干员与心情」写班次快照 + 手动台账），这里不再提供二次选择。
     """
@@ -599,12 +565,13 @@ def _idle_group_dict(group: tuple) -> dict:
 
 
 def op_idle_to_dorm_groups(session: Session, args: dict) -> dict:
-    """只读：当前设置下的逐次入宿表（候选 + 「这一位参不参与」），供调用方做交互。
+    """只读：当前设置下的逐次入宿表（候选 + "引擎这一刻安排了什么"），供调用方做交互。
 
-    ⚠️ **一个换班执行点一组**（班初 + 长班的每个内部换班点）；同班各执行点**共用一份**
-    逐人设置（组里的 `scope` 相同 = `[周期, 班次]`），所以改一组会影响同班其他组。
-    ⚠️ 每行的 `target` / `options` 恒为 `null` / `[]`（三层解耦后这里不再有手动位置/点名；
-    手动入宿＝**布局编辑**，见 `set_idle_to_dorm` 的说明），字段保留只为兼容旧调用方。
+    ⚠️ **一个换班执行点一组**（班初 + 长班的每个内部换班点）；组里的 `scope` 是
+    `[周期, 班次]`（内部换班点与班初同一个班次号）。
+    ⚠️ 每行的 `use` **恒为 `null`**（原「参不参与」，2026-10 随 `per_operator` 撤销）；
+    `target` / `options` 恒为 `null` / `[]`（三层解耦后这里不再有手动位置/点名；
+    手动入宿＝**布局编辑**，见 `set_idle_to_dorm` 的说明）。字段全保留只为兼容旧调用方。
     """
     _require_session(session)
     groups = session.idle_groups(cycles=args.get("cycles"))

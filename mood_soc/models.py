@@ -447,45 +447,11 @@ class EntryShiftOverride:
         return bool(label) and text == label
 
 
-@dataclass
-class IdleToDormEntry:
-    """**某一次进驻**（周期 × 班次 × 干员）在「闲置入宿」里的设置。
-
-    默认（不写 `cycle`/`shift`）= 对该干员的**所有**班次/周期生效；
-    写了就只在对应的那几次生效（更具体的优先，见 `IdleToDormConfig.entry_for`）。
-
-    - `enabled`：这一位参不参与（`False` = 永远不动她，与黑名单同效、但只对这一刻）。
-    - `cycle` / `shift`：**1 基**的周期序号 / 班次序号（`None` = 不限）。
-
-    ⚠️ **2026-10 三层解耦后只剩"参不参与"**：曾经的 `swap_with`（手动点名）/ `dorm` / `slot`
-    （手动指定位置）**已作废** —— "手动入宿"归**手动编辑逻辑**：在**看板 / 「干员与心情」**里
-    把干员放进某个宿舍位次，写的是**那一班的布局 + 手动台账**（`models.ManualLedger`，
-    自动入宿从此不占那些位次、不换那些人）。旧写法（JSON / API 里的 `target`、`dorm`、
-    `slot`、`swap_with`）**读得进来但被忽略**，只回一条 note，不再有第二种手动入口。
-    """
-
-    name: str = ""
-    enabled: bool = True
-    cycle: Optional[int] = None
-    shift: Optional[int] = None
-
-    def matches(self, name: str, cycle: Optional[int] = None,
-                shift: Optional[int] = None) -> bool:
-        """这一条设置对"第 `cycle` 周期的第 `shift` 班的 `name`"是否适用。
-
-        带作用域的设置**只在调用方给出了对应序号时**才匹配（所以不带作用域的旧调用不会误命中）。
-        """
-        if not self.name or self.name != name:
-            return False
-        if self.cycle is not None and self.cycle != cycle:
-            return False
-        if self.shift is not None and self.shift != shift:
-            return False
-        return True
-
-    def specificity(self) -> int:
-        """具体程度：周期+班次都写 = 2，只写一个 = 1，都不写 = 0（越大越优先）。"""
-        return (1 if self.cycle is not None else 0) + (1 if self.shift is not None else 0)
+#: 旧键 `per_operator`（逐人「参不参与」）**2026-10 撤销**后，各入口回的那条 note。
+#: ⚠️ **只在"读原始 JSON 的那几层"用**（`store.sources._import_scenario` /
+#: `store.session.load_layout` / `api/ops.py::op_set_idle_to_dorm`）—— 措辞**只有这一份**，
+#: 保证文件入口与 API 入口说的是同一句话（撤掉一个设置不许**静默丢弃**）。
+PER_OPERATOR_RETIRED_NOTE = "per_operator（逐人「参不参与」）该设置已撤、已忽略"
 
 
 @dataclass
@@ -496,9 +462,7 @@ class IdleToDormConfig:
     {
       "idle_to_dorm": {"enabled": true,
                        "protected_slots": 5,
-                       "blacklist": ["干员甲"],
-                       "per_operator": [{"name": "虎狼丸", "swap_with": "甲"},
-                                        {"name": "跃跃", "enabled": false}]},
+                       "blacklist": ["干员甲"]},
       "facilities": [ ... ]
     }
     ```
@@ -516,10 +480,11 @@ class IdleToDormConfig:
       宿舍序号其次）锁前 N 个位置：自动入宿不换锁定区里的人，锁定区的**空位**照样能入住。
       运行时钳位到 `[0, 当前可用宿舍的总位置数]`（超了按总数生效、不报错）。
     - `blacklist`：**黑名单**（文档 §6）：永远不能**通过闲置入宿进宿舍**的干员 ——
-      不进初始队列、不出现手动设置里；**但**排班自带的她照旧在宿舍里、照旧能被换出。
-    - `per_operator`：逐个干员的**"参不参与"**（见 `IdleToDormEntry`）。
-      ⚠️ **手动入宿不在这里**：要在某个时刻把某人放进某个位次，用**看板 / 「干员与心情」**
-      （写布局快照 + 手动台账）。旧写法 `swap_with` / `dorm` / `slot` / `target` 会被忽略。
+      不进初始队列；**但**排班自带的她照旧在宿舍里、照旧能被换出。
+    - ⚠️ **`per_operator`（逐人「参不参与」）2026-10 已整条撤销**：这一类配置**不再存在**
+      （`IdleToDormEntry` 类已删），旧文件 / 旧 API 调用里带着它**读得进来但不生效**、
+      不报错，只回一条 note 说明「该设置已撤、已忽略」。要挡住某个人，用上面那两份口径：
+      全局的 `blacklist`，或**看板 / 「干员与心情」**里手动摆位（写布局 + 手动台账）。
     - **不设班次数量门槛**（文档 §2 第二版）：1 个、2 个以及 3 个以上班次都执行闲置入宿。
       每个真实班次的班初都会执行；班次时长超过 `12h` 时，班内每个**严格位于班末之前**的
       `12h` 整数倍（`store.schedule.execution_offsets`）也会执行一次内部换班。
@@ -530,23 +495,6 @@ class IdleToDormConfig:
     enabled: bool = True
     protected_slots: int = 5
     blacklist: List[str] = field(default_factory=list)
-    per_operator: List["IdleToDormEntry"] = field(default_factory=list)
-
-    def entry_for(self, name: str, cycle: Optional[int] = None,
-                  shift: Optional[int] = None) -> Optional["IdleToDormEntry"]:
-        """这一刻（`cycle` 周期的 `shift` 班）该干员的有效设置 → **最具体的那一条**。
-
-        优先级：周期+班次都写 > 只写一个 > 都不写（全局）；同分时**后写的赢**。
-        没写过 = 参与、自动挑目标（返回 `None`）。
-        """
-        best: Optional["IdleToDormEntry"] = None
-        best_score = -1
-        for e in self.per_operator:
-            if not e.matches(name, cycle, shift):
-                continue
-            if e.specificity() >= best_score:
-                best, best_score = e, e.specificity()
-        return best
 
 
 def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
@@ -554,20 +502,16 @@ def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
 
     ```json
     "idle_to_dorm": true
-    "idle_to_dorm": {"enabled": true, "protected_slots": 5, "blacklist": ["某人"],
-                     "per_operator": {"跃跃": false}}
-    "idle_to_dorm": {"per_operator": [{"name": "跃跃", "enabled": false}]}
+    "idle_to_dorm": {"enabled": true, "protected_slots": 5, "blacklist": ["某人"]}
     ```
 
-    `per_operator` 只表达**"参不参与"**：`{"名字": false}`、数组
-    `[{"name": ..., "enabled": ..., "cycle": 2, "shift": 3}]`（`cycle`/`shift` 是 1 基序号，
-    限定"只在哪几次生效"；不写 = 不限）。
+    ⚠️ **`per_operator` 已撤（2026-10）**：这个键**读得进来、不报错、也不再生效**
+    （`IdleToDormEntry` 类已删）。要挡住某个人只能用 `blacklist`（全局口径），
+    或走**手动摆位**（看板 / 「干员与心情」写布局快照 + 手动台账）。
+    提示由**读原始 JSON 的那一层**负责（`store.sources._import_scenario` 的 note、
+    `api/ops.py::op_set_idle_to_dorm` 的 `notes`），这里只做"收下、丢掉"。
 
-    ⚠️ **旧写法会被忽略**（读得进来、不报错、也不再生效）：`{"名字": "某人"}`（手动点名）、
-    `swap_with` / `dorm` / `slot` / `target`（手动指定位置/点名）—— 那三件事现在归
-    **手动编辑逻辑**：在**看板 / 「干员与心情」**里把人放进某个位次（写布局快照 + 手动台账）。
-
-    顶层还有两个全局字段（文档 §5/§6，都可省）：
+    顶层那两个全局字段（文档 §5/§6，都可省）：
     `protected_slots`（锁定位置数，默认 `5`）、`blacklist`（黑名单，默认空）。
     字段名同时接受下划线与小驼峰（`protectedSlots` / `black_list` / `blackList`）。
     """
@@ -593,41 +537,14 @@ def build_idle_to_dorm_config(raw) -> IdleToDormConfig:
     else:
         raise ValueError(f"idle_to_dorm.blacklist 应当是数组，收到 {black_raw!r}")
 
-    per_raw = raw.get("per_operator", raw.get("perOperator"))
-    items: List[tuple] = []
-    if isinstance(per_raw, dict):
-        items = list(per_raw.items())
-    elif isinstance(per_raw, list):
-        for item in per_raw:
-            if not isinstance(item, dict) or not item.get("name"):
-                raise ValueError(f"per_operator 数组里的每一项都要有 name：{item!r}")
-            items.append((item["name"], item))
-    elif per_raw is not None:
-        raise ValueError(f"idle_to_dorm.per_operator 应当是数组或对象，收到 {per_raw!r}")
-
-    entries: List[IdleToDormEntry] = []
-    for name, value in items:
-        if isinstance(value, bool):
-            entries.append(IdleToDormEntry(name=str(name), enabled=value))
-            continue
-        if isinstance(value, str) or value is None:
-            # 旧写法：`{"名字": "交换对象"}` = 手动点名 —— 已作废，按"参与、全自动"收下
-            entries.append(IdleToDormEntry(name=str(name)))
-            continue
-        if not isinstance(value, dict):
-            raise ValueError(f"per_operator[{name!r}] 格式无法识别：{value!r}")
-        cyc = value.get("cycle", value.get("cycleIndex"))
-        shf = value.get("shift", value.get("shiftIndex"))
-        entries.append(IdleToDormEntry(
-            name=str(value.get("name", name)),
-            enabled=bool(value.get("enabled", True)),
-            cycle=(int(cyc) if cyc is not None else None),
-            shift=(int(shf) if shf is not None else None)))
+    # ⚠️ **`per_operator`（逐人「参不参与」）2026-10 已整条撤销**：这里**不收、不解析**它
+    #    —— 旧文件带着它不该报错，但也不该生效；提示由读原始 JSON 的那两层负责
+    #    （`store.sources._import_scenario` 的 note / `api/ops.py::op_set_idle_to_dorm` 的 notes）。
+    #    ⚠️ 别再解析它：`models.IdleToDormEntry` 类已删，`entry_for` 判据也随之下线。
     return IdleToDormConfig(
         enabled=(None if raw.get("enabled") is None else bool(raw["enabled"])),
         protected_slots=(5 if protected is None else protected),
-        blacklist=blacklist,
-        per_operator=entries)
+        blacklist=blacklist)
 
 
 @dataclass

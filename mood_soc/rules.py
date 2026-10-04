@@ -1093,14 +1093,14 @@ def reset_entry_events(world: BaseLayout) -> int:
 #   · **空洞**：清空某一位**不左移**后面的人（位次粘人，`models.set_seat`）；
 #     "可入住空位"＝第一个**既没住户、又没被手动钉住**的位次。
 #   · **黑名单** = 永远不能"通过闲置入宿进宿舍"的人（可被换出，不是保护位次）。
-#   · **逐人「这一位不参与」**（`IdleToDormConfig.per_operator`，`scope` 决定它是哪一周期哪一班）
-#     与黑名单**同一口径**：不被安排进宿舍，但**仍可被换出**。⚠️ **相 1 与相 2 都要查**：
-#     相 1 一碰到"没有空床"就 `break` 把队列交给相 2，只查相 1 会漏掉"排在空床用完之后"
-#     的那几位（2026-10 修：她们照旧被换进宿舍，用户勾的设置被静默忽略）。
 #
-# ⚠️ 已作废（别再加回来）：手动指定位置 / 手动点名交换（那两件事归**手动编辑逻辑**，
-#    入口是看板与「干员与心情」表，写进布局快照 + 台账）；竖向反序扫描取"首个严格大于"
-#    的自动交换；被换出者追加队尾；以及更早的四级优先级 / 挂件门 / 阵营门 / 菲亚梅塔例外。
+# ⚠️ 已作废（别再加回来）：**逐人「这一位不参与」**（`IdleToDormConfig.per_operator` /
+#    `IdleToDormEntry` / `entry_for`）—— 2026-10 **随功能整条撤销**（那一格的界面入口
+#    更早一个工单就删了），旧文件 / 旧 API 里带着它只回一条 note、不再生效；
+#    要挡人只有黑名单与手动摆位两条路。还有：手动指定位置 / 手动点名交换
+#    （那两件事归**手动编辑逻辑**，入口是看板与「干员与心情」表，写进布局快照 + 台账）；
+#    竖向反序扫描取"首个严格大于"的自动交换；被换出者追加队尾；
+#    以及更早的四级优先级 / 挂件门 / 阵营门 / 菲亚梅塔例外。
 # ⚠️ **不设班次数量门槛**：1 个班次的排班照样执行。
 # ----------------------------------------------------------------------------
 #: 锁定位置数默认值（文档 §5）。
@@ -1305,10 +1305,9 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
           找不到合格住户 ⇒ 立刻停（终态：锁定区外每位住户的心情都 ≥ 队列剩下的所有人）
     ```
 
-    ⚠️ **逐人「这一位不参与」与黑名单两相都查**（黑名单在 `_enqueue` 就拦掉了，逐人设置在
-    两相各查一次）：相 1 一碰到"没有空床"就 `break` 把整个队列交给相 2，所以候选多于空床时
-    "排在空床用完之后的候选"**只经过相 2** —— 那里不查，用户勾的"不参与"就被静默忽略。
-    两者的口径都是**"不能通过闲置入宿进宿舍"，但"仍可被换出"**（见相 2 循环里的说明）。
+    ⚠️ **逐人「这一位不参与」已撤（2026-10）**：黑名单仍在 `_enqueue` 拦掉；曾经的
+    `per_operator` 判据（相 1 与相 2 各查一次 `cfg.entry_for`）**随功能一起下线**，
+    别再按"两相都要查"去找一处不存在的设置。
 
     与 `apply_entry_events` 同一层：它改的是**布局**（谁在哪个房间），不是每小时速率，
     所以不进 `consume_ledger` / `recovery_ledger`，由调用方在**每个换班执行点**显式结算
@@ -1321,7 +1320,8 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
         only         只处理这些干员（`None` = 全部候选）
         swap_with    **已作废**（手动点名归手动编辑逻辑）；留着只为兼容旧调用
         scope        这一刻是"第几周期的第几班" → `(周期序号, 班次序号)`（1 基）；
-                     只用来取逐人设置里的"这一位参不参与"（`IdleToDormEntry.enabled`）
+                     ⚠️ **2026-10 起只是记账用的标签**：它原先唯一的用途是取逐人
+                     「这一位参不参与」（`IdleToDormEntry.enabled`），那个设置已撤
         trace        可选**出参**：逐位候选记一份"**轮到她的那一刻**"的宿舍态（`dorm_state`）
 
     ⚠️ **会就地修改 `world`**（有人进宿舍、有人被换出）。返回事件流水账（`Bucket.EVENT`）。
@@ -1341,7 +1341,11 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
     protected_cfg = getattr(cfg, "protected_slots", None)
     protected = _protected_positions(
         world, DEFAULT_PROTECTED_SLOTS if protected_cfg is None else protected_cfg)
-    cycle_no, shift_no = (scope if scope else (None, None))
+    # ⚠️ `scope`（"第几周期第几班"）2026-10 起**不再被读**：它原先唯一的用途是
+    #    `cfg.entry_for(cyc, shf, name)`（逐人「这一位参不参与」，已随功能整条撤销）。
+    #    形参**保留** —— 调用方 `store.schedule` 仍传它，且"这一刻是哪一班"的标签仍在
+    #    事件文案/文档里用；把它一并删掉属于另一件事，不在本次撤除范围里。
+    _ = scope
 
     events: List[Contribution] = []
     #: 队列项 = `[心情, 名字, 干员对象, 她本来从哪来]`
@@ -1420,10 +1424,6 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
         if name in blacklist:
             settled.add(name)
             continue                               # 防御性
-        entry = cfg.entry_for(name, cycle_no, shift_no) if cfg is not None else None
-        if entry is not None and not entry.enabled:
-            settled.add(name)
-            continue                               # 逐人设置：这一位不参与
         if op is not None:
             mood = op.mood                         # 用**实时**心情（她被换出去过也一样）
         if mood >= MOOD_MAX:
@@ -1445,19 +1445,9 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
         if name in blacklist:
             settled.add(name)
             continue
-        # ⚠️ 逐人「这一位不参与」在**相 2 里也要查**（与相 1 **同判据、同一个**
-        #    `cfg.entry_for`）：相 1 一碰到"没有空床"就 `break`，把整个队列**交棒**给相 2 ——
-        #    所以"候选数多于空床数"时，排在"空床用完"**之后**的候选**只经过相 2**，
-        #    相 1 那一次判断根本没走到她（实测：空床 1 个、候选 3 位时 `entry_for` 只被问了
-        #    前两位，而勾了"不参与"的第三位照旧被换了进去 ⇒ 用户勾的设置被静默忽略）。
-        #    口径与黑名单一致（`documents/03-特殊机制.md` 第 30 条 / `AGENTS.md` 坑 17）：
-        #    **不能通过闲置入宿进宿舍，但仍可被换出** —— 所以这里只拦"她作为候选被换进去"；
-        #    `_best_swap_victim` 那份"换出谁"的逻辑一字不动（她坐在宿舍里时照旧能被换出去）。
-        #    `settled.add` 与相 1 同款：了结过的人不再参与本执行点的后续判定，防打转。
-        entry = cfg.entry_for(name, cycle_no, shift_no) if cfg is not None else None
-        if entry is not None and not entry.enabled:
-            settled.add(name)
-            continue                               # 逐人设置：这一位不参与
+        # ⚠️ **逐人「这一位不参与」2026-10 已撤销**：相 2 里那道 `cfg.entry_for` 判据
+        #    （`86a311f 修相2漏查逐人参与设置` 的修复）**随功能一起作废** —— 它在拦一个
+        #    不再存在的设置。黑名单照旧在**上面**与本循环开头拦。
         if op is not None:
             mood = op.mood
         if mood >= MOOD_MAX:

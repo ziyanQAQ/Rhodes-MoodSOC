@@ -268,21 +268,9 @@ class MoodSocApp(tk.Tk):
         loaded = self.session.loaded
         return loaded.summary() if loaded is not None else ""
 
-    @property
-    def idle_entries(self):
-        return self.session.idle_entries
-
-    @idle_entries.setter
-    def idle_entries(self, value):
-        self.session.idle_entries = dict(value)
-
-    @property
-    def idle_globals(self):
-        return self.session.idle_globals
-
-    @idle_globals.setter
-    def idle_globals(self, value):
-        self.session.idle_globals = dict(value)
+    # ⚠️ 这里原先有 `idle_entries` / `idle_globals` 两个转发属性（逐人「参不参与」）——
+    #    2026-10 **随功能整条撤销**（`Session` 上那两个字段已删）。要挡人用 `idle_blacklist`，
+    #    要摆位用「干员与心情」的位置列 / 入宿设置下半块的矩阵。
 
     # —— 闲置入宿的**全局口径**（锁定位置数 / 黑名单）与面板要用的辅助读法 ——
     def idle_protected_slots(self) -> int:
@@ -1159,29 +1147,22 @@ class MoodSocApp(tk.Tk):
         return traj.world_at(t) if traj is not None else None
 
     # ------------------------------------------------------------ 闲置入宿
-    def _idle_entry_list(self):
-        """把界面的逐次设置转成 `[IdleToDormEntry, ...]`（口径在 `Session.idle_entry_list()`）。
-
-        **只列改过默认的**（勾掉"参与"的人）；没人改过就返回 `None`。
-        ⚠️ 三层解耦后这里只剩"参不参与" —— 手动入宿走**布局编辑**（看板 / 「干员与心情」）。
-        """
-        return self.session.idle_entry_list()
-
-    def _idle_groups(self, cycles: Optional[int] = None, entries: Optional[dict] = None,
-                     traj=None):
+    def _idle_groups(self, cycles: Optional[int] = None, traj=None):
         """给设置框算**按时间排序的逐次表** → `[group, ...]`。
 
-        `group = (标题, (周期, 班次), [(干员, 心情, 位置, 参与, 说明, []), ...], 起, 止)`。
+        `group = (标题, (周期, 班次), [(干员, 心情, 位置, None, 说明, []), ...], 起, 止)`。
+        ⚠️ 第 4 格**恒为 `None`**（原「参不参与」，2026-10 随 `per_operator` 撤销）——
+        形状一字不变，只是那格不再有第二种取值。
 
         为什么按"**换班执行点** → 周期"展开：心情跨班、跨内部换班、跨周期连续，所以**每一次**
         "谁没满、谁在宿舍"都不一样。
-        长班（> 12h）的内部换班点在标题里带 `（12h 内部换班）`，与班初各占一组，
-        但**共用同一份逐人设置**（改任一组会同步影响同班其他执行点）。只列**真的有候选**的那几次。
+        长班（> 12h）的内部换班点在标题里带 `（12h 内部换班）`，与班初各占一组。
+        只列**真的有候选**的那几次。
         """
         # 候选与"引擎这一刻的安排"全在 `Session.idle_groups()`（**与程序接口同一份**）；
         # 界面只做两件"视图的事"：把心情值格式化、把组头时刻按初始时间点渲染。
         out = []
-        for title, scope, rows, t0, t1 in self.session.idle_groups(cycles=cycles, entries=entries):
+        for title, scope, rows, t0, t1 in self.session.idle_groups(cycles=cycles):
             shown = [(n, theme.fmt_mood(m), where, use, note, options)
                      for n, m, where, use, note, options in rows]
             out.append((f"{title}（{self.clock_text(t0)}–{self.clock_text(t1)}）",
@@ -1587,32 +1568,25 @@ class MoodSocApp(tk.Tk):
                          != (before[int(s)] if 0 <= int(s) < len(before) else ""))
         return current, touched
 
-    def apply_idle_to_dorm(self, enabled: bool, entries: Optional[dict],
+    def apply_idle_to_dorm(self, enabled: bool,
                            protected_slots: Optional[int] = None,
                            blacklist: Optional[Sequence[str]] = None):
         """「入宿设置 → 全局配置」落地（设置中心里**每次改动**都会调它）。
 
-        参数：总开关 / 逐次设置 `{(周期, 班次, 干员): 参不参与}` /
-        **锁定位置数** / **黑名单**（`None` = 不动）。
+        参数：总开关 / **锁定位置数** / **黑名单**（`None` = 不动）。
         返回**新的分组表**：改动会影响后面每一次的候选。
 
-        ⚠️ **`entries` 的三态契约**（与 `Session.idle_entries`、`api/ops.py::op_set_idle_to_dorm`
-        的 `per_operator` 同一口径）：
-        · `None` = **不动**（保留现有的逐次设置，一个字都不改）；
-        · `{}` / `[]` = **清空**；
-        · 有内容 = 整份替换。
-
-        ⚠️ **2026-10「入宿设置」改版之后，面板（`IdleToDormPanel`）不再产生逐次设置**，
-        它一律传 `None` —— 所以这里**必须**把 `None` 当成"不动"。改前这一句是
-        `dict(entries)` **无条件整份替换**：面板不再给这一项时，用户 / 导入文件里已有的
-        逐次设置会被**静默清空**（那是数据破坏，不是"面板没这一项"的正常后果）。
-        引擎里的 `per_operator` 由**下一个工单**再撤，这一步只是让界面与它脱钩。
+        ⚠️ **2026-10 撤掉了第二个形参 `entries`（原"逐次设置"）—— 选的是"删掉形参"而不是
+        "留着永不使用"**：那个字典已经没有消费者（`Session.idle_entries` / `per_operator`
+        随功能整条撤销），留一个死参数只会让人以为"面板哪天还能给逐次设置"。
+        它原先承载的"`None` = 不动、`{}` = 清空"三态契约**也随之作废** —— 现在**根本没有
+        "逐次设置"这个东西可清**，所以"面板不再给这一项 ⇒ 静默清空用户数据"的风险在类型上
+        就不存在了。（改前那一步的教训仍留在提交史与文档里：上一道工单正是因为
+        `dict(entries)` 无条件整份替换，才必须把 `None` 特判成"不动"。）
+        调用点见 `ui/settings.py::_build_dorm` → `IdleToDormPanel` 的
+        `on_change(enabled, protected_slots, blacklist)`。
         """
         self.session.idle_to_dorm = bool(enabled)
-        if entries is not None:
-            # ⚠️ 面板给的整份状态里可能有 `True`（参与）—— 只留**改过默认的**（`False`）：
-            #    `idle_globals` 的语义是"这些人不参与"，记一堆 `True` 会污染增量指纹与导出。
-            self.session.idle_entries = {k: v for k, v in dict(entries).items() if not v}
         if protected_slots is not None:
             self.session.idle_protected_slots = max(0, int(protected_slots))
         if blacklist is not None:

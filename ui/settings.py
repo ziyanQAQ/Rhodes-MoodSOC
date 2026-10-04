@@ -441,13 +441,14 @@ class SettingsDialog(tk.Toplevel):
 
         ⚠️ 合并前它们是**两个独立分区**：「锁定入宿」（`LockPanel` 矩阵，独立整页）与
         「闲置入宿」（`IdleToDormPanel`：全局配置 + **④ 逐次表**）。现在：逐次表**整块删除**
-        （用户口径：那块没用），矩阵搬回这一页的下半 —— 之所以搬得回来，是因为
+        （用户口径：那块没用；它背后的逐人「参不参与」也随之整条撤销），矩阵搬回这一页的下半
+        —— 之所以搬得回来，是因为
         「③ 手动入宿」当年独立成页的唯一理由是"矩阵是横向的（列＝班次），**半栏放不下**"，
         而这一页本来就是**整页宽**。⚠️ **不许再把矩阵挤成半栏**（回归
         `test_入宿设置两块_全局配置在上矩阵在下且整页宽`）。
 
-        · 全局配置那块的写入口＝`app.apply_idle_to_dorm`（⚠️ 它收到的 `entries` **恒为
-          `None`** ＝"不动逐次设置"，见 `ui/dialogs.py::IdleToDormMixin`）；
+        · 全局配置那块的写入口＝`app.apply_idle_to_dorm(enabled, protected_slots, blacklist)`
+          —— ⚠️ 2026-10 起**没有"逐次设置"那个形参**了（逐人「参不参与」已随功能整条撤销）；
         · 矩阵的只读数据源＝`app.lock_dorm_view`、唯一写入口＝`app.apply_lock_dorm`。
         """
         app = self.app

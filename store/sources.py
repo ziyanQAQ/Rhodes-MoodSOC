@@ -43,6 +43,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import DORM_LEVEL_TABLE, min_level_for_slots, parse_facility_type
+from mood_soc.models import PER_OPERATOR_RETIRED_NOTE
 from .layout import build_detached
 from .maa import ROOM_KEY_BY_LABEL, ROOM_MAP, ROOM_ORDER, parse_duration_hint
 
@@ -529,7 +530,9 @@ def _import_scenario(data: dict, report: ImportReport, source: str = "") -> Impo
         if idle_raw.get("blacklist"):
             bits.append("黑名单 " + "、".join(str(n) for n in idle_raw["blacklist"]))
         if idle_raw.get("per_operator") is not None:
-            bits.append("逐人设置")
+            # ⚠️ **回一条 note 而不是静默丢弃**：逐人「参不参与」2026-10 已整条撤销
+            #    （`IdleToDormEntry` 类 / `entry_for` 判据都已删）。措辞与 API 入口共用同一份常量。
+            bits.append(PER_OPERATOR_RETIRED_NOTE)
         report.notes.append("idle_to_dorm（闲置入宿：" + ("，".join(bits) if bits else "无字段")
                             + "）")
     elif data.get("idle_to_dorm") is not None:

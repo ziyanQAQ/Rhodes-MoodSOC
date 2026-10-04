@@ -192,7 +192,9 @@ def build_base_layout(data, validate: bool = False) -> BaseLayout:
         #   {"entry_events": {"enabled": true, "swap_with": "路人"}, "facilities": [...]}
         entry_events=build_entry_event_config(data.get("entry_events")),
         # 顶层可选的「闲置入宿」配置（未满的闲置干员进宿舍恢复），见 models.IdleToDormConfig：
-        #   {"idle_to_dorm": {"enabled": true, "per_operator": {"虎狼丸": "甲"}}, "facilities": [...]}
+        #   {"idle_to_dorm": {"enabled": true, "protected_slots": 5, "blacklist": ["某人"]},
+        #    "facilities": [...]}
+        # ⚠️ 旧键 `per_operator`（逐人「参不参与」）2026-10 已撤：读得进来、不生效。
         idle_to_dorm=build_idle_to_dorm_config(data.get("idle_to_dorm")),
         # 顶层可选的「变量初始值」（基建级中间货币的起始量）：
         #   {"initial_global": {"木天蓼": 5, "人间烟火": 30}, "facilities": [...]}

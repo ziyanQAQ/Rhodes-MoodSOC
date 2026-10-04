@@ -14,7 +14,7 @@
     §2 干员与心情（练度 / 起点心情 / 心情锚点 / 房间等级）
     §3 锁定入宿（摆位即上锁 / 清空即解锁 / 粒度累积 / 后者覆盖 / 回原位 / 缩容）
     §4 换心情（触发者三口径 / 「满 24」门 / 三种 when / scope / 找不到目标 / 逐班覆盖）
-    §5 闲置入宿（开关 / 黑名单 / 逐人优先级 / 锁定位置数 / 两相 / 每个执行点）
+    §5 闲置入宿（开关 / 黑名单 / 已撤的 per_operator / 锁定位置数 / 两相 / 每个执行点）
     §6 导入不变量（两个导入入口逐字段自动比对 / 文件级设置真的生效）
     §7 导出 → 再导入往返（哪些保持、哪些丢失、已知例外钉住）
     §8 「改完设置再触发各种动作，设置还在不在」（静默覆盖扫描）
@@ -51,7 +51,7 @@ from data.paths import MAA_SAMPLE, ROOT, SAMPLES                       # noqa: E
 from data.domain import facility_slots                                 # noqa: E402
 from mood_soc.battery import to_decimal                                # noqa: E402
 from mood_soc.config import FacilityType, dormitory_recovery           # noqa: E402
-from mood_soc.models import (ENTRY_WHEN_MODES, IdleToDormEntry,        # noqa: E402
+from mood_soc.models import (ENTRY_WHEN_MODES,                        # noqa: E402
                              build_entry_event_config, build_entry_shift_overrides,
                              build_idle_to_dorm_config, normalize_entry_when,
                              resolve_entry_config)
@@ -202,8 +202,9 @@ def settings_snapshot(s: Session) -> dict:
             "enabled": bool(d["idle_to_dorm"]["enabled"]),
             "protected_slots": int(d["idle_to_dorm"]["protected_slots"]),
             "blacklist": [str(n) for n in d["idle_to_dorm"]["blacklist"]],
-            "per_operator": sorted(json.dumps(p, sort_keys=True, ensure_ascii=False)
-                                   for p in d["idle_to_dorm"]["per_operator"]),
+            # ⚠️ 2026-10：`per_operator` **已从 `settings_dict()` 撤掉**（逐人「参不参与」
+            #    随功能整条撤销）—— 原来这里把它的每一条 JSON 化后排序进快照，
+            #    现在字段本身不存在，快照里也不该再出现它（下面 291 那条钉子键数）。
         },
     }
 
@@ -288,9 +289,12 @@ def test_section0_surface():
     eq("entry_events 子键六个（enabled/swap_with/scope/restore_back/when/per_shift）",
        sorted(s.settings_dict()["entry_events"]),
        ["enabled", "per_shift", "restore_back", "scope", "swap_with", "when"])
-    eq("idle_to_dorm 子键四个（enabled/protected_slots/blacklist/per_operator）",
+    # ⚠️ 2026-10 改断言：原来是"子键**四个**（含 `per_operator`）"—— `per_operator`
+    #    随逐人「参不参与」整条撤销（`Session.idle_globals` / `.idle_entries` 已删），
+    #    **字段本身不存在**，不是被放宽。同一条用例下面新增了"传了它只回 note"的钉子。
+    eq("idle_to_dorm 子键三个（enabled/protected_slots/blacklist；`per_operator` 已撤）",
        sorted(s.settings_dict()["idle_to_dorm"]),
-       ["blacklist", "enabled", "per_operator", "protected_slots"])
+       ["blacklist", "enabled", "protected_slots"])
 
     # —— 「每个设置都有出口」：逐字段写一遍，读回来必须变（设置静默不生效的探针）——
     def _probe(label, mutate, read, want):
@@ -336,10 +340,19 @@ def test_section0_surface():
     _probe("idle_to_dorm.blacklist",
            lambda t: handle(t, "set_idle_to_dorm", {"blacklist": [MUR]}),
            lambda t: t.idle_blacklist, [MUR])
-    _probe("idle_to_dorm.per_operator",
-           lambda t: handle(t, "set_idle_to_dorm", {"per_operator": [{"name": PAO,
-                                                                     "enabled": False}]}),
-           lambda t: t.idle_globals, {PAO: False})
+    # ⚠️ 2026-10 改断言：原来这一条是 `_probe("idle_to_dorm.per_operator", …)`，
+    #    钉"传 `per_operator` ⇒ 落进 `t.idle_globals == {PAO: False}`"。
+    #    **为什么变**：那个字段随功能整条撤销（不是"探针不生效"），所以改成钉**撤除口径**：
+    #    传进来只回一条 `notes`、会话里**没有任何**状态被写（`hasattr` 都应为假）。
+    t = sess_from_data({"facilities": [
+        {"type": "宿舍", "level": 5, "name": "宿舍#1", "operators": [PAO]},
+        {"type": "贸易站", "level": 3, "operators": [DRAGON]}]})
+    t.idle_to_dorm = False
+    out = handle(t, "set_idle_to_dorm", {"per_operator": [{"name": PAO, "enabled": False}]})
+    eq("已撤的 `per_operator`：API 回一条「该设置已撤、已忽略」",
+       out.get("notes"), ["per_operator（逐人「参不参与」）该设置已撤、已忽略"])
+    eq("已撤的 `per_operator`：不落任何会话状态（字段本身不存在）",
+       [hasattr(t, "idle_globals"), hasattr(t, "idle_entries")], [False, False])
 
     # 每个 op 都在 op 表里（别只写了函数忘了注册）
     for op in ("set_timeline", "set_slots", "set_room_level", "set_seat_lock",
@@ -1109,7 +1122,7 @@ def test_section4_entry():
 
 
 # ============================================================================
-# §5 闲置入宿（开关 / 黑名单 / 逐人优先级 / 锁定位置数 / 两相 / 每个执行点）
+# §5 闲置入宿（开关 / 黑名单 / 已撤的 per_operator / 锁定位置数 / 两相 / 每个执行点）
 # ============================================================================
 IDLE_BASE = {"facilities": [
     {"type": "宿舍", "level": 5, "name": "宿舍#1", "operators": [{"name": "甲", "mood": "24"}]},
@@ -1139,7 +1152,7 @@ def _idle_scene(facs, cands=IDLE_CANDS, mood=10) -> Session:
 
 
 def test_section5_idle():
-    print("\n=== §5 闲置入宿（开关 / 黑名单 / 逐人优先级 / 锁定位置数 / 两相） ===")
+    print("\n=== §5 闲置入宿（开关 / 黑名单 / 已撤的 per_operator / 锁定位置数 / 两相） ===")
 
     # —— 开关：默认开、显式 false 才关 ——
     s = sess_from_data(copy.deepcopy(IDLE_BASE))
@@ -1175,33 +1188,12 @@ def test_section5_idle():
     eq("不拉黑 ⇒ 乙 就进宿舍（相 1 填空床）",
        "乙" in layout_names(s, 0)["宿舍#1"], True)
 
-    # —— 逐人优先级：周期+班次 > 只写一个 > 全局；并列取后者；不写＝参与 ——
-    cfg = build_idle_to_dorm_config({"per_operator": [
-        {"name": "甲", "enabled": True},
-        {"name": "甲", "enabled": False},
-        {"name": "甲", "enabled": True, "cycle": 2},
-        {"name": "甲", "enabled": False, "cycle": 2, "shift": 1},
-        {"name": "甲", "enabled": True, "cycle": 2, "shift": 1}]})
-    eq("entry_for：全局两条并列 ⇒ **后写的赢**（第 1 班用最后那条 False）",
-       cfg.entry_for("甲", 1, 1).enabled, False)
-    eq("entry_for：具体度高者胜（第 2 周期第 1 班用 (2,1) 那条，最后写 True）",
-       cfg.entry_for("甲", 2, 1).enabled, True)
-    eq("entry_for：第 2 周期第 2 班只命中「只写周期」那条（True）",
-       cfg.entry_for("甲", 2, 2).enabled, True)
-    cfg2 = build_idle_to_dorm_config({"per_operator": [{"name": "甲", "enabled": False},
-                                                       {"name": "甲", "enabled": True}]})
-    eq("entry_for：同具体度并列 ⇒ 后写的赢（False 后再 True ⇒ True）",
-       cfg2.entry_for("甲", 1, 1).enabled, True)
-    cfg3 = build_idle_to_dorm_config({"per_operator": [{"name": "甲", "enabled": False},
-                                                       {"name": "甲", "enabled": True,
-                                                        "shift": 1}]})
-    eq("entry_for：只写班次(1) 比全局更具体 ⇒ 第 1 班用 True、第 2 班回全局 False",
-       (cfg3.entry_for("甲", 1, 1).enabled, cfg3.entry_for("甲", 1, 2).enabled), (True, False))
-    eq("entry_for：没写过的人 ⇒ None（＝参与，不是 False）", cfg3.entry_for("丁", 1, 1), None)
-    eq("IdleToDormEntry.specificity：都写 2 / 一个 1 / 都不写 0",
-       [IdleToDormEntry(name="甲", cycle=1, shift=2).specificity(),
-        IdleToDormEntry(name="甲", cycle=1).specificity(),
-        IdleToDormEntry(name="甲").specificity()], [2, 1, 0])
+    # —— ⚠️ 2026-10 已删一整段：逐人「参不参与」的优先级判据
+    #    （`IdleToDormConfig.entry_for` / `IdleToDormEntry.specificity`）——
+    #    原来这里钉「周期+班次 > 只写一个 > 全局、同分后写的赢、没写过 ⇒ None」，
+    #    对象是 `IdleToDormConfig.entry_for` 与 `IdleToDormEntry`。**两者随功能整条撤销**
+    #    （不是判据变了、也不是断言放宽，是**对象消失**：引擎里已经没有"参与"这个概念）。
+    #    撤除后的口径改钉在下面「宽松解析」里那两条（旧键读得进来、不落任何字段）。
 
     # —— 宽松解析 ——
     c = build_idle_to_dorm_config(True)
@@ -1213,15 +1205,20 @@ def test_section5_idle():
        (c.enabled, c.protected_slots, c.blacklist), (False, 2, ["甲", "乙"]))
     c = build_idle_to_dorm_config({"blacklist": "甲，乙, 丙"})
     eq("黑名单也收逗号/中文逗号分隔的字符串（拆开 strip）", c.blacklist, ["甲", "乙", "丙"])
-    c = build_idle_to_dorm_config({"per_operator": {"甲": False, "乙": True}})
-    eq("per_operator 字典写法 ⇒ 只记布尔",
-       sorted((e.name, e.enabled) for e in c.per_operator), [("乙", True), ("甲", False)])
-    c = build_idle_to_dorm_config({"per_operator": [{"name": "甲", "swap_with": "乙",
+    # ⚠️ 2026-10 **改断言**：原来是「`per_operator` 字典写法 ⇒ 只记布尔」
+    #    （`sorted((e.name, e.enabled) for e in c.per_operator)`）与「旧写法（手动点名/指定位置）
+    #    读得进来但**只剩参与**」。**为什么变**：`per_operator` / `IdleToDormEntry` 已整条撤销，
+    #    `c.per_operator` 不存在了。新断言钉**撤除口径**：两种老写法都**读得进来、不报错、
+    #    不落任何字段**（`hasattr` 为假），且同一份 dict 里的其余字段照旧解析。
+    c = build_idle_to_dorm_config({"protected_slots": 4,
+                                   "per_operator": {"甲": False, "乙": True}})
+    eq("已撤的 `per_operator`（字典写法）：不报错、不落任何字段、其余字段照旧解析",
+       (c.protected_slots, hasattr(c, "per_operator"), c.blacklist), (4, False, []))
+    c = build_idle_to_dorm_config({"protected_slots": 4,
+                                   "per_operator": [{"name": "甲", "swap_with": "乙",
                                                      "dorm": 2, "slot": 1}]})
-    eq("旧写法（手动点名/指定位置）读得进来但**只剩参与**（enabled=True、无 target）",
-       ([(e.name, e.enabled) for e in c.per_operator],
-        [a for a in dir(c.per_operator[0]) if a in ("target", "dorm", "slot", "swap_with")]),
-       ([("甲", True)], []))
+    eq("已撤的 `per_operator`（数组 + 旧的手动点名/指定位置写法）：同样只被忽略",
+       (c.protected_slots, hasattr(c, "per_operator")), (4, False))
     bad = raises(build_idle_to_dorm_config, {"protected_slots": -1})
     check("protected_slots 为负 ⇒ ValueError（配置层就拒绝负数）",
           bad.startswith("ValueError"), f"实际 {bad!r}")
@@ -1283,77 +1280,21 @@ def test_section5_idle():
     check("相 2：全满时换出「心情 ≥ 候选且最大」的住户（乙 24 出去、甲 23 留下）",
           "乙" not in got and "丙" in got and "甲" in got, f"实际 {got}")
 
-    # —— 逐人设置（per_operator / idle_globals / idle_entries）真的生效 ——
-    s = _idle_session()
-    eq("基线：候选（乙）进宿舍", "乙" in layout_names(s, 0)["宿舍#1"], True)
-    s = _idle_session()
-    s.idle_globals = {"乙": False}
-    s.recompute()
-    eq("idle_globals {乙: False}：乙不进宿舍",
-       "乙" in layout_names(s, 0)["宿舍#1"], False)
-    eq("同一次里别人照旧进（不连坐）",
-       "丙" in layout_names(s, 0)["宿舍#1"], True)
-    s = _idle_session()
-    s.idle_entries = {(1, 1, "乙"): False}
-    s.recompute()
-    eq("idle_entries {(1,1,乙): False}：第 1 周期第 1 班不参与 ⇒ 乙不进",
-       "乙" in layout_names(s, 0)["宿舍#1"], False)
-    s = _idle_session()
-    s.set_cycles(2)
-    s.idle_entries = {(2, 1, "乙"): False}
-    s.recompute()
-    eq("idle_entries 只对指定周期生效（第 1 周期照旧进宿舍）",
-       "乙" in layout_names(s, 0)["宿舍#1"], True)
+    # —— ⚠️ 2026-10 已删一整段：逐人设置（`idle_globals` / `idle_entries`）真的生效 ——
+    #    原来这里钉：`idle_globals = {"乙": False}` ⇒ 乙不进宿舍；`idle_entries` 按
+    #    `(周期, 班次, 干员)` 生效、只对指定周期生效；以及"相 2 也要查"那三组
+    #    （`full_dorm_session` / `_swap_phase_scene`，含 `86a311f 修相2漏查逐人参与设置`
+    #    的精确形状）。**对象随功能整条撤销**：`Session.idle_globals` / `.idle_entries`
+    #    字段已删、引擎里两道 `entry_for` 判据已删 ⇒ 这些断言的**主语不存在了**，
+    #    不是"结论变了"。要挡人改用黑名单（上面「黑名单」那一段仍在，钉的是同一条口径
+    #    "不能进宿舍但可被换出"）。撤除口径另钉在：本脚本的 `set_idle_to_dorm` 探针、
+    #    `scripts/verify_idle.py` 的 A5 与 `tests/test_settings_blackbox.py`。
 
-    # 相 2 也要查逐人设置（文档口径：与黑名单同口径，两相都查）
-    def full_dorm_session(globals_):
-        s = _idle_scene([
-            {"type": "宿舍", "level": 5, "name": "宿舍#1", "capacity": 1,
-             "operators": [{"name": "甲", "mood": "24"}]},
-            {"type": "贸易站", "level": 3, "operators": [{"name": "戊", "mood": "24"}]}],
-            cands=("乙",), mood=10)
-        s.idle_globals = dict(globals_)
-        s.recompute()
-        return s
-
-    s = full_dorm_session({})
-    eq("相 2 基线：capacity=1 全满 ⇒ 换出甲、乙进宿舍",
-       layout_names(s, 0)["宿舍#1"], ["乙"])
-    s = full_dorm_session({"乙": False})
-    eq("相 2 也查逐人设置（乙 False ⇒ 不参与 ⇒ 不许被换进来）",
-       layout_names(s, 0)["宿舍#1"], ["甲"])
-
-    # —— ★ 刚修的那个 bug 的**精确形状**（提交 `86a311f 修相2漏查逐人参与设置`，
-    #    回归 `scripts/verify_idle.py::test_per_operator_disabled_in_swap`）：
-    #    **候选数 > 空床数**、且勾了「不参与」的人**排在空床用完之后** ——
-    #    相 1 先把空床填满（别人）→ 没有空床就 `break` 交棒相 2 →
-    #    相 2 **也必须查逐人设置**，否则"不参与"的人照样被换进宿舍
-    #    （旧代码只查相 1 ⇒ 下面第二条在旧代码上应当是红的）。
-    def _swap_phase_scene(globals_):
-        s = _idle_scene([
-            {"type": "宿舍", "level": 5, "name": "宿舍#1", "capacity": 2,
-             "operators": [{"name": "甲", "mood": "24"}]},        # 只有 **1 个空床**
-            {"type": "贸易站", "level": 3, "operators": [{"name": "戊", "mood": "24"}]}],
-            cands=("乙", "丙"), mood=10)
-        s.set_initial_moods({"乙": 10, "丙": 20})                 # 丙 心情更高 ⇒ 排在乙之后
-        s.idle_globals = dict(globals_)
-        s.recompute()
-        return s
-
-    s = _swap_phase_scene({})
-    eq("相 1+相 2 连跑（都参与）：乙 填空床、丙 在相 2 换掉甲（甲 24 被换出）",
-       layout_names(s, 0)["宿舍#1"], ["丙", "乙"])
-    s = _swap_phase_scene({"丙": False})
-    eq("★ 相 2 里逐人「不参与」也生效：丙排在空床用完之后、**不许被换进宿舍**"
-       "（旧代码会把她换进来 ⇒ 这一条就是 86a311f 修的那个 bug）",
-       layout_names(s, 0)["宿舍#1"], ["甲", "乙"])
-    s = _swap_phase_scene({"乙": False})
-    eq("★ 相 1 里逐人「不参与」也生效（乙 连空床都不占 ⇒ 丙 走相 1 进空床）",
-       layout_names(s, 0)["宿舍#1"], ["甲", "丙"])
-
-    # —— 每个执行点都跑：24h 班两个执行点都共享同一份逐人设置 ——
+    # —— 每个执行点都跑：24h 班两个执行点都在同一个 `(周期, 班次)` 作用域下 ——
     # 造一个"候选永远进不去"的场景（唯一床位在锁定区 ⇒ 乙 一路是候选）：
-    # 这样两个执行点都会出现在逐次表里，且都在同一个 `(周期, 班次)` 作用域下。
+    # 这样两个执行点都会出现在逐次表里，且 `scope` 都是同一个 `(1, 1)`。
+    # ⚠️ 2026-10 措辞改：原来是"共享同一份**逐人设置**"，现在没有逐人设置了 ——
+    #    `scope` 仍在（它是"第几周期第几班"的标签）。
     s = _idle_scene([
         {"type": "宿舍", "level": 5, "name": "宿舍#1", "capacity": 1,
          "operators": [{"name": "甲", "mood": "24"}]},
@@ -1364,23 +1305,19 @@ def test_section5_idle():
     s.recompute()
     groups = s.idle_groups()
     eq("24h 班 ⇒ 逐次表按**换班执行点**分组（班初 + 12h 内部换班）", len(groups), 2)
-    eq("同班各执行点共用一份逐人设置（scope 都是 (1,1)）",
+    eq("同班各执行点共用同一个 `scope`（都是 (1,1)）",
        sorted({tuple(g[1]) for g in groups}), [(1, 1)])
     eq("内部换班那一组的标题写明「12h 内部换班」", "内部换班" in groups[1][0], True)
-    eq("idle_count＝各行参与数之和（与逐次表一致）",
-       s.idle_count(), sum(len([r for r in g[2] if r[3]]) for g in groups))
+    # ⚠️ 2026-10 改断言：原来是「`idle_count` ＝各行**参与**数之和（第 4 格为真的行）」——
+    #    第 4 格（原「参不参与」）现在**恒为 `None`**，所以"按参与数筛"已经筛不出任何人。
+    #    新口径＝"每一行候选都参与" ⇒ 等于各行候选数之和（黑名单的人根本不在表里）。
+    eq("idle_count＝候选行数之和（第 4 格已废恒 None ⇒ 每一位候选都参与）",
+       s.idle_count(), sum(len(g[2]) for g in groups))
+    eq("逐次表第 4 格恒为 None（对外形状仍是 6 元组，那一格不再有第二种取值）",
+       sorted({r[3] for g in groups for r in g[2]}), [None])
 
-    # —— idle_entry_list：只列改过默认的（False）；没改过 ⇒ None ——
-    s = _idle_session()
-    eq("idle_entry_list：没人改过 ⇒ None（＝全参与）", s.idle_entry_list(), None)
-    s.idle_globals = {"甲": True}
-    eq("idle_entry_list：只记 True 也不列（只收 False）", s.idle_entry_list(), None)
-    s.idle_globals = {"甲": False}
-    s.idle_entries = {(2, 1, "乙"): False, (1, 1, "丙"): True}
-    got = s.idle_entry_list()
-    eq("idle_entry_list：只列 False 的那些（True 的丢掉）",
-       sorted([(e.name, e.cycle, e.shift) for e in got], key=lambda row: str(row[0])),
-       sorted([("甲", None, None), ("乙", 2, 1)], key=lambda row: str(row[0])))
+    # —— ⚠️ 2026-10 已删：`idle_entry_list()`（只列改过默认的 False；没改过 ⇒ None）——
+    #    方法随 `idle_globals` / `idle_entries` 一起删除。
 
     # —— 与引擎同一份候选口径（表里给的候选＝引擎真的处理的） ——
     s = _idle_session()
@@ -1427,27 +1364,28 @@ def test_section6_import():
         eq(f"{path.name}：apply_file_settings=True ⇒ 设置逐字段一致（差异＝[]）", diff2, [])
 
     # —— 文件级 idle_to_dorm 真的生效（**导入读闲置入宿**） ——
+    # ⚠️ 2026-10：夹具里的 `per_operator` 已删（逐人「参不参与」随功能整条撤销）；
+    #    下面三处的四元组随之变成三元组 —— **不是放宽**，是那一项不存在了。
     d = make_tmpdir("import")
     p = d / "idle.json"
     write_json(p, {"idle_to_dorm": {"enabled": False, "protected_slots": 2,
-                                    "blacklist": ["甲"],
-                                    "per_operator": [{"name": "乙", "enabled": False}]},
+                                    "blacklist": ["甲"]},
                    "facilities": [{"type": "宿舍", "level": 5, "name": "宿舍#1",
                                    "operators": ["甲", "乙"]},
                                   {"type": "贸易站", "level": 3, "operators": ["丙"]}]})
     s = Session()
     s.load_paths([p])
-    eq("文件顶层 idle_to_dorm 真的被读进会话（enabled/锁定位置/黑名单/逐人）",
-       (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist, s.idle_globals),
-       (False, 2, ["甲"], {"乙": False}))
+    eq("文件顶层 idle_to_dorm 真的被读进会话（enabled/锁定位置/黑名单）",
+       (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist),
+       (False, 2, ["甲"]))
     s = Session()
     s.load_data(json.loads(p.read_text(encoding="utf-8")), apply_file_settings=True)
     # ⚠️ 2026-10 修（A4 工单）：原来是**半继承**（开关被拍回 True、其余三项却继承）。
     #    现在整组继承 ⇒ 与 `load_paths` 和 `op_load_json` 的文档口径一致。
     eq("load_data(apply_file_settings=True) ⇒ 文件级 idle_to_dorm **整组**继承"
        "（enabled 也照文件，不再是半继承）",
-       (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist, s.idle_globals),
-       (False, 2, ["甲"], {"乙": False}))
+       (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist),
+       (False, 2, ["甲"]))
     s = Session()
     s.load_data(json.loads(p.read_text(encoding="utf-8")), apply_file_settings=True,
                 idle_to_dorm=False)
@@ -1460,9 +1398,9 @@ def test_section6_import():
        s.idle_to_dorm, True)
     s = Session()
     s.load_data(json.loads(p.read_text(encoding="utf-8")))          # 默认口径（不继承文件）
-    eq("默认（不继承文件）⇒ 开关回到本入口默认**开**，参数那三项也回项目默认",
-       (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist, s.idle_globals),
-       (True, 5, [], {}))
+    eq("默认（不继承文件）⇒ 开关回到本入口默认**开**，另外两项也回项目默认",
+       (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist),
+       (True, 5, []))
 
     # —— 三个内联入口的口径差异（自动比对，钉住现状） ——
     layout = {"facilities": [{"type": "宿舍", "level": 5, "name": "宿舍#1",
@@ -1612,7 +1550,8 @@ def test_section7_roundtrip():
     s.idle_to_dorm = True
     s.idle_protected_slots = 3
     s.idle_blacklist = [PAO]
-    s.idle_globals = {FEI: False}
+    # ⚠️ 2026-10：原来这里还有 `s.idle_globals = {FEI: False}`（逐人「参不参与」）——
+    #    字段随功能整条撤销。这一段的"设置面全覆盖"少一项是**对象消失**，不是漏设。
     s.set_initial_mood(PAO, 11)
     s.set_mood_at(FEI, 5, 6)
     s.set_detached(["路人甲"])
@@ -1740,8 +1679,8 @@ def _set_everything(s: Session) -> None:
     s.idle_to_dorm = True
     s.idle_protected_slots = 9
     s.idle_blacklist = ["丙"]
-    s.idle_globals = {"乙": False}
-    s.idle_entries = {(2, 1, "甲"): False}
+    # ⚠️ 2026-10：`idle_globals` / `idle_entries`（逐人「参不参与」）已删 —— 字段不存在，
+    #    sweep 的"每一组都设成非默认值"里少这两项是**对象消失**。
     s.entry_events = True
     s.entry_swap_with = FEI
     s.entry_scope = "anywhere"
@@ -1823,10 +1762,14 @@ def test_section8_survive_actions():
     t.set_detached(["丁"])
     idle_snap = t.schedule.shifts[0].world.idle_to_dorm
     entry_snap = t.schedule.shifts[0].world.entry_events
+    # ⚠️ 2026-10 改断言：原来元组里还有第四项
+    #    `sorted((e.name, e.enabled) for e in idle_snap.per_operator)`（＝`[("乙", False), ("甲", False)]`）
+    #    —— `per_operator` 已随功能整条撤销，快照上不再有这个字段，所以元组变三项。
     eq("碰名单（重建 Schedule）之后：快照里的闲置入宿设置＝会话那份",
-       (bool(idle_snap.enabled), int(idle_snap.protected_slots), list(idle_snap.blacklist),
-        sorted((e.name, e.enabled) for e in idle_snap.per_operator)),
-       (True, 9, ["丙"], [("乙", False), ("甲", False)]))
+       (bool(idle_snap.enabled), int(idle_snap.protected_slots), list(idle_snap.blacklist)),
+       (True, 9, ["丙"]))
+    eq("碰名单之后：快照上也不再挂已撤的 `per_operator`（字段不存在）",
+       hasattr(idle_snap, "per_operator"), False)
     eq("碰名单之后：快照里的换心情设置＝会话那份",
        (bool(entry_snap.enabled), entry_snap.swap_with, entry_snap.scope, entry_snap.when),
        (True, FEI, "anywhere", "immediate"))
@@ -2158,22 +2101,35 @@ def test_section11_import_vs_ui():
        [(o.key, o.enabled, o.swap_with) for o in a.entry_per_shift],
        [(o.key, o.enabled, o.swap_with) for o in b.entry_per_shift])
 
-    # ③ 闲置入宿：文件带设置 vs API 设同一批值（per_operator 的**表示**允许不同：
-    #    文件里可以写 True 项，API 只留 False —— 但**有效行为**必须一致）
+    # ③ 闲置入宿：文件带设置 vs API 设同一批值
+    #    ⚠️ 2026-10 改断言：原来这里还比"两条路的 `per_operator` **表示**允许不同
+    #    （文件里可以写 True 项，API 只留 False）但**有效行为**必须一致"，比较元组里带了
+    #    `idle_globals`。**为什么变**：逐人「参不参与」随功能整条撤销，`idle_globals` 字段
+    #    已删 ⇒ 元组变三项。**新钉**：两条路**都带着**已撤的 `per_operator` 时，
+    #    文件那条回一条导入 note、API 那条回一条 `notes`，两边**行为仍然完全一致**、
+    #    且会话上都不落任何逐人状态（`hasattr` 为假）—— 这就把"撤除后仍不静默"钉住了。
     data3 = {"idle_to_dorm": {"enabled": True, "protected_slots": 2,
-                              "blacklist": [PAO], "per_operator": [{"name": "乙",
-                                                                    "enabled": False}]},
+                              "blacklist": [PAO],
+                              "per_operator": [{"name": "乙", "enabled": False}]},
              "facilities": copy.deepcopy(facs)}
     a = sess_from_data(copy.deepcopy(data3), apply_file_settings=True)
     b = sess_from_data({"facilities": copy.deepcopy(facs)})
-    handle(b, "set_idle_to_dorm", {"enabled": True, "protected_slots": 2,
-                                   "blacklist": [PAO],
-                                   "per_operator": [{"name": "乙", "enabled": False}]})
-    eq("闲置入宿：两条路的 effective 设置一致（enabled/锁定位置/黑名单/逐人）",
-       (a.idle_to_dorm, a.idle_protected_slots, a.idle_blacklist, a.idle_globals),
-       (b.idle_to_dorm, b.idle_protected_slots, b.idle_blacklist, b.idle_globals))
+    out_b = handle(b, "set_idle_to_dorm", {"enabled": True, "protected_slots": 2,
+                                           "blacklist": [PAO],
+                                           "per_operator": [{"name": "乙", "enabled": False}]})
+    eq("闲置入宿：两条路的 effective 设置一致（enabled/锁定位置/黑名单）",
+       (a.idle_to_dorm, a.idle_protected_slots, a.idle_blacklist),
+       (b.idle_to_dorm, b.idle_protected_slots, b.idle_blacklist))
     eq("闲置入宿：两条路的**引擎宿舍排布**逐位一致",
        layout_names(a, 0), layout_names(b, 0))
+    eq("闲置入宿：两条路带着已撤的 `per_operator` 时都**不落任何逐人状态**（字段不存在）",
+       [hasattr(a, "idle_globals"), hasattr(a, "idle_entries"),
+        hasattr(b, "idle_globals"), hasattr(b, "idle_entries")], [False] * 4)
+    eq("闲置入宿：API 那条路回一条「该设置已撤、已忽略」",
+       out_b.get("notes"), ["per_operator（逐人「参不参与」）该设置已撤、已忽略"])
+    check("闲置入宿：文件那条路把它记进导入 note（同一个措辞）",
+          any("该设置已撤、已忽略" in n for n in a.loaded.reports[0].notes),
+          f"实际 {a.loaded.reports[0].notes}")
 
     # ④ 摆位：界面两条入口（逐位矩阵 vs 「干员与心情」位置列）同一动作 ⇒ 同一布局与台账
     def mv(which):
@@ -2255,7 +2211,7 @@ SECTIONS = (
     ("§2 干员与心情（练度 / 起点心情 / 心情锚点 / 房间等级）", test_section2_batch),
     ("§3 锁定入宿（摆位即上锁 / 粒度 / 后者覆盖 / 拒绝）", test_section3_lock),
     ("§4 换心情（触发者 / 满 24 门 / 三种 when / scope / 逐班）", test_section4_entry),
-    ("§5 闲置入宿（开关 / 黑名单 / 逐人优先级 / 锁定位置 / 两相）", test_section5_idle),
+    ("§5 闲置入宿（开关 / 黑名单 / 已撤的 per_operator / 锁定位置 / 两相）", test_section5_idle),
     ("§6 导入不变量（两个导入入口逐字段比对 / 文件级设置）", test_section6_import),
     ("§7 导出 → 再导入往返", test_section7_roundtrip),
     ("§8 改完设置再触发各种动作（保真扫描）", test_section8_survive_actions),
