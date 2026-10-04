@@ -1204,7 +1204,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             #    而**段内**还会因「等她回满」再进这个分支 ⇒ 每次进班次前都要归位，
             #    否则第 2 个周期被标记挡住、换心情一次都不触发（多周期漏算的老 bug）。
             reset_entry_events(world)
-            events = apply_entry_events(world, enabled=True)
+            # ⚠️ `detached_moods=moods`：**「不在基建」名单里的人心情只在这张表里**
+            #    （她不在 `world` 里）—— 2026-10 起 M15a 把她也算"存在"，不传就当她不在场
+            #    （用户裁决的**有意例外**，见 `mood_soc/rules.apply_entry_events`）。
+            events = apply_entry_events(world, enabled=True, detached_moods=moods)
             # ⚠️ 事件里可能只有"未执行"的说明（如配了 force 但她此刻没满心情）——
             # 那种情况既不算换成功、也不能拦住"等她回满"的等待逻辑。
             swapped = [ev for ev in events if ev.group == "entry_swap"]
@@ -1323,7 +1326,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
             if pending and t < seg_end and any(moods.get(h, ZERO) >= MOOD_MAX for h in pending):
                 pending = []
                 _sync_moods(world, moods)
-                events = apply_entry_events(world, enabled=True)
+                events = apply_entry_events(world, enabled=True, detached_moods=moods)
                 if events:
                     for ev in events:
                         marks.append(Mark(t, "entry", ev.detail))

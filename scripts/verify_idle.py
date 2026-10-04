@@ -51,7 +51,8 @@ from mood_soc.rules import (DEFAULT_PROTECTED_SLOTS, SEAT_AUTO,  # noqa: E402
                             SEAT_KEEP, SEAT_LOCKED, SEAT_SWAPPABLE,
                             _best_swap_victim, _dorm_numbered, _next_free_slots,
                             _protected_positions, _seat_key, _seat_verdict,
-                            apply_idle_to_dorm, dorm_state)
+                            apply_entry_events, apply_idle_to_dorm, dorm_state,
+                            entry_event_holders, reset_entry_events)
 from store.layout import build_base_layout                   # noqa: E402
 from store.schedule import (MoodSetEvent, Schedule, Shift,   # noqa: E402
                             execution_offsets, execution_points, simulate_schedule)
@@ -1075,6 +1076,100 @@ def test_facility_auto_name():
           all("name" not in f for f in raw_facs[:3])
           and raw_facs[3].get("name") == "宿舍#2",
           str(raw_facs))
+
+
+def test_entry_event_scope():
+    """M15a「换心情」触发条件**放宽**后的存在性口径（2026-10，用户裁决）。
+
+    用户原话：「换心情菲亚梅塔**不要求一定出现在宿舍中**，只要该布局中**存在**菲亚梅塔
+    就可以生效。」两条边界：① 她在**这一班的任意设施**里即可（工作设施 / 控制中枢…都算）；
+    ② 她即使在**「不在基建」名单**里，也算"存在"、照样触发。
+    ⚠️ ② 是**有意例外**（用户明确知道它与"不在基建的人不参与任何技能计数"冲突并要求照做），
+    不是 bug —— 见 `mood_soc/rules.apply_entry_events` 的说明与 `04-特殊机制.md` 第 29 条。
+    """
+    print("进驻事件（M15a）：触发者放宽成「任意设施 + 不在基建名单」")
+
+    # ① 她在宿舍里 ⇒ 触发（**防回归**：旧口径同样触发）
+    w = build_base_layout({"facilities": [
+        {"type": "宿舍", "level": 5, "operators": [
+            {"name": "路人", "mood": "6"}, {"name": "菲亚梅塔", "mood": "24"}]}]})
+    events = apply_entry_events(w)
+    check("她在宿舍里 ⇒ 与前一位互换（防回归）",
+          len(events) == 1 and w.get_operator("菲亚梅塔").mood == Decimal("6")
+          and w.get_operator("路人").mood == Decimal("24"), str(events))
+
+    # ② 她在工作设施 ⇒ 触发（旧口径只扫宿舍 ⇒ 不触发）
+    w = build_base_layout({"facilities": [
+        {"type": "贸易站", "level": 3, "operators": [
+            {"name": "路人", "mood": "6"}, {"name": "菲亚梅塔", "mood": "24"}]}]})
+    events = apply_entry_events(w)
+    check("她在工作设施（贸易站）⇒ 照样触发（不再限宿舍；前一位＝该房间的前一位）",
+          len(events) == 1 and w.get_operator("菲亚梅塔").mood == Decimal("6")
+          and w.get_operator("路人").mood == Decimal("24"), str(events))
+    check("`entry_event_holders` 也认工作设施里的她（界面提示同一口径）",
+          entry_event_holders(w) == [("菲亚梅塔", "贸易站#1")], str(entry_event_holders(w)))
+
+    # ③ 她在「不在基建」名单里 ⇒ 触发（旧口径：她不在任何设施里 ⇒ 不触发）
+    w = build_base_layout({"facilities": [
+        {"type": "贸易站", "level": 3, "operators": [{"name": "路人", "mood": "6"}]}],
+        "detached": ["菲亚梅塔"]})
+    moods = {"菲亚梅塔": Decimal("24")}
+    events = apply_entry_events(w, enabled=True, swap_with="路人", scope="anywhere",
+                                detached_moods=moods)
+    check("她在「不在基建」名单里 ⇒ 也算「存在」、照样触发（**有意例外**）",
+          len(events) == 1 and moods["菲亚梅塔"] == Decimal("6")
+          and w.get_operator("路人").mood == Decimal("24"), f"{events} {moods}")
+    check("例外**只限「她算不算在场」**：换完她仍旧不在 `facilities` 里（不参与任何技能计数）",
+          w.get_operator("菲亚梅塔") is None and w.facility_of("菲亚梅塔") is None
+          and "菲亚梅塔" in w.detached, str(w.detached))
+    check("`entry_event_holders` 把名单里的她也列出来（房间名写「不在基建」）",
+          entry_event_holders(w) == [("菲亚梅塔", "不在基建")],
+          str(entry_event_holders(w)))
+    again = apply_entry_events(w, enabled=True, swap_with="路人", scope="anywhere",
+                               detached_moods=moods)
+    check("重复调用幂等（名单里的**代理干员**也带 `entry_swapped`）",
+          again == [] and moods["菲亚梅塔"] == Decimal("6"), f"{again} {moods}")
+    reset_entry_events(w)
+    moods["菲亚梅塔"] = Decimal("24")
+    w.get_operator("路人").mood = Decimal("6")
+    events = apply_entry_events(w, enabled=True, swap_with="路人", scope="anywhere",
+                                detached_moods=moods)
+    check("`reset_entry_events` 连名单里的人一起归位 ⇒ 下一个执行点重新判定"
+          "（漏了就会「第 2 个周期起一次都不再触发」）",
+          len(events) == 1 and moods["菲亚梅塔"] == Decimal("6"), f"{events} {moods}")
+
+    # 名单里 + 默认「前一位进驻」：她不属于任何房间 ⇒ 没有「前一位」，静默不换
+    w2 = build_base_layout({"facilities": [
+        {"type": "宿舍", "level": 5, "operators": [{"name": "路人", "mood": "6"}]}],
+        "detached": ["菲亚梅塔"]})
+    m2 = {"菲亚梅塔": Decimal("24")}
+    events = apply_entry_events(w2, enabled=True, detached_moods=m2)
+    check("名单里 + 默认「前一位进驻」⇒ 没房间就没「前一位」，不换（也不报错）",
+          events == [] and m2["菲亚梅塔"] == Decimal("24"), f"{events} {m2}")
+
+    # ④ 她完全没出现在这一班（未排班、也不在名单）⇒ 不触发
+    w = build_base_layout({"facilities": [
+        {"type": "宿舍", "level": 5, "operators": [{"name": "路人", "mood": "6"}]}]})
+    moods = {"菲亚梅塔": Decimal("24")}
+    events = apply_entry_events(w, enabled=True, swap_with="路人", scope="anywhere",
+                                detached_moods=moods)
+    check("她本班完全没出现（未排班、也不在名单）⇒ 不触发（这就是放宽的**边界**）",
+          events == [] and moods["菲亚梅塔"] == Decimal("24")
+          and w.get_operator("路人").mood == Decimal("6"), f"{events} {moods}")
+
+    # ⑤ 排班层端到端：引擎把**实时心情表**交给进驻事件（名单里的人也判心情）
+    facs = [{"type": "贸易站", "level": 3, "operators": [{"name": "路人", "mood": "6"}]}]
+    sch = Schedule(shifts=[Shift(label=f"班{i + 1}", hours="12", facilities=facs,
+                                 detached=["菲亚梅塔"]) for i in range(2)],
+                   cycle_hours=Decimal("24"), detached=["菲亚梅塔"])
+    traj = simulate_schedule(sch, cycles=1, initial_moods={"菲亚梅塔": Decimal("24")},
+                             entry_events=True, entry_swap_with="路人",
+                             entry_scope="anywhere", entry_when="immediate",
+                             idle_to_dorm=False)
+    check("排班层：名单里的人真的被换到了（引擎每段把实时心情表交进去）",
+          traj.mood_at("菲亚梅塔", 0) == Decimal("6")
+          and traj.mood_at("路人", 0) == Decimal("24"),
+          f"{traj.mood_at('菲亚梅塔', 0)} / {traj.mood_at('路人', 0)}")
 
 
 def test_seat_io_roundtrip():
