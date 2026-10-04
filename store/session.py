@@ -248,7 +248,8 @@ class Session:
         self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         self.recompute()
 
-    def _sync_from_schedule(self, *, from_import: bool = False) -> None:
+    def _sync_from_schedule(self, *, from_import: bool = False,
+                            entry_settings: bool = True) -> None:
         """把排班自带（场景 JSON 顶层）的设置同步到会话（导入后调一次）。
 
         `from_import=True`（三条 `load_*` 传 `True`）时额外做一件事：**名单优先** ——
@@ -258,12 +259,29 @@ class Session:
         ⚠️ **为什么导入"让步"、交互层却"拒绝"**：交互层拒绝是为了**不让用户造出**
         "锁着 + 在名单里"这个自相矛盾的状态（见 `set_detached`）；而导入是**数据**，
         报错会让老文件直接打不开 —— 两边口径不同是有意的（Q6 的 (d3) + (i)）。
+
+        `entry_settings=False`：**只同步名单，不用排班快照覆盖「换心情」那组字段**
+        （`entry_events / entry_swap_with / entry_scope / entry_restore_back / entry_when /
+        entry_per_shift`）。为什么要这个开关（2026-10 修 bug，用户报的「碰名单就静默打回
+        换心情设置」）：用户在「换心情」面板设的值**只写在 Session 上**、从不回写排班快照
+        （`ui/app.py::apply_entry_event` / `api/ops.py::op_set_entry_events` 都只写 `session.*`），
+        而 `set_detached` 末尾原来无条件调本方法 ⇒ **碰一次名单，面板设置就被文件里的旧值抹掉**
+        （实测 `(开, 最累的, anywhere, wait)` → `(开, None, dorm, immediate)`；文件里
+        `enable=false` 时连开关都被打回 `False`）。⇒「碰名单」只该同步名单（名册的事），
+        不该重同步「换心情」（自动化的事）。
+
+        ⚠️ `idle_*` 那一组**同样是"只写在 Session 上"**（`ui/app.py::apply_idle_to_dorm` /
+        `api/ops.py::op_set_idle_to_dorm`），所以本方法**在 `set_detached` 这条路上仍然**
+        用快照覆盖它们 —— 同一个病、同一个触发路径，**本次未改**（用户口径：先报告、
+        不顺手改）。要一并修就把这个开关扩成"自动化设置整组"。
         """
         if self.schedule is None:
             return
         self.detached = list(getattr(self.schedule, "detached", []) or [])
         if from_import and self.detached:
             self._resolve_imported_detached()
+        if not entry_settings:
+            return
         cfg = self.schedule.entry_config()
         self.entry_events = bool(cfg.enabled)
         self.entry_swap_with = cfg.swap_with
@@ -777,7 +795,10 @@ class Session:
         if remove_from_slots:
             self._remove_from_slots(out)
         self.schedule = self.schedule.with_detached(out)
-        self._sync_from_schedule()      # 名单也写回每班的 Shift/world
+        # ⚠️ `entry_settings=False`：**碰名单只同步名单**。用户面板设的「换心情」只写在
+        #    Session 上、从不回写快照，无条件重同步会把它静默打回文件里的旧值
+        #    （见 `_sync_from_schedule` 的说明）。
+        self._sync_from_schedule(entry_settings=False)
         if recompute:
             self.recompute()
 
