@@ -4,7 +4,7 @@
 **把上游每一条 buff / 本仓库每一条 clause 都过一遍**，逐条判定
 「建模了吗 → 挂在哪个模板 → 数值/方向对不对」，并把结论落成一份可复查的报告。
 
-三层（与 `documents/05-技能分类大纲.md` 的六轴模板对应）：
+三层（与 `documents/04-技能分类大纲.md` 的六轴模板对应）：
 
 | 层 | 对象 | 核对什么 |
 |---|---|---|
@@ -129,9 +129,9 @@ HINTS: Dict[str, dict] = {
     #    条件会假成立、核对会误报）；#1 因此得到 0.5×1，#2/#3 按文档**不可达**——
     "control_mp_aegir1_000#1": {"owner_factions": ["深海猎人"]},
     "control_mp_aegir1_000#2": {"owner_factions": ["深海猎人"],
-                                "unreachable": "04-特殊机制 第 23 条：含持有者自身口径下「反之」恒不成立"},
+                                "unreachable": "03-特殊机制 第 23 条：含持有者自身口径下「反之」恒不成立"},
     "control_mp_aegir1_000#3": {"owner_factions": ["深海猎人"],
-                                "unreachable": "04-特殊机制 第 23 条：依赖「反之」分支，同样不可达"},
+                                "unreachable": "03-特殊机制 第 23 条：依赖「反之」分支，同样不可达"},
 }
 
 # 目标名字（`_cond_target_is` 按名字点名的 clause）：要起**真名**才能命中条件，
@@ -148,7 +148,7 @@ L3_SKIP_ZERO = True
 #      该条目**仍然处于差异状态**——修好之后忘了删，测试会红。
 #    · 历史条目：`control_mp_cost&bd1_000#1`（夕「不以物喜」原先按 M05 消耗侧建模，
 #      上游写的是"中枢内所有干员的心情每小时**恢复**+0.05"）→ 已按上游改为 M03 回复侧，
-#      见 `documents/05-技能分类大纲.md` §5.12。
+#      见 `documents/04-技能分类大纲.md` §5.12。
 L3_KNOWN_DIFFS: Dict[str, str] = {}
 
 
@@ -216,7 +216,7 @@ def check_templates() -> List[str]:
 
 
 # 「已建模但当前无使用者」的模板：**文档已登记**，不是漏挂。
-#   - M02a：中枢→room1 回复，公事公办同时带扩散 → 归入 M02c（`05-技能分类大纲.md` §5 表：0（并入 M02c））
+#   - M02a：中枢→room1 回复，公事公办同时带扩散 → 归入 M02c（`04-技能分类大纲.md` §5 表：0（并入 M02c））
 #   - M06：同设施「其他」干员消耗增减，现代数据已无使用者（低语改判 M05 含自身）
 #   - M15b：加工站触发式恢复一次心情（棘刺「爆炸艺术」），不进每小时速率
 NO_USER_TEMPLATES = {"M02a", "M06", "M15b"}
@@ -1182,7 +1182,7 @@ def build_report(clauses: List[ClauseCheck], descs: Optional[List[DescCheck]],
     lines.append("> **生成物**：由 `scripts/verify_skills.py --report` 自动生成，不要手改。")
     lines.append("> 四层核对 = 模板级（L1）/ clause 级（L2）/ 上游描述对照（L3）/ "
                  "**干员级生效性与组合技能双向对照（L4）**；"
-                 "口径与模板字典见 `documents/05-技能分类大纲.md`。")
+                 "口径与模板字典见 `documents/04-技能分类大纲.md`。")
     lines.append("")
     lines.append("## 一、总览")
     lines.append("")

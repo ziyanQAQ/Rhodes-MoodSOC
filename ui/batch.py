@@ -74,7 +74,7 @@ DETACHED_TITLE = "不在工作设施、也不在宿舍（本班未排班）"    
 #: 段首那句口径（写清楚"这一刻"与"整段"的区别，免得被当 bug）。
 #: ⚠️ 表头那一行**只留这一句**（改前是 47 字 + 一句提示，白占一行高）；
 #: 完整解释挂在 `head_note` 的悬停提示上（`attach_hint` + `DETACHED_HINT_FULL`），
-#: 原文见 `documents/10-图形界面.md` §6.2。
+#: 原文见 `documents/07-图形界面.md` §6.2。
 DETACHED_HINT = "不在基建：本班未排班，心情不变"
 #: 表头那行的**悬停提示**（鼠标停上去才显示；Tk 没有原生 tooltip，见 `attach_hint`）
 DETACHED_HINT_FULL = ("══ 本班没排到位置：这一刻她不消耗也不回复（心情不变）；"
@@ -443,7 +443,7 @@ class BatchMixin:
         """这一行只写**两个会改变操作预期的数**：建造位占用 + "改等级会改变行数"。
 
         完整口径（"制造站/贸易站/发电站共用 9 个上游建造位"）搬进
-        `documents/10-图形界面.md` §6.2。
+        `documents/07-图形界面.md` §6.2。
         """
         if used is None:
             used = sum(1 for i in range(len(self._fac_names))
@@ -1102,7 +1102,7 @@ class BatchMixin:
         self.filter_note.pack(side="left", padx=(2, 0))
         # ⚠️ 这一行别写长：工具栏的**自然宽度**会顶到设置中心的内容区（超了就被裁）。
         #    实测超过 ~816px 就红（2026-09 踩过一次）。滚轮速度的完整说明写进
-        #    `documents/10-图形界面.md` §5 第 16 条（界面上不再写这一行）。
+        #    `documents/07-图形界面.md` §5 第 16 条（界面上不再写这一行）。
 
         body = tk.Frame(self, bg=theme.BG)
         body.pack(fill="both", expand=True, padx=theme.PAD, pady=(2, 0))

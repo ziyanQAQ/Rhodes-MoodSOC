@@ -128,7 +128,7 @@ def _template_skills(op: Operator, template_id: str):
     """按**模板**取已生效技能（用于 M07b / M15a 这类「模板即机制」的技能）。
 
     这类技能的 `kind` 只是把它落到某个相近的族里，真正的机制由模板决定，
-    所以调度按 `template_id` 而不是按 `kind`（与 documents/04-特殊机制.md 第 25 条 的 M07b 同一约定）。
+    所以调度按 `template_id` 而不是按 `kind`（与 documents/03-特殊机制.md 第 25 条 的 M07b 同一约定）。
     """
     return [SKILLS[sid] for sid in _active_skill_ids(op) if SKILLS[sid].template_id == template_id]
 
@@ -907,7 +907,7 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
       **不参与任何技能计数**、心情一条平线」（`AGENTS.md` 坑 17、`models.BaseLayout.detached`）
       相冲突，用户**明确知道**这层张力并要求本技能照此处理。例外**只限"她算不算在场"**：
       她照旧不在 `facilities` 里（不计入任何技能计数、不消耗不回复、曲线仍是平线），
-      只有本事件会把她的心情换掉。见 `documents/04-特殊机制.md` 第 29 条。
+      只有本事件会把她的心情换掉。见 `documents/03-特殊机制.md` 第 29 条。
       ⚠️ ③ 修的是**实测 bug**（2026-10 用户确诊）：她被「锁定入宿」顶掉之后**既不占位、
       也不在显式名单** ⇒ 旧口径（只认 `world.detached`）下引擎**根本不产出她这个触发者**，
       连 `find_entry_target` 都不调、连"未执行"说明都不记 ⇒「她满 24 却没换」**完全静默**。
@@ -944,7 +944,7 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
       已经没有区别**（都要满 24、都不等、双方同心情都照换）—— 保留两档只为兼容既有配置；
       `wait` 仍多一条"没满就等回满"。
       ⚠️ **"双方心情相同"照旧不跳过**（`rules.py` 里那处跳过早在 `5e52396` 就删了，
-      `04-特殊机制.md` 第 29 条与 `10-图形界面.md` §6 都记着"事件照记、数值不变"）——
+      `03-特殊机制.md` 第 29 条与 `07-图形界面.md` §6 都记着"事件照记、数值不变"）——
       别顺手给 `full`/`wait` 补一条"等值就跳过"。
       ⇒ 若哪天发现 `immediate` 在她 20 时也换了，那是**回归**，不是"用户要的强制"。
 
@@ -1450,7 +1450,7 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
         #    所以"候选数多于空床数"时，排在"空床用完"**之后**的候选**只经过相 2**，
         #    相 1 那一次判断根本没走到她（实测：空床 1 个、候选 3 位时 `entry_for` 只被问了
         #    前两位，而勾了"不参与"的第三位照旧被换了进去 ⇒ 用户勾的设置被静默忽略）。
-        #    口径与黑名单一致（`documents/04-特殊机制.md` 第 30 条 / `AGENTS.md` 坑 17）：
+        #    口径与黑名单一致（`documents/03-特殊机制.md` 第 30 条 / `AGENTS.md` 坑 17）：
         #    **不能通过闲置入宿进宿舍，但仍可被换出** —— 所以这里只拦"她作为候选被换进去"；
         #    `_best_swap_victim` 那份"换出谁"的逻辑一字不动（她坐在宿舍里时照旧能被换出去）。
         #    `settled.add` 与相 1 同款：了结过的人不再参与本执行点的后续判定，防打转。

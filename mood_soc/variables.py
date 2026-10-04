@@ -157,7 +157,7 @@ def basis_count(world, basis: str, facility=None, op=None) -> Decimal:
     if basis == "sui_non_dorm":
         return Decimal(min(_count_in_facilities(world, "岁"), 5))
     if basis == "abyssal_non_dorm":
-        # **含技能持有者自身**（用户拍板，见 documents/04-特殊机制.md 第 23 条）：
+        # **含技能持有者自身**（用户拍板，见 documents/03-特殊机制.md 第 23 条）：
         # 歌蕾蒂娅自己就进驻在控制中枢（＝宿舍以外的设施），所以她在工作设施里时本项恒 ≥ 1。
         # 推论：「反之」（＝宿舍以外没有深海猎人）随之不可达，故潮汐守望的
         # `#2`/`#3` 两个回复分句在本模型中不会生效（登记保留，见 skills 里的说明）。
@@ -185,7 +185,7 @@ def _count_in_facilities(world, faction: str) -> int:
     """「宿舍/活动室以外设施」里某阵营的**进驻**干员数（上限由调用方处理）。
 
     ⚠️ 现在**不排除任何人**（含技能持有者自身）——潮汐守望的口径见
-    `basis_count` 的 `abyssal_non_dorm` 分支与 `documents/04-特殊机制.md` 第 23 条。
+    `basis_count` 的 `abyssal_non_dorm` 分支与 `documents/03-特殊机制.md` 第 23 条。
     副手不算（`Facility.operators` 只含进驻者）；活动室使用者同样不算。
     """
     from data.conditions import _factions_of

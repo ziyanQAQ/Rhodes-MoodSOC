@@ -52,7 +52,7 @@ python -m api.cli --op load_schedule --args @layout.json --then '{"op":"moods"}'
 
 ## 文档
 
-完整字段表、逐 op 示例、Rust 侧接入样例见 `documents/11-程序接口.md`。
+完整字段表、逐 op 示例、Rust 侧接入样例见 `documents/08-程序接口.md`。
 """
 from __future__ import annotations
 

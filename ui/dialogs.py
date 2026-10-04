@@ -467,7 +467,7 @@ class EntryEventMixin:
         self._when_in = normalize_entry_when(when) or "full"
 
         pad = dict(padx=theme.PAD)
-        # —— 页内说明只留"会影响操作结果"的；整段口径原文见 documents/10-图形界面.md §6.2 ——
+        # —— 页内说明只留"会影响操作结果"的；整段口径原文见 documents/07-图形界面.md §6.2 ——
 
         # ① 总开关
         self.enabled = tk.BooleanVar(value=bool(enabled))
@@ -599,7 +599,7 @@ class EntryEventMixin:
             btn.pack(side="left", padx=(0, 6))
             self._shift_widgets.append(btn)
         # （原先这里还有一段 49 字的"第 1 班就是默认口径…"：纯解释，已搬
-        #   `documents/10-图形界面.md` §6.2）
+        #   `documents/07-图形界面.md` §6.2）
 
     def _set_all_shifts(self, value: bool) -> None:
         """表格下方的全选 / 全不选。"""
@@ -789,7 +789,7 @@ class IdleToDormMixin:
         # ⚠️ 这一行是**这一块的标题 + 口径**：合并成一页之后页题只写着
         #    「锁定位次 · 没上班的人进宿舍」（≤20 字），所以这里不再重复页题，
         #    改说页题没说的那一半 —— **空位优先、全满则换人**。完整的候选/换人口径搬
-        #    `documents/10-图形界面.md` §6.2。
+        #    `documents/07-图形界面.md` §6.2。
         # ⚠️ `wraplength` 必须有：不给的话标签按整句要宽度，会把整块面板撑过内容区
         #    （回归 `test_每个分区都装得进固定内容区`）。
         tk.Label(self, text="全局配置（没上班、没在宿舍、心情未满的人进宿舍；"

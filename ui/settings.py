@@ -59,7 +59,7 @@ from store.session import MAX_CYCLES
 
 # (分区键, 标题, 一句话说明)
 # ⚠️ 说明**一律一行 ≤20 字**（页标题下面那一行）：纯解释性段落全删了、搬进
-# `documents/10-图形界面.md` §6.2 —— 那里是界面口径的正式落点，这里只留"这一页管什么"。
+# `documents/07-图形界面.md` §6.2 —— 那里是界面口径的正式落点，这里只留"这一页管什么"。
 # ⚠️ **顺序即优先级**（三层解耦：**锁定入宿 > 自动入宿 > 导入布局**）—— 但 2026-10
 #    「入宿设置」改版之后**只有一页管这件事**了（键 `dorm`，第 3 位＝原「锁定入宿」的位置），
 #    页内**全局配置在上、矩阵在下**；所以这条"顺序"不再靠分页先后表达，只是留个座位。
@@ -171,7 +171,7 @@ class SettingsDialog(tk.Toplevel):
         self.head.pack(fill="x")
         # 页说明**就一行**（`PAGES` 的第三个字段，≤20 字）：`FS_SMALL` 下自然高 23px，
         # 与标题凑成"两行页头"（46px）。别再把口径说明写回这里 —— 长文在
-        # `documents/10-图形界面.md` §6.2。
+        # `documents/07-图形界面.md` §6.2。
         self.note = tk.Label(right, text="", bg=theme.BG, fg=theme.MUTED, anchor="w",
                              font=(theme.FONT_FAMILY, theme.FS_SMALL))
         self.note.pack(fill="x", pady=(0, 6))

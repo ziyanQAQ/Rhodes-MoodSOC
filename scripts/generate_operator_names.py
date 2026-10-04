@@ -35,7 +35,7 @@
 
     .venv/Scripts/python.exe scripts/generate_operator_names.py --agd <ArknightsGameData>
 
-上游仓库怎么拿见 `documents/06-数据来源.md`（不要整仓 clone）。
+上游仓库怎么拿见 `documents/05-数据来源.md`（不要整仓 clone）。
 """
 from __future__ import annotations
 

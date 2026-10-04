@@ -43,7 +43,7 @@ ENTRY_WHEN_MODES = ("immediate", "wait", "full")
 # 「什么时候换」的中文说明（界面与文档共用一套说法）。
 # ⚠️ **三档都要"她满 24"**（2026-10 用户裁决）：`immediate` 不再是"不管她满不满都换"，
 #    三档的差别只剩"她没满时等不等"（收紧后 `immediate` 与 `full` 的判定口径一致）。
-#    见 `mood_soc/rules.apply_entry_events` 的 docstring 与 `04-特殊机制.md` 第 29 条。
+#    见 `mood_soc/rules.apply_entry_events` 的 docstring 与 `03-特殊机制.md` 第 29 条。
 ENTRY_WHEN_LABELS = {
     "immediate": "满 24 就换（她没满就不换）",
     "wait": "到点没满就等她回满再换",

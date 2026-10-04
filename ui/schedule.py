@@ -10,7 +10,7 @@ from ui.schedule import Schedule, simulate_schedule, load_schedule   # 仍然可
 from store.schedule import Schedule                                  # 新写法（推荐）
 ```
 
-⚠️ 不要在这里加任何逻辑 —— 它是迁移期的空壳，`documents/07-设计史.md` 记了删除条件。
+⚠️ 不要在这里加任何逻辑 —— 它是迁移期的空壳，`documents/06-设计史.md` 记了删除条件。
 """
 from __future__ import annotations
 

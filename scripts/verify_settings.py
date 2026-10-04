@@ -1727,7 +1727,7 @@ def test_section7_roundtrip():
           s4.imported_seat_occupant(0, fi, 0) == "" and s4.imported_seat_occupant(0, fi, 1) == FEI,
           f"实际 第 1 位={s4.imported_seat_occupant(0, fi, 0)!r}、"
           f"第 2 位={s4.imported_seat_occupant(0, fi, 1)!r}（原始导入那份是 第 1 位=菲亚梅塔）；"
-          f"见 documents/16-现状与校准记录（附版本记录）",
+          f"见 documents/10-现状与校准记录（附版本记录）",
           issue="已知例外-原位")
 
 
@@ -1977,7 +1977,7 @@ def test_section9_after_moves():
 
     # —— ⑧ set_detached 摘人**留洞不左移**（2026-10 修，A3 工单） ——
     #     口径变更：原来这里钉的是"交互层唯一剩下的紧凑化例外"（`AGENTS.md` 坑 27 与
-    #     `documents/16-现状与校准记录.md` §3.2 第 2 条记的就是它）。用户裁决与
+    #     `documents/10-现状与校准记录.md` §3.2 第 2 条记的就是它）。用户裁决与
     #     `models.remove_occupant` / 导入层"名单优先"同口径 ⇒ **留空洞、不左移**，
     #     并把被摘空那一格的锁一并解掉（不留"锁着一个空位"）。
     s = sess_from_data({"facilities": [

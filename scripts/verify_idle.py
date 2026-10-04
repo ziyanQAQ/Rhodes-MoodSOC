@@ -4,7 +4,7 @@
     .venv/Scripts/python.exe scripts/verify_idle.py          # 全绿 → 退出码 0，有红 → 1
     .venv/Scripts/python.exe scripts/verify_idle.py -v       # 顺带打印每一条通过项
 
-口径（2026-10 重写，见 `documents/04-特殊机制.md` 第 30 条）：
+口径（2026-10 重写，见 `documents/03-特殊机制.md` 第 30 条）：
 
   ① **锁定入宿**（`models.ManualLedger`，跟着班次布局走）—— **摆位即上锁、清空即解锁**
      （2026-10 口径反转）：摆了人的**位次**与手动放进去的**人**绝对不碰（不占、不换）；
@@ -406,8 +406,8 @@ def test_enabled_switch():
 def test_import_and_keep_idle_globals():
     """**全局设置（闲置入宿 / 换心情）在导入与"重建 Shift"两条路上的保真**。
 
-    两个缺陷（2026-10 由根因修掉，见 `documents/04-特殊机制.md` 第 30 条与
-    `documents/16-现状与校准记录.md` §3.2 第 15 条）：
+    两个缺陷（2026-10 由根因修掉，见 `documents/03-特殊机制.md` 第 30 条与
+    `documents/10-现状与校准记录.md` §3.2 第 15 条）：
 
       A. **场景文件顶层的 `idle_to_dorm` 从来没被读进来** —— `Shift.__post_init__` 建
          `world` 时只搬 `facilities / initial_global / detached`（解析口径本来是好的，
@@ -982,7 +982,7 @@ def test_manual_lock_scope():
       `slots = (旧 slots ∩ 现在仍有人的位次) ∪ (T ∩ 现在仍有人的位次)`、
       `names = (旧 names ∩ 现在仍在本设施里的人) ∪ (T 位上现在坐着的人)`。
     ⚠️ **不传 `T` 的老写法保持原样**（＝"整段里有名字的全算"）：那是 `set_slots` 的
-      既有 API 契约（`api/` 与 `documents/11-程序接口.md`），最后一条钉住它。
+      既有 API 契约（`api/` 与 `documents/08-程序接口.md`），最后一条钉住它。
     """
     from store.session import Session, seat_values
 
@@ -1266,7 +1266,7 @@ def test_entry_event_scope():
        **存在**菲亚梅塔就可以生效。」两条边界：她在**这一班的任意设施**里即可（工作设施 /
        控制中枢…都算）；她即使在**「不在基建」名单**里，也算「存在」、照样触发。
        ⚠️ 后者是**有意例外**（用户明确知道它与「不在基建的人不参与任何技能计数」冲突并要求
-       照做），不是 bug —— 见 `mood_soc/rules.apply_entry_events` 与 `04-特殊机制.md` 第 29 条。
+       照做），不是 bug —— 见 `mood_soc/rules.apply_entry_events` 与 `03-特殊机制.md` 第 29 条。
 
     ② **「她满 24」这道门三种模式都生效**：用户原话「换心情这块改为只要布局内存在菲亚梅塔
        且**心情为满 24** 就可以进行换心情的操作，不需要一定在宿舍内。」⇒ `when` 的

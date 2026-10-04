@@ -108,7 +108,7 @@ def op_capabilities(session: Session, args: dict) -> dict:
         "operations": sorted(OPERATIONS),
         "stateful": True,          # op 会改变会话状态（不是纯函数），调用方需保证顺序
         "loaded": session.schedule is not None,
-        "docs": "documents/11-程序接口.md",
+        "docs": "documents/08-程序接口.md",
     }
 
 

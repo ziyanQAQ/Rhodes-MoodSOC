@@ -1,7 +1,7 @@
 # 技能核对报告（全量）
 
 > **生成物**：由 `scripts/verify_skills.py --report` 自动生成，不要手改。
-> 四层核对 = 模板级（L1）/ clause 级（L2）/ 上游描述对照（L3）/ **干员级生效性与组合技能双向对照（L4）**；口径与模板字典见 `documents/05-技能分类大纲.md`。
+> 四层核对 = 模板级（L1）/ clause 级（L2）/ 上游描述对照（L3）/ **干员级生效性与组合技能双向对照（L4）**；口径与模板字典见 `documents/04-技能分类大纲.md`。
 
 ## 一、总览
 
@@ -82,8 +82,8 @@
 | `control_meeting_bd_000#1` | “是，团长！” | self_consume | M07a | 0.5 | ✅ ok | 自身消耗 → 0.5（1 条实例：只作用自身） | ✅ |
 | `control_mp&meet_spd_000#1` | 成效优先 | self_consume | M07a | 0.05 | ✅ ok | 自身消耗 → 0.05（1 条实例：只作用自身） | ✅ |
 | `control_mp_aegir1_000#1` | 潮汐守望 | self_consume | M07a | 0.5 | ✅ ok | 自身消耗 → 0.5（1 条实例：只作用自身） | ✅ |
-| `control_mp_aegir1_000#2` | 潮汐守望 | dorm_self | M07b | 0.5 | ✅ unreachable | 04-特殊机制 第 23 条：含持有者自身口径下「反之」恒不成立 | ✅ |
-| `control_mp_aegir1_000#3` | 潮汐守望 | dorm_self | M07b | 0.5 | ✅ unreachable | 04-特殊机制 第 23 条：依赖「反之」分支，同样不可达 | ✅ |
+| `control_mp_aegir1_000#2` | 潮汐守望 | dorm_self | M07b | 0.5 | ✅ unreachable | 03-特殊机制 第 23 条：含持有者自身口径下「反之」恒不成立 | ✅ |
+| `control_mp_aegir1_000#3` | 潮汐守望 | dorm_self | M07b | 0.5 | ✅ unreachable | 03-特殊机制 第 23 条：依赖「反之」分支，同样不可达 | ✅ |
 | `control_mp_aegir2_000#1` | 集群狩猎·α | cc_recover | M03 | 0.05 | ✅ ok | 中枢回复 → 0.05（2 条实例：中枢内全体，各一条） | ✅ |
 | `control_mp_aegir2_010#1` | 集群狩猎·β | cc_recover | M03 | 0.05 | ✅ ok | 中枢回复 → 0.05（2 条实例：中枢内全体，各一条） | ✅ |
 | `control_mp_bd&trade_000#1` | 演技的怪物 | self_consume | M07a | 0.01 | ✅ ok | 自身消耗 → 0.05（1 条实例：只作用自身） | ✅ |

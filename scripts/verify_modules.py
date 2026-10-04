@@ -5,7 +5,7 @@
     .venv/Scripts/python.exe scripts/verify_modules.py -v       # 打印每一条通过项
     .venv/Scripts/python.exe scripts/verify_modules.py --list   # 只列"现状待办"（白名单）
 
-口径见 `documents/14-架构总览.md` §9~§13。一句话：
+口径见 `documents/09-架构总览.md` §9~§13。一句话：
 
 > **每个模块独占一份数据，别的模块只读；要动别人的数据，必须调人家的写入口。**
 
@@ -18,7 +18,7 @@
 | C3 | **依赖只向下** | `mood_soc/` 不许 import `store/`/`ui/`/`api/`（转发壳登记在案） |
 | C4 | **转发壳不长大** | 转发壳文件 ≤ 40 行 |
 | C5 | **模块定义自洽** | 写入口表里的模块名必须都在 `MODULE_FIELDS` 里；六个功能模块各有数据 |
-| C6 | **与文档一致** | `14-架构总览.md` §9 的模块清单与三条边界规则必须与本文件一致 |
+| C6 | **与文档一致** | `09-架构总览.md` §9 的模块清单与三条边界规则必须与本文件一致 |
 
 ## 怎么判"写了这个字段"
 
@@ -216,7 +216,7 @@ SHIM_FILES = {"mood_soc/scenario.py", "mood_soc/importer.py", "mood_soc/output.p
 SCAN_DIRS = ("store", "api", "ui")
 SCAN_ROOT_FILES = ("main.py",)
 _SESSION_FILE = "store/session.py"
-_DOC = "documents/14-架构总览.md"
+_DOC = "documents/09-架构总览.md"
 
 PASS = 0
 FAIL = 0
@@ -412,7 +412,7 @@ def check_module_definitions():
 
 
 def check_doc_consistency():
-    print("C6 与文档一致（14-架构总览.md）")
+    print("C6 与文档一致（09-架构总览.md）")
     p = ROOT / _DOC
     if not p.exists():
         check("文档存在", False, f"缺少 {_DOC}")
