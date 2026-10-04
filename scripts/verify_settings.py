@@ -1534,14 +1534,16 @@ def _roundtrip(s: Session, cycles=None) -> Session:
 
     ⚠️ 导出是**每班一份场景**的信封（顶层 `{shifts, detached, start_clock, cycles}`），
     **这个信封本身还不能被导入**（`sources.detect_format` 不认 `shifts`，症状①未做），所以要走
-    "拆成每班一份场景文件"这条路；每班时长与班次名分别靠 `shifts[].hours` 与文件名带回来
-    （`scenario` 正文里**还没有**这两个字段，症状②③未做）。
+    "拆成每班一份场景文件"这条路。
 
-    ⚠️ 这里**手工走装配**（`load_schedule_ex` + 那几步），不是 `Session.load_paths` ——
-    因为 `Session.load_paths` **不接 `hours=`**（`store.schedule.load_schedule_ex` 支持）。
-    所以 `initial_moods` / `mood_events`（只有"读原始 JSON"那一层有）要在这里
-    **照 `Session._read_scenario_moods` 的口径补一次**，否则测出来的差异是"这个夹具没读"、
-    而不是"导出没写"。⚠️ ②③ 真做掉之后，本函数应当直接改成 `s2.load_paths(paths, hours=…)`。
+    ⚠️ **2026-10 工单 ②③ 之后这里不再手工走装配**：每班的**时长**与**班次名**现在都在
+    `shifts[].scenario` 正文里（`hours` / `label`），而 `initial_moods` / `mood_events`
+    与 `initial_global` 早就由导入层收进 `ImportResult` ⇒ 老夹具里那些
+    "`load_schedule_ex(hours=…)` + 照 `Session._read_scenario_moods` 补读一遍"的绕法
+    **全部删掉**，直接走用户真正走的那条 `Session.load_paths`。
+    这是**更强**的断言：从信封补时长就等于绕过了"正文自带时长"这件事本身。
+
+    只剩两句是真的"信封级别、还没进正文"的：`start_clock` 与 `cycles`（症状①未做）。
     """
     out = op_export_schedule(s, {})
     _RT_SEQ[0] += 1
@@ -1554,22 +1556,47 @@ def _roundtrip(s: Session, cycles=None) -> Session:
         write_json(p, sh["scenario"])
         paths.append(p)
     s2 = Session()
-    ld = load_schedule_ex(paths, hours=[sh["hours"] for sh in out["shifts"]])
-    s2.loaded = ld
-    s2.schedule = ld.schedule
-    s2.initial_moods.clear()
-    s2.mood_events.clear()
-    # 场景格式的 `initial_moods` / `mood_events`（与 `load_paths` 同一口径地补读）
-    for sh in out["shifts"]:
-        got = s2._read_scenario_moods(sh["scenario"])
-        if got is not None:
-            s2.initial_moods, s2.mood_events = got
-    s2._sync_from_schedule(from_import=True)
-    s2._capture_import_layouts()
+    s2.load_paths(paths)
     s2.set_start_clock(to_decimal(out["start_clock"]))
     s2.set_cycles(int(out["cycles"]) if cycles is None else int(cycles))
     s2.recompute()
     return s2
+
+
+def _legacy_scenario_unchanged() -> bool:
+    """**向后兼容**：正文里**没有** `label` / `hours` 的老场景文件，行为一字不变。
+
+    班次名仍取**文件名**、时长仍按 `store.schedule._hours_from_hints` 兜底（单班 ⇒ 24h）。
+    """
+    d = make_tmpdir("legacy_scen")
+    p = d / "legacy_scene.json"
+    write_json(p, {"facilities": [{"type": "贸易站", "level": 3, "operators": ["龙舌兰"]}]})
+    s = Session()
+    s.load_paths([p])
+    return (s.schedule.shift_labels() == ["legacy_scene"]
+            and [str(x.hours) for x in s.schedule.shifts] == ["24"])
+
+
+def _initial_global_all_entries() -> bool:
+    """**工单 ⑲**：`initial_global` 走三条导入入口都要逐位读得进来。
+
+    修前只有 `load_layout` 读得进来 —— `_import_scenario` 不收它、`load_paths` / `load_data`
+    都静默丢（`{}`）。
+    """
+    scen = {"facilities": [{"type": "贸易站", "level": 3, "operators": ["龙舌兰"]}],
+            "initial_global": {"木天蓼": 5, "人间烟火": "30.5"}}
+    d = make_tmpdir("initial_global")
+    p = d / "ig.json"
+    write_json(p, scen)
+    want = {"木天蓼": "5", "人间烟火": "30.5"}
+    for load in (lambda t: t.load_layout(copy.deepcopy(scen)),
+                 lambda t: t.load_data(copy.deepcopy(scen)),
+                 lambda t: t.load_paths([p])):
+        t = Session()
+        load(t)
+        if {k: str(v) for k, v in t.shifts()[0].initial_global.items()} != want:
+            return False
+    return True
 
 
 def test_section7_roundtrip():
@@ -1618,47 +1645,54 @@ def test_section7_roundtrip():
           not [w for w in ("imported", "origin", "restore_seat", "restore_default",
                            "imported_seat") if w in blob])
 
-    # ⚠ 往返的**已知缺口**（导出产物还不是"能直接再导入的完整场景"的全部）
+    # ⚠ 往返的**已知缺口**：只剩症状①（顶层信封本身不能被导入）
     d = make_tmpdir("roundtrip")
     whole = d / "whole.json"
     write_json(whole, out)
     bad = raises(Session().load_paths, [whole])
     known("⚠ 导出的**顶层信封**不能再被导入（`{shifts, detached, start_clock, cycles}` "
           "不被格式识别）⇒ 必须自己拆成每班一份场景（症状①，**未做**：要动 "
-          "`sources.detect_format` 那层格式识别契约，按工单要求先报方案）",
+          "`sources.detect_format` 那层格式识别契约，用户明确选了「不动识别层」）",
           bad.startswith("ValueError") and "无法识别的 JSON" in bad,
           f"实际 {bad!r}；报告 §2 第 5 条（症状①）", issue="已知缺口5")
+    # ✅ 症状②③（班次时长 / 班次名）**已修**（2026-10）：`scenario` 正文里现在带
+    #    `hours` 与 `label`（`api.ops.op_export_schedule` 写、`sources._import_scenario` 读）
+    #    ⇒ 拆成每班一份场景之后，**不带 `hours=`、文件名也无关**就能逐班还原。
+    check("每班 `scenario` 正文里带**班次时长**（`hours`）与**班次名**（`label`）",
+          all("hours" in sh["scenario"] and "label" in sh["scenario"] for sh in out["shifts"]),
+          f"实际键={sorted(out['shifts'][0]['scenario'])}")
     d2 = make_tmpdir("roundtrip_nohours")
-    one = d2 / "Shift1.json"
+    one = d2 / "renamed_not_the_label.json"          # 文件名**故意**不等于班次名
     write_json(one, out["shifts"][0]["scenario"])
     s_nohours = Session()
     s_nohours.load_paths([one])
-    known("⚠ scenario 正文里**不带班次时长**：不带 `hours=` 再导入 ⇒ 按班次数均分默认 24h"
-          "（症状②，**未做**：`sources._import_scenario` 写死 `hours=None`）",
-          str(s_nohours.schedule.cycle_hours) == "24" and
-          str(s_nohours.schedule.shifts[0].hours) == "24",
-          f"实际 hours={s_nohours.schedule.shifts[0].hours}（导出里写的是 "
-          f"{out['shifts'][0]['hours']}）；报告 §2 第 5 条（症状②）", issue="已知缺口5")
-    known("⚠ scenario 正文里也**不带班次名** ⇒ 再导入时班次名由**文件名**决定"
-          "（症状③，**未做**：`sources._import_scenario` 用 `Path(source).stem`）",
-          "label" not in out["shifts"][0]["scenario"] and
-          s_nohours.schedule.shift_labels() == ["Shift1"],
-          f"实际 scenario 键={sorted(out['shifts'][0]['scenario'])}、"
-          f"再导入标签={s_nohours.schedule.shift_labels()}；报告 §2 第 5 条（症状③）",
-          issue="已知缺口5")
+    eq("② 不带 `hours=` 再导入（文件名也无关）⇒ 时长仍＝导出里那份（修前均分成 24h）",
+       str(s_nohours.schedule.shifts[0].hours), str(out["shifts"][0]["hours"]))
+    eq("③ 班次名来自正文（修前由文件名决定，这里文件名是 renamed_not_the_label）",
+       s_nohours.schedule.shift_labels(), [out["shifts"][0]["label"]])
+    check("②③ 老场景文件（正文里没有这两个键）行为一字不变：名字取文件名、时长仍均分 24h",
+          _legacy_scenario_unchanged())
     # ✅ 症状④（设置全丢）**已修**（2026-10）：这四组现在都在 `shifts[].scenario` 里，
     #    并有专门的回归（`tests/test_export_roundtrip.py`）。
     check("每班 `scenario` 里带全四组设置（entry_events / idle_to_dorm / "
           "initial_moods / mood_events）",
           all({"entry_events", "idle_to_dorm", "initial_moods", "mood_events"}
               <= set(sh["scenario"]) for sh in out["shifts"]))
+    # ✅ 症状⑲（变量初始值只有 load_layout 读得进来）**已修**（2026-10）：三条入口同源。
+    check("⑲ `initial_global` 三条入口（load_layout / load_data / load_paths）逐位相同",
+          _initial_global_all_entries())
 
     s2 = _roundtrip(s)
     eq("往返：布局（含位次空洞与 manual 台账）逐班次逐位次不变",
        facilities_json(s), facilities_json(s2))
     eq("往返：`detached` 不变", s2.detached, s.detached)
-    eq("往返：每班时长与标签不变", [(x.label, str(x.hours)) for x in s2.schedule.shifts],
-       [(x.label, str(x.hours)) for x in s.schedule.shifts])
+    # ⚠️ 2026-10 工单 ②③ 之后这条**变成了真断言**：不再靠 `set_timeline(hours=…)` 从信封补，
+    #    时长与班次名都来自 `shifts[].scenario` 正文（`_roundtrip` 里那几行绕法已删）。
+    eq("往返：每班**时长**不变（来自正文 `hours`，不是靠 `set_timeline`）",
+       [str(x.hours) for x in s2.schedule.shifts],
+       [str(x.hours) for x in s.schedule.shifts])
+    eq("往返：每班**班次名**不变（来自正文 `label`，不是靠文件名）",
+       s2.schedule.shift_labels(), s.schedule.shift_labels())
     eq("往返：start_clock / cycles 补上后一致",
        (str(s2.schedule.start_clock), s2.cycles), (str(s.schedule.start_clock), s.cycles))
     # 「排班快照」那部分要逐位相同 ⇒ 把两边的**设置**（含心情锚点）都清掉再比

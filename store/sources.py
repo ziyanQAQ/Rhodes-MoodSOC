@@ -41,7 +41,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-from mood_soc.battery import to_decimal
+from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import DORM_LEVEL_TABLE, min_level_for_slots, parse_facility_type
 from .layout import build_detached
 from .maa import ROOM_KEY_BY_LABEL, ROOM_MAP, ROOM_ORDER, parse_duration_hint
@@ -192,12 +192,102 @@ class ImportResult:
     # 按唯一口径 `models.build_idle_to_dorm_config` 解析；不在这里另写一套读法）。
     idle_to_dorm: Optional[object] = None
     detached: List[str] = field(default_factory=list)       # 「不在基建」名单（场景 JSON 顶层）
+    #: 场景格式的**两个心情设置**顶层键（`initial_moods` / `mood_events`）。
+    #: `None` ＝ **这份数据里一个都没写**（调用方保持原样、不许凭空长默认值）；
+    #: 写了（哪怕写成 `{}` / `[]`）就是"显式清空"，按整份语义走 ——
+    #: "显式清空"与"没写"必须分得开，否则导出过的空设置会被当成没写。
+    #: ⚠️ `mood_events` 里装的是 `{name, cycle, t, mood}` 四个键的**纯字典**
+    #:    （不是 `store.schedule.MoodSetEvent` 对象）；本模块**不 import 那个类**
+    #:    （`store/schedule.py` 反向 import 本模块，模块级 import 会成环），
+    #:    由 `store/session.py::Session._mood_events_of` 落成 `MoodSetEvent`。
+    scenario_moods: Optional[Tuple[Dict[str, Decimal], List[Any]]] = None
     scenario: Optional[dict] = None                         # 场景类文件原样透传
     report: ImportReport = field(default_factory=ImportReport)
 
     @property
     def pool_names(self) -> List[str]:
         return [p["name"] for p in self.pool]
+
+
+# ---------------------------------------------------------------------------
+# 场景格式那两组"只有原始 JSON 才有"的设置（唯一读法就在这里）
+# ---------------------------------------------------------------------------
+def scenario_payload(data: Any) -> dict:
+    """从一份**已解析的 JSON** 里取出"本工具场景"那一层（取不到就是空 dict）。
+
+    **只认场景格式**（`detect_format` 说了算，本项目不含第二份格式判断）：
+    顶层就是场景；v4 蓝图那种"场景嵌在 `layout.scenario`"的也认。
+    `detect_format` 对本函数关心的输入只会返回 `scenario` 或 `plan_compute_v4`，
+    所以它不会抛异常；真抛了（畸形文件）也只是**没有这些键**，不影响导入本身。
+    """
+    if not isinstance(data, dict):
+        return {}
+    try:
+        kind = detect_format(data)
+    except Exception:                      # noqa: BLE001 —— 格式判不出来 = 没有这几组设置
+        return {}
+    if kind == "scenario":
+        return data
+    if kind == "plan_compute_v4":
+        layout = data.get("layout")
+        scen = layout.get("scenario") if isinstance(layout, dict) else None
+        return scen if isinstance(scen, dict) else {}
+    return {}
+
+
+def parse_scenario_moods(data: Any) -> Optional[Tuple[Dict[str, Decimal], List[Any]]]:
+    """读**场景 JSON** 的两个"心情设置"顶层键：`initial_moods` / `mood_events`。
+
+    它们与 `facilities` / `entry_events` / `idle_to_dorm` / `initial_global` 同层，
+    是本工具场景格式**本来就允许写**的两个键（`api.ops.op_export_schedule` 会写出来，
+    「导出 → 再导入 ⇒ 逐字段不变」靠的就是这里读回来）。
+
+    返回 `None` ＝ **这份数据里一个都没写**（调用方保持原样清空）；
+    写了（哪怕写成空对象/空数组）就返回整份 `({}, [])` 语义 ——
+    "显式清空"与"没写"必须分得开，否则导出过的空设置会被当成没写、又退回默认值。
+
+    ⚠️ **心里想的是 `initial_moods`，落点是 `Session.initial_moods`**：轨迹的**周期起点**
+    取的就是它（缺省才用第一班布局里写的值）；`cycle=1` 且 `t=0` 的心情锚点在设置接口里
+    本来就会被路由进 `initial_moods`（`Session.set_mood_at`），两者语义一致 ——
+    这里按**同一条路由**并进去（`setdefault`：同刻已有起点心情就不覆盖）。
+
+    ⚠️ `mood_events` 里**不是** `MoodSetEvent` 对象，而是同样四个键的**纯字典**
+    （`{name, cycle, t, mood}`）：那个类定义在 `store/schedule.py`，而它反向 import 本模块
+    ⇒ 本模块不能构造它（模块级 import 会成环）。构造点只有一处：
+    `store/session.py::Session._mood_events_of`。本模块只负责"读原始 JSON 并定值"。
+    """
+    scen = scenario_payload(data)
+    if not scen:
+        return None
+    raw_moods = scen.get("initial_moods")
+    raw_events = scen.get("mood_events")
+    if raw_moods is None and raw_events is None:
+        return None
+    moods: Dict[str, Decimal] = {}
+    if isinstance(raw_moods, dict):
+        for name, value in raw_moods.items():
+            if value is None:
+                continue
+            try:
+                moods[str(name)] = to_decimal(value)
+            except (ArithmeticError, ValueError):        # 单个坏值不废整份
+                continue
+    events: List[Any] = []
+    for item in (raw_events or []):
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        try:
+            cycle = int(item.get("cycle") or 1)
+            event = {"name": str(item["name"]), "cycle": cycle,
+                     "t": to_decimal(item.get("t") or 0), "mood": to_decimal(item["mood"])}
+        except (ArithmeticError, KeyError, TypeError, ValueError):
+            continue
+        if event["cycle"] == 1 and event["t"] == ZERO:
+            # 与 `Session.set_mood_at` 同一条路由：第 1 周期 0:00 是"起点心情"，不是锚点
+            moods.setdefault(event["name"], event["mood"])
+            continue
+        events.append(event)
+    return moods, events
 
 
 # ---------------------------------------------------------------------------
@@ -454,19 +544,39 @@ def _import_scenario(data: dict, report: ImportReport, source: str = "") -> Impo
     names = [o if isinstance(o, str) else (o or {}).get("name")
              for f in data["facilities"] for o in f.get("operators", [])]
     report.scan_names([n for n in names if n])
-    label = str(data.get("_source_plan") or Path(source).stem or "场景")
+    # —— 班次名 / 班次时长（2026-10 工单 ②③）——
+    # 这两个键是**本工具自己导出**时写进 `scenario` 正文的（`api.ops.op_export_schedule`），
+    # 有了它们，「导出 → 每班一份 scenario → 再导入」才不必靠**文件名**与**均分 24h**。
+    # ⚠️ 老场景文件（本工单之前导出的、手写的）**没有这两个键** ⇒ 行为一字不变：
+    #    名字仍取 `_source_plan` / 文件名，时长仍走 `store.schedule._hours_from_hints`。
+    # ⚠️ 绝不借 `_source_plan` 透传（那是 `scripts/maa_to_scenario.py` 的内部通道，
+    #    混语义）：`label` 就是"这个班次叫什么"这一件事。
+    # ⚠️ 认**非空**（`or`）：写完是空串 = 没写 ⇒ 退回文件名，不产生"无名班次"。
+    label = str(data.get("label") or data.get("_source_plan") or Path(source).stem or "场景")
+    hours = to_decimal(data["hours"]) if data.get("hours") is not None else None
+    # —— 变量初始值：`_import_v4` 一直在收，场景这条路上**原先没收** ⇒
+    #    `load_layout` 读得进来（它直接看 data）、`load_paths` / `load_data` 却整组丢。
+    initial: Dict[str, Decimal] = {}
+    raw_initial = data.get("initial_global")
+    if isinstance(raw_initial, dict):
+        for key, val in raw_initial.items():
+            if val is None:
+                continue
+            initial[str(key)] = to_decimal(val)
     entry = data.get("entry_events")
     return ImportResult(
         kind="scenario", scenario=data,
-        shifts=[ImportedShift(label=label, hours=None,
+        shifts=[ImportedShift(label=label, hours=hours,
                               facilities=list(data["facilities"]),
                               entry_events=entry if isinstance(entry, dict) else None,
                               detached=list(detached))],
         report=report,
+        initial_global=initial,
         entry_events=entry if isinstance(entry, dict) else None,
         entry_enabled=(bool(entry.get("enabled")) if isinstance(entry, dict) else None),
         idle_to_dorm=data.get("idle_to_dorm"),
-        detached=list(detached))
+        detached=list(detached),
+        scenario_moods=parse_scenario_moods(data))
 
 
 # ---------------------------------------------------------------------------
@@ -894,6 +1004,8 @@ __all__ = [
     "min_level_for_slots",
     "parse_duration_hint",
     "parse_facility_type",
+    "parse_scenario_moods",
     "resolve_name",
+    "scenario_payload",
     "to_decimal",
 ]

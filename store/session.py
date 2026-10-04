@@ -43,8 +43,9 @@ from mood_soc.rules import mood_skill_summary
 
 from .layout import build_base_layout
 from .schedule import (MoodSetEvent, LoadedSchedule, Schedule, Shift, Trajectory,
-                       default_initial_moods, execution_points, load_schedule_ex,
+                       default_initial_moods, execution_points,
                        load_schedule_from_imports, simulate_schedule)
+from .sources import parse_scenario_moods
 
 ZERO = Decimal("0")
 
@@ -148,115 +149,78 @@ class Session:
     #: 最近一次重算耗时（毫秒），状态栏与 `status_text()` 用
     last_recompute_ms: float = 0.0
 
+    #: **最近一次装配用的那些 `ImportResult`**（`store.sources.ImportResult`，按文件顺序）。
+    #: 用途＝让"读文件里那两组心情设置"**不再回头打开一遍文件**：
+    #: 导入层已经把 `initial_moods` / `mood_events` 收进 `ImportResult.scenario_moods`
+    #: （2026-10 工单 ⑲ / 统一建议），三条 `load_*` 只把结果落进 `initial_moods` / `mood_events`。
+    #: `compare=False`：这是**导入痕迹**、不是设置，不参与会话比较。
+    imports: List[Any] = field(default_factory=list, compare=False)
+
     #: **增量重算的种子**：`(算好的轨迹, 它的逐段输入指纹)`；
     #: 只有"前缀段的指纹没变"才拿它续算（见 `recompute_inputs` / `_segment_signatures`）。
     _resume_from: Optional[Tuple[Trajectory, list]] = None
 
     # ================================================================ 装配
     @staticmethod
-    def _scenario_payload(data: Any) -> dict:
-        """从一份**已解析的 JSON** 里取出"本工具场景"那一层（取不到就是空 dict）。
+    def _mood_events_of(events: Sequence[Any]) -> List["MoodSetEvent"]:
+        """导入层吐出的**心情锚点**（`store.sources.parse_scenario_moods` 的产物：
+        每个是 `{name, cycle, t, mood}` 四键纯字典）→ `MoodSetEvent` 列表。
 
-        **只认场景格式**（`store.sources.detect_format` 说了算，本项目不含第二份格式判断）：
-        顶层就是场景；v4 蓝图那种"场景嵌在 `layout.scenario`"的也认。
-        `detect_format` 对本函数关心的输入只会返回 `scenario` 或 `plan_compute_v4`，
-        所以它不会抛异常；真抛了（畸形文件）也只是**没有这两组设置**，不影响导入本身。
+        ⚠️ 构造点只有这一处：`MoodSetEvent` 定义在 `store/schedule.py`（它反向 import
+        `store/sources.py` 取 `detect_format`）⇒ 导入层不能自己构造它，只能给出纯数据。
         """
-        if not isinstance(data, dict):
-            return {}
-        from .sources import detect_format
-        try:
-            kind = detect_format(data)
-        except Exception:                      # noqa: BLE001 —— 格式判不出来 = 没有这两组设置
-            return {}
-        if kind == "scenario":
-            return data
-        if kind == "plan_compute_v4":
-            layout = data.get("layout")
-            scen = layout.get("scenario") if isinstance(layout, dict) else None
-            return scen if isinstance(scen, dict) else {}
-        return {}
+        return [MoodSetEvent(name=str(e["name"]), cycle=int(e["cycle"]),
+                             t=to_decimal(e["t"]), mood=to_decimal(e["mood"]))
+                for e in events]
 
-    def _read_scenario_moods(self, data: Any) -> Optional[Tuple[Dict[str, Decimal], List["MoodSetEvent"]]]:
-        """读**场景 JSON** 的两个"心情设置"顶层键：`initial_moods` / `mood_events`。
+    @classmethod
+    def _read_scenario_moods(cls, imports: Sequence[Any]) -> Optional[Tuple[Dict[str, Decimal],
+                                                                            List["MoodSetEvent"]]]:
+        """从若干份 `ImportResult` 里取**场景格式的两个心情设置**（`initial_moods` / `mood_events`）。
 
-        它们与 `facilities` / `entry_events` / `idle_to_dorm` / `initial_global` 同层，
-        是本工具场景格式**本来就允许写**的两个键（`export_schedule` 会写出来，
-        「导出 → 再导入 ⇒ 逐字段不变」靠的就是这里读回来）。
+        取值本身在导入层一处完成（`store.sources.parse_scenario_moods`，那是"读原始 JSON"
+        的唯一实现）；这里只做两件**装配**的事：
 
-        返回 `None` ＝ **这份数据里一个都没写**（调用方保持原样清空）；
-        写了（哪怕写成空对象/空数组）就返回整份 `({}, [])` 语义 ——
-        "显式清空"与"没写"必须分得开，否则导出过的空设置会被当成没写、又退回默认值。
+        ① 把导入层吐出的四键字典落成 `MoodSetEvent`（见 `_mood_events_of`）；
+        ② 按**多个文件**的顺序合并：后一份文件里"写了"的那一组覆盖前一份（与
+           `Session.load_paths` 的多文件语义一致）。
 
-        ⚠️ **心里想的是 `initial_moods`，落点是 `Session.initial_moods`**：轨迹的**周期起点**
-        取的就是它（缺省才用第一班布局里写的值）；`cycle=1` 且 `t=0` 的心情锚点在设置接口里
-        本来就会被路由进 `initial_moods`（`set_mood_at`），两者语义一致。
+        返回 `None` ＝ **所有文件里一个都没写**（调用方保持原样清空）；
+        任一份写了（哪怕写成 `{}` / `[]`）就是"显式清空"，按整份语义走。
         """
-        scen = self._scenario_payload(data)
-        if not scen:
-            return None
-        raw_moods = scen.get("initial_moods")
-        raw_events = scen.get("mood_events")
-        if raw_moods is None and raw_events is None:
-            return None
-        moods: Dict[str, Decimal] = {}
-        if isinstance(raw_moods, dict):
-            for name, value in raw_moods.items():
-                if value is None:
-                    continue
-                try:
-                    moods[str(name)] = to_decimal(value)
-                except (ArithmeticError, ValueError):        # noqa: PERF203 —— 单个坏值不废整份
-                    continue
-        events: List["MoodSetEvent"] = []
-        for item in (raw_events or []):
-            if not isinstance(item, dict) or not item.get("name"):
+        got: Optional[Tuple[Dict[str, Decimal], List["MoodSetEvent"]]] = None
+        for imp in imports:
+            parsed = getattr(imp, "scenario_moods", None)
+            if parsed is None:
                 continue
-            try:
-                event = MoodSetEvent(name=str(item["name"]),
-                                     cycle=int(item.get("cycle") or 1),
-                                     t=to_decimal(item.get("t") or 0),
-                                     mood=to_decimal(item["mood"]))
-            except (ArithmeticError, KeyError, TypeError, ValueError):
-                continue
-            if event.cycle == 1 and event.t == ZERO:
-                # 与 `set_mood_at` 同一条路由：第 1 周期 0:00 是"起点心情"，不是锚点
-                moods.setdefault(event.name, event.mood)
-                continue
-            events.append(event)
-        return moods, events
-
-    @staticmethod
-    def _load_json(path: Any) -> Any:
-        """读一个 JSON 文件（读不了就返回 `{}`）—— 只给 `load_paths` 取场景那两组设置用。
-
-        ⚠️ **不参与装配**（装配照旧只有 `store.sources.import_file` 一份实现）：
-        这里只把"原始 JSON"拿来做一次**只读**取值；文件读不动/不是 JSON 时返回空，
-        让 `load_schedule_ex` 去报那个**真正的**错（别在这里抢先抛，会盖掉原始报错）。
-        """
-        import json
-        try:
-            with open(Path(path), "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, ValueError):
-            return {}
+            moods, events = parsed
+            got = (dict(moods), cls._mood_events_of(events))
+        return got
 
     def load_paths(self, paths: Sequence[Union[str, Path]]) -> "LoadedSchedule":
         """按文件集合装配排班（自动识别 4 种格式），并把文件里的设置同步进来。
 
         可能抛 `ValueError`（格式不认识 / 班次拼不起来）——调用方展示原因即可。
         """
-        #: 场景格式的 `initial_moods` / `mood_events` 只有"原始 JSON"那一层有
-        #: （`ImportResult` 不带它们）⇒ 这里在装配**之前**取出来（见 `_read_scenario_moods`）。
-        scen_moods = [self._read_scenario_moods(self._load_json(p)) for p in paths]
-        ld = load_schedule_ex(paths)
+        from .sources import import_file as _import_file
+
+        #: 先把每份文件**各读一次**（`store.sources` 是"读原始 JSON"的唯一实现），
+        #: 再拿这批 `ImportResult` 去装配 —— 场景格式的 `initial_moods` / `mood_events`
+        #: 现在**就在这批结果里**（2026-10 工单 ⑲ / 统一建议）：原先为了读它们
+        #: 这里会**再把同一批文件打开一遍**（`_load_json` + `_scenario_payload`），已删。
+        self.imports = [_import_file(p) for p in paths]
+        ld = load_schedule_from_imports(self.imports)
         self.loaded = ld
         self.schedule = ld.schedule
+        # —— 场景格式的 `initial_moods` / `mood_events` ——
+        # ⚠️ 取值**就在这批 `ImportResult` 里**（`scenario_moods`，2026-10 工单 ⑲ / 统一建议）：
+        #    原先这里为了读它们会**再把同一批文件打开一遍**（`_load_json` + `_scenario_payload`，
+        #    已删）。落点是"心情"那两组字段 ⇒ 内联在这里写，不再单开一个会写别人字段的辅助方法。
         self.initial_moods.clear()
         self.mood_events.clear()
-        for got in scen_moods:
-            if got is not None:
-                self.initial_moods, self.mood_events = got
+        got = self._read_scenario_moods(self.imports)
+        if got is not None:
+            self.initial_moods, self.mood_events = got
         self._sync_from_schedule(from_import=True)
         self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         self.recompute()
@@ -286,17 +250,18 @@ class Session:
         """
         from .sources import import_data as _import_data
 
-        ld = load_schedule_from_imports([_import_data(data, source="api:inline")],
+        self.imports = [_import_data(data, source="api:inline")]
+        ld = load_schedule_from_imports(self.imports,
                                         cycle_hours=cycle_hours, hours=hours)
         self.loaded = ld
         self.schedule = ld.schedule
-        #: 场景格式的 `initial_moods` / `mood_events`（`export_schedule` 会写出来的那两个键）
-        scen_moods = self._read_scenario_moods(data)
+        #: 场景格式的 `initial_moods` / `mood_events`（`export_schedule` 会写出来的那两个键）——
+        #: 与按文件那条路**同一个来源**（`ImportResult.scenario_moods`，不再二次读原始 JSON）。
         self.initial_moods.clear()
         self.mood_events.clear()
-        if scen_moods is not None:
-            self.initial_moods, self.mood_events = scen_moods
-
+        got = self._read_scenario_moods(self.imports)
+        if got is not None:
+            self.initial_moods, self.mood_events = got
         self._sync_from_schedule(from_import=True)
         self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         if not apply_file_settings:
@@ -340,7 +305,15 @@ class Session:
         `initial_global` / `detached` 与场景 JSON 完全同义（见 `store/layout.build_base_layout`）。
         `idle_to_dorm` 的解析口径只有一处（`Shift.__post_init__` →
         `models.build_idle_to_dorm_config`），这里**原样传原始值**、不另解析一遍。
+
+        ⚠️ **本入口与 `load_paths` / `load_data` 同口径**（2026-10 工单 ⑲ / ②③ 补齐）：
+        `initial_global` 一直只在这条路上读得进来（其余两条曾整组丢）；现在 `label` 与
+        `hours` 也读同一份顶层键 —— 显式**函数参数**优先（调用方说了算），
+        否则用 `data` 里的，都没有才退回 `"班次 1"` / `24h`。
         """
+        hours = to_decimal(data["hours"]) if (hours is None and data.get("hours") is not None) \
+            else hours
+        label = str(data.get("label") or label)
         shift = Shift(label=label, hours=to_decimal(hours if hours is not None else 24),
                       facilities=list(data.get("facilities") or []),
                       source="api:inline",
@@ -351,12 +324,14 @@ class Session:
         self.schedule = Schedule([shift], to_decimal(hours if hours is not None else 24),
                                  detached=list(shift.world.detached or []))
         self.loaded = LoadedSchedule(schedule=self.schedule)
-        #: 场景格式的 `initial_moods` / `mood_events`（单班布局同义，见 `load_paths`）
-        scen_moods = self._read_scenario_moods(data)
+        #: 场景格式的 `initial_moods` / `mood_events`（单班布局同义，见 `load_paths`）。
+        #: ⚠️ 本入口给的是**布局 dict 本身**（不是文件），所以取法只有一处：
+        #: `store.sources.parse_scenario_moods`（"读原始 JSON"的同一份实现）。
         self.initial_moods.clear()
         self.mood_events.clear()
-        if scen_moods is not None:
-            self.initial_moods, self.mood_events = scen_moods
+        parsed = parse_scenario_moods(data)
+        if parsed is not None:
+            self.initial_moods, self.mood_events = dict(parsed[0]), self._mood_events_of(parsed[1])
         self._sync_from_schedule(from_import=True)
         self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         self.recompute()

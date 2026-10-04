@@ -932,16 +932,20 @@ def op_export_schedule(session: Session, args: dict) -> dict:
     |---|---|
     | `facilities` | `store.sources._import_scenario` → `build_base_layout`（布局 + `manual` 台账） |
     | `detached`（非空才写） | `_import_scenario` 的 `build_detached` |
-    | `initial_global`（非空才写） | `_import_scenario` → `store.layout.build_initial_variables` |
+    | `initial_global`（非空才写） | `_import_scenario` → `ImportResult.initial_global` → `store.layout.build_initial_variables` |
     | `entry_events` | `_import_scenario` → `Shift.entry_events` → `Session._sync_from_schedule` |
     | `idle_to_dorm` | `_import_scenario` → `Shift.idle_to_dorm` → `Session._sync_from_schedule` |
-    | `initial_moods` | `Session._read_scenario_moods`（**本工单新增**，scenario 专属顶层键） |
-    | `mood_events` | 同上 |
+    | `initial_moods` | `store.sources.parse_scenario_moods` → `ImportResult.scenario_moods` → `Session.initial_moods` |
+    | `mood_events` | 同上 → `Session.mood_events` |
+    | `label`（非空才写） | `_import_scenario` → `ImportedShift.label`（**班次名**，2026-10 工单 ③） |
+    | `hours`（有正时长才写） | `_import_scenario` → `ImportedShift.hours`（**班次时长**，工单 ②） |
 
-    ⚠️ **仍有两个"导出产物装不下"的字段**（用户工单的症状 ②③，未做，方案见报告）：
-    班次时长（`shifts[].hours` 在信封里、`scenario` 正文没有 ⇒ 不带 `hours=` 再导入会被
-    `store.schedule._hours_from_hints` 按班次数均分 24h）与班次名（由**文件名**决定）。
-    ⚠️ 顶层信封本身也**还不能直接 `load_paths`**（`store.sources.detect_format` 不认 `shifts`
+    ⚠️ `label` / `hours` 是**后加的**：老场景文件没有这两个键 ⇒ 行为一字不变
+    （班次名仍由**文件名**决定、时长仍按 `store.schedule._hours_from_hints` 兜底）。
+    `hours` 只在**正时长**时才写（`0` 与"没写"在导入层是同一件事：交给兜底算），
+    与 `detached` / `initial_global` 的"非空才写"同一习惯。
+
+    ⚠️ 顶层信封本身**还不能直接 `load_paths`**（`store.sources.detect_format` 不认 `shifts`
     —— 症状 ①，未做：那要动"4 种 JSON"的格式识别契约，用户要求先报方案）。
     """
     _require_session(session)
@@ -953,6 +957,13 @@ def op_export_schedule(session: Session, args: dict) -> dict:
                                      **({"initial_global": {str(k): _exact_num(v)
                                                             for k, v in s.initial_global.items()}}
                                         if getattr(s, "initial_global", None) else {}),
+                                     # 班次名与班次时长**也写进正文**（工单 ②③）：导出产物
+                                     # 拆成每班一份场景文件之后，再导入时就不必靠文件名与均分。
+                                     # `hours` 走 `_exact_num`（与其余设置量同一个"逐位不变"口径，
+                                     # 信封里那份仍走 `_num`，那是对外协议、不改）。
+                                     **({"label": str(s.label)} if str(s.label or "") else {}),
+                                     **({"hours": _exact_num(s.hours)}
+                                        if s.hours is not None and to_decimal(s.hours) > 0 else {}),
                                      **behavior}}
                        for s in session.shifts()],
             "detached": session.bench_names(),
