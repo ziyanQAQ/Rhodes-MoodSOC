@@ -1212,6 +1212,243 @@ class MoodSocApp(tk.Tk):
         """（旧入口，现等价于）打开设置中心的「闲置入宿」分区。"""
         return self.open_settings("idle")
 
+    def lock_dorm_view(self) -> dict:
+        """「锁定入宿」矩阵的**只读数据源**（`LockPanel.view_provider`，工单 §2.2/§2.5）。
+
+        → `{"shifts": [班次下标…], "shift_labels": [班次名…], "cycle_note": 一句话,
+            "op_names": [选人候选全表…],
+            "dorms": [{"index": 设施下标, "name": 显示名, "capacity": 容量,
+                       "seats": [{"slot": 0 基, "name": 人名或空串}, …],   # 「我的指定」
+                       "current": {班次下标: {1 基位次: 人名}},            # 「当前」
+                       "assigned": {班次下标: {1 基位次: 人名}}}, …]}`
+
+        · **「我的指定」**（`assigned`）＝手动台账里"这一格归人管"的那一位坐的是谁
+          （`Session.manual_dorm_editor_state`，它读的是**排班快照**——那正是"你指定的"）；
+        · **「当前」**（`current`）＝该班**第一个执行点、换班之后**那一刻的**引擎世界**
+          （`Trajectory.world_at` 落在执行点上取右侧；**不与主界面滑块联动**，工单 §2.5）。
+          ⚠️ 两者**有意用两份数据**：快照＝"你导入/指定的排班"，引擎那份＝"实际跑出来的
+          布局"（自动入宿会换人）—— 两者不一致时用户能一眼看出来。
+
+        为什么在 app 上而不是 `Session` 上：`world_at` 属于**轨迹**（`app.traj`），
+        而 `manual_dorm_editor_state` 属于**排班** —— 只有 app 同时握着这两样。
+        """
+        if self.schedule is None:
+            return {"shifts": [], "shift_labels": [], "cycle_note": "", "op_names": [],
+                    "dorms": []}
+        n = len(self.schedule.shifts)
+        shifts = list(range(n))
+        labels = list(self.schedule.shift_labels())
+        note = (f"「当前」＝该班第一个换班执行点（班初）**之后**那一刻的引擎布局；"
+                f"「我的指定」＝你锁在这一格的人。锁定只对这一班生效，下一班自动解锁。")
+        first_state: dict = {}
+        for i in shifts:
+            try:
+                first_state[i] = self.session.manual_dorm_editor_state(i)
+            except Exception:                      # noqa: BLE001 —— 面板不该因为读不到就崩
+                first_state[i] = {"dorms": []}
+        # 「当前」：每班第一个执行点那一刻的引擎世界（落在执行点上取右侧）
+        worlds: dict = {}
+        for i in shifts:
+            try:
+                t0 = self.schedule.starts[i]
+                worlds[i] = self.world_at_abs(t0)
+            except Exception:                      # noqa: BLE001
+                worlds[i] = None
+        dorms: list = []
+        for d in (first_state.get(0, {}) or {}).get("dorms", []):
+            fi = int(d["index"])
+            # 「当前」：逐班取**那一刻的引擎世界**（落在执行点上取右侧）
+            current: dict = {}
+            for i in shifts:
+                world = worlds.get(i)
+                if world is None or not (0 <= fi < len(world.facilities)):
+                    continue
+                fac = world.facilities[fi]
+                mapping = fac.slot_map()
+                for slot in range(int(fac.capacity)):
+                    op = mapping.get(slot)
+                    if op is not None:
+                        current.setdefault(i, {})[slot + 1] = op.name
+            # 「我的指定」：逐班从各自那份只读数据里取**这一间**（按设施下标对齐）
+            assigned: dict = {}
+            for i in shifts:
+                seats = {}
+                for d2 in (first_state.get(i, {}) or {}).get("dorms", []):
+                    if int(d2["index"]) != fi:
+                        continue
+                    seats = {int(s["slot"]) + 1: str(s.get("name") or "")
+                             for s in d2.get("seats", [])}
+                assigned[i] = seats
+            dorms.append({"index": fi, "name": str(d["name"]),
+                          "capacity": int(d["capacity"]), "current": current,
+                          "assigned": assigned})
+        return {"shifts": shifts, "shift_labels": labels, "cycle_note": note,
+                "op_names": all_operator_names(self.schedule.operator_names()),
+                "dorms": dorms}
+
+    def apply_lock_dorm(self, req: dict) -> str:
+        """**「锁定入宿」的落地口**（`LockPanel` 的唯一写入口；工单 §2.3/§3）。
+
+        `req` 两种形态（可同时给）：
+        · `placement`：`{"shifts": [班次下标…], "facility_index": 设施下标,
+                         "slot_names": {位次 0 基: 人名或 ""}}` —— 逐格指定 / 清空；
+        · `batch`：`{"shifts": [...], "facility_index": 设施下标, "names": [人名…],
+                     "clear_first": bool}` —— 按**位次正序**填进第 1..k 位（工单 §2.4）。
+
+        `mode`＝`"pin"`（默认）时走 `Session.place_operator` 的语义：**先把她从本班其它设施
+        里摘掉**（留空洞、不左移）再写这一格；`"set"`＝只写这一格（老行为，兼容口）。
+
+        返回一句**回执**（工单 §2.3 要求写清三件事）：谁被放进 / 移出、**被腾出的人**、
+        **被抽走上班的人**让哪个工作位空出。⚠️ 面板内那句会被随后的重算重建冲掉，
+        **只剩状态栏那行是永久的** —— 所以这里同时把它写进 `_status_after_recalc`。
+        """
+        if self.schedule is None:
+            return "还没有导入排班。"
+        mode = str(req.get("mode") or "pin")
+        pin = mode != "set"
+        notes: List[str] = []
+        placement = req.get("placement") or {}
+        batch = req.get("batch") or {}
+        plan: List[tuple] = []                 # [(班次下标, 设施下标, {位次: 人名})]
+        if placement:
+            plan.append(([int(i) for i in (placement.get("shifts") or ())],
+                         int(placement.get("facility_index")),
+                         {int(k): str(v) for k, v in (placement.get("slot_names") or {}).items()}))
+        if batch:
+            names = [str(x) for x in (batch.get("names") or ())]
+            fi = int(batch.get("facility_index"))
+            cap = self._dorm_capacity(fi)
+            if cap and len(names) > cap:
+                notes.append(f"⚠ 只能放 {cap} 位：多出来的 {len(names) - cap} 人没排上"
+                             f"（{'、'.join(names[cap:])}）")
+            names = names[:cap] if cap else names
+            known = set(all_operator_names(self.schedule.operator_names()))
+            unknown = [n for n in names if n not in known]
+            if unknown:
+                notes.append(f"⚠ 名字不认识（先导入含她的排班 / 干员池）："
+                             f"{'、'.join(unknown)}")
+            cell = {k: name for k, name in enumerate(names)}
+            if batch.get("clear_first"):
+                # 先把整间交给自动入宿（清空该宿舍），再按位次正序填
+                for k in range(len(cell), cap):
+                    cell[k] = ""
+            plan.append(([int(i) for i in (batch.get("shifts") or ())], fi, cell))
+        if not plan:
+            return "「锁定入宿」：这次没有任何改动。"
+
+        for shifts, fi, cells in plan:
+            if not cells:
+                continue
+            for i in shifts:
+                if not (0 <= int(i) < len(self.schedule.shifts)):
+                    continue
+                text = self._write_lock_one(int(i), int(fi), cells, pin=pin)
+                if text:
+                    notes.append(text)
+        head = "锁定入宿：" + ("；".join(notes) if notes else "没有改动")
+        self.recompute_async()                     # 与其它面板一致：编辑走异步重算
+        self._layout_sig = None
+        self._status_after_recalc = head
+        return head
+
+    def _dorm_capacity(self, fac_index: int) -> int:
+        """某设施下标的**容量**（从当前排班 / 只读数据里取；取不到给 0）。"""
+        try:
+            facs = self.session.facilities_of(0)
+            vals = seat_values(facs[int(fac_index)])
+            if vals:
+                return len(vals)
+        except (IndexError, KeyError, TypeError):
+            pass
+        for d in self.lock_dorm_view().get("dorms", []):
+            if int(d["index"]) == int(fac_index):
+                return int(d["capacity"])
+        return 0
+
+    def _write_lock_one(self, shift: int, fac_index: int, cells: dict, *, pin: bool) -> str:
+        """把一班的几格落到布局上，并回一句回执（工单 §2.3）。**不重算**（调用方统一算）。"""
+        try:
+            facs = self.session.facilities_of(shift)
+        except (IndexError, KeyError, TypeError):
+            return ""
+        if not (0 <= fac_index < len(facs)):
+            return ""
+        before_rows = [seat_values(f) for f in facs]
+        room = self._room_name(shift, fac_index)
+        before_here = list(before_rows[fac_index])
+        # 「被腾出的人」＋「她被从哪抽走」：先把改动前的世界读出来（写完之后就读不到了）
+        moved_from: dict = {}                       # 人名 -> "贸易站 第 2 位"
+        for k, f in enumerate(facs):
+            if k == fac_index and not pin:
+                continue
+            for si, name in enumerate(before_rows[k]):
+                if name in set(str(v) for v in cells.values() if v) and name:
+                    moved_from.setdefault(name, f"{self._fac_label(k)} 第 {si + 1} 位")
+        out_names = {int(k): str(v) for k, v in cells.items()}
+        touched = sorted(k for k, v in out_names.items()
+                         if (before_here[k] if k < len(before_here) else "") != v)
+        if not touched:
+            return ""
+        if pin:
+            # ⚠️ 走 `Session.place_operator` 的语义：**逐格"先摘后写"**
+            #    （她自己原来的那一处会被腾出来、留空洞不左移）
+            for k in touched:
+                self.session.place_operator(shift, fac_index, k, out_names[k])
+        else:
+            merged = list(before_here)
+            for k, v in out_names.items():
+                while len(merged) <= k:
+                    merged.append("")
+                merged[k] = v
+            self.session.set_facility_slots(shift, fac_index, merged, manual=True,
+                                            touched=touched)
+        after_rows = [seat_values(f) for f in self.session.facilities_of(shift)]
+        bits: List[str] = []
+        for k in touched:
+            name = out_names[k]
+            old = before_here[k] if k < len(before_here) else ""
+            where = f"{room} 第 {k + 1} 位（第 {shift + 1} 班）"
+            if name:
+                bits.append(f"{name} → {where}")
+                if name in moved_from:
+                    bits.append(f"{name} 已从 {moved_from[name]} 移出")
+                if old:
+                    bits.append(f"{old} 已从 {where} 移出")
+            else:
+                bits.append(f"{where} 已清空（{old or '本来就是空位'} 交还自动入宿）")
+        # 「被抽走上班的人」让哪个工作位空出：比对写前写后的**工作设施**（只报空出来的）
+        for k, f in enumerate(after_rows):
+            if k == fac_index:
+                continue
+            old_row = before_rows[k]
+            for si in range(max(len(old_row), len(f))):
+                was = old_row[si] if si < len(old_row) else ""
+                now = f[si] if si < len(f) else ""
+                if was and not now:
+                    bits.append(f"{self._fac_label(k)} 第 {si + 1} 位 空出")
+        return "；".join(bits)
+
+    def _fac_label(self, fac_index: int) -> str:
+        """某设施下标 → 显示名（写回执用）。"""
+        try:
+            shift = self.schedule.shifts[self._editing_shift_index()]
+            return str(shift.world.facilities[fac_index].display_name)
+        except (AttributeError, IndexError, TypeError):
+            return f"第 {fac_index + 1} 间"
+
+    def _room_name(self, shift: int, fac_index: int) -> str:
+        """某班某设施下标 → 宿舍/房间显示名（**按名字取，不写死"第 N 间"**）。
+
+        ⚠️ 工单 §2.3：旧的 `apply_manual_dorm` 兜底是 `f"第 {fac_index + 1} 间"`，
+        而 `_write_slot` 不传 `dorm_names` ⇒ 回执里永远打「第 14 间」。这里按
+        **设施下标 → `display_name`** 直接取（宿舍会拿到 `宿舍#1` 这种补名后的名字）。
+        """
+        try:
+            return str(self.schedule.shifts[int(shift)].world.facilities[
+                int(fac_index)].display_name)
+        except (AttributeError, IndexError, TypeError):
+            return f"第 {int(fac_index) + 1} 间"
+
     def apply_manual_dorm(self, req: dict) -> str:
         """**手动入宿编辑器**（设置中心「闲置入宿」页的 ③ 子面板）的落地口。
 
