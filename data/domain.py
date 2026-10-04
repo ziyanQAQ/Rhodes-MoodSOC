@@ -34,7 +34,7 @@ mood_soc/config（再 re-export 一次，历史 import 路径照旧）
 | `FACILITY_SLOTS_BY_LEVEL` | `rooms[roomType].phases[等级-1].maxStationedNum` |
 | `ACTIVITY_ROOM_FACILITIES` | `roomsWithoutRemoveStaff = ["PRIVATE"]` |
 
-复核方式见 `documents/06-数据来源.md`。
+复核方式见 `documents/05-数据来源.md`。
 """
 from __future__ import annotations
 

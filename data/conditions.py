@@ -116,7 +116,7 @@ def _cond_no_abyssal_outside_dorm(ctx) -> bool:
     歌蕾蒂娅自己就进驻在控制中枢（＝宿舍以外）时，本条件恒为 False，
     潮汐守望的「反之」恢复分支（`#2`）与依赖它的「宿舍内深海猎人满心情」（`#3`）
     在实际布局中**不可达**——两个分句保留在数据里备查，但不产生回复。
-    详见 `documents/04-特殊机制.md` 第 23 条。
+    详见 `documents/03-特殊机制.md` 第 23 条。
     """
     for f in ctx.world.facilities:
         if f.ftype in (FacilityType.DORMITORY, FacilityType.PRIVATE):
@@ -238,7 +238,7 @@ def _cond_no_platform_in_other_power(ctx) -> bool:
     正义骑士号 / Friston-3 / PhonoR-0 / CONFESS-47 / GALLUS²，见 `data/factions.txt`）。
 
     ⚠️ **红脸的作业平台不算"有效进驻"**（用户口径 2026-09）：本项目总口径是
-    「红脸（心情 ≤ 0）⇒ 技能失效」（见 `documents/04-特殊机制.md` 第 2 条），
+    「红脸（心情 ≤ 0）⇒ 技能失效」（见 `documents/03-特殊机制.md` 第 2 条），
     所以一个心情归零的作业平台不再阻断晨曦 ⇒ 发电站**照样 +1**。
     ⚠️ **不对称（用户拍板）**：森蚺「我寻思能行」只看「Lancet-2 **进驻**在发电站」，
     Lancet-2 红脸也照样触发 +2 —— 见 `_cond_lancet2_in_power`，别顺手"对齐"。
