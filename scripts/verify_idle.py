@@ -731,7 +731,7 @@ def test_manual_dorm_editor_state():
     s.load_layout({"facilities": [
         {"type": "宿舍", "level": 1, "capacity": 5, "operators": ["甲", "乙"]},
         {"type": "制造站", "level": 3, "operators": ["丙"]}]}, hours=1)
-    s.set_seat_lock(0, 0, 2)                     # 锁第 3 位（空位）⇒ 应当"保持空着"
+    s.set_seat_lock(0, 0, 2)                     # API 锁第 3 位（空位）⇒ 应当"保持空着"
     st = s.manual_dorm_editor_state(0)
     check("只列宿舍（制造站不进编辑器）",
           [d["name"] for d in st["dorms"]] == ["宿舍#1"],

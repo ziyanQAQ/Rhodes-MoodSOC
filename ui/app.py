@@ -1222,9 +1222,14 @@ class MoodSocApp(tk.Tk):
         语义（工单 Q5=(i)）：**改动落到 `shifts` 里的每一个班次**（勾选＝编辑便利，数据格式不变）；
         `facility_index` 是设施**下标**（写入口吃这个，`dorm_names` 只用于文案）。
 
-        写入口**只有** `Session.set_facility_slots`（放人 / 清空：`""` = 留空，**摆位即上锁**）
-        与 `Session.set_seat_lock`（只动锁）—— 不绕过它们自己改 dict。
+        写入口**只有** `Session.set_facility_slots`（放人 / 清空：`""` = 留空 ——
+        **摆位即上锁、清空即解锁**，2026-10 口径）与 `Session.set_seat_lock`（只动锁）
+        —— 不绕过它们自己改 dict。
         返回一句**结果文案**（面板内那一行与状态栏都用它）；随后走**异步重算**。
+
+        ⚠️ 2026-10 起**界面不再传 `locks`**（逐位 `☑ 锁` 与「全部解锁…」都已从面板删除），
+        但这里仍保留 `locks` 分支：它是**程序化**入口（测试 / 脚本可用），
+        与 API 保留 `set_seat_lock` / `clear_seat_locks` 是同一条口径。
 
         ⚠️ `set_facility_slots` / `set_seat_lock` 对"名单里的人"会抛 `ValueError`（坑 27：
         不许造出「不在基建 ∧ 在位 ∧ 被锁」）：这里**逐班逐格接住**，写不下的记进文案，

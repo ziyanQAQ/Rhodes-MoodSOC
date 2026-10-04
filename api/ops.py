@@ -321,11 +321,13 @@ def op_set_slots(session: Session, args: dict) -> dict:
 
     `shift_index` / `facility_index` 都是 **1 基**（与界面上看到的顺序一致）。
 
-    `manual`（默认 `true`）：这次改动的**整段位次**要不要记进「手动台账」＝**上锁**
-    （自动入宿从此不占这些位次、不换这些人；被清空的位次**保持空着**）。
-    传 `manual: false` ＝"**我只改布局、不上锁**"：这一位仍然交给自动入宿调度。
-    ⚠️ 默认 `true` 是为了**不改变既有调用方的行为**；要"改布局"与"上锁"分开就用显式的
-    `set_seat_lock` / `clear_seat_locks`。
+    `manual`（默认 `true`）：这次改动里**摆了人的那些位次**要不要记进「手动台账」＝**上锁**
+    （自动入宿从此不占这些位次、不换这些人）；⚠️ **被清空的位次不进台账** ⇒
+    **交还自动入宿**（2026-10 口径＝**摆位即上锁、清空即解锁**，旧口径"清空即上锁 /
+    保持空着"已作废）。
+    传 `manual: false` ＝"**我只改布局、不上锁**"：这些位次仍然交给自动入宿调度。
+    ⚠️ 默认 `true` 是为了**不改变既有调用方的行为**；要单独"锁一个**空位**"（＝"预留空位"，
+    界面上做不到）就用 `set_seat_lock`，要整份交还就用 `clear_seat_locks`。
     """
     _require_session(session)
     _require(shift_index=args.get("shift_index"), facility_index=args.get("facility_index"))
@@ -344,7 +346,9 @@ def op_set_seat_lock(session: Session, args: dict) -> dict:
     `locked` 默认 `true`。
 
     · `locked=true`：该位次进手动台账 ⇒ 自动入宿既不占它、也不换里面的人；
-      **该位是空的，效果就是"保持空着"**。
+      **该位是空的，效果就是"保持空着"**（＝"预留空位"）。
+      ⚠️ **这是 API 专属的能力**：界面上没有锁控件（摆位即上锁、清空即解锁），
+      所以"把一个空位单独锁住"只有走这条 op 才做得到。
     · `locked=false`：把该位次摘掉，**并且**把这一位的人从"手动放的人"里一起去掉 ——
       否则裁决点第 1 层会继续按名字护着她，用户会以为"解锁没生效"。
     """
