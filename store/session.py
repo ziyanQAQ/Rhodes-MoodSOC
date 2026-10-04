@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
@@ -37,7 +37,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from data.skills_data import DEFAULT_OPERATORS
 from mood_soc.battery import to_decimal
 from mood_soc.config import MOOD_MAX, FacilityType
-from mood_soc.models import IdleToDormEntry, normalize_entry_when, read_manual
+from mood_soc.models import (IdleToDormConfig, IdleToDormEntry, build_entry_event_config,
+                             normalize_entry_when, read_manual)
 from mood_soc.rules import mood_skill_summary
 
 from .layout import build_base_layout
@@ -226,21 +227,18 @@ class Session:
 
         `data = {"facilities": [...]}`；可选顶层 `entry_events` / `idle_to_dorm` /
         `initial_global` / `detached` 与场景 JSON 完全同义（见 `store/layout.build_base_layout`）。
+        `idle_to_dorm` 的解析口径只有一处（`Shift.__post_init__` →
+        `models.build_idle_to_dorm_config`），这里**原样传原始值**、不另解析一遍。
         """
-        top = {k: v for k, v in data.items()
-               if k in ("entry_events", "idle_to_dorm", "detached")}
         shift = Shift(label=label, hours=to_decimal(hours if hours is not None else 24),
                       facilities=list(data.get("facilities") or []),
                       source="api:inline",
                       entry_events=None,
+                      idle_to_dorm=data.get("idle_to_dorm"),
                       initial_global=dict(data.get("initial_global") or {}),
                       detached=list(data.get("detached") or []))
-        world = build_base_layout({"facilities": shift.facilities,
-                                   "initial_global": dict(shift.initial_global or {}),
-                                   **top})
-        shift.world = world
         self.schedule = Schedule([shift], to_decimal(hours if hours is not None else 24),
-                                 detached=list(world.detached or []))
+                                 detached=list(shift.world.detached or []))
         self.loaded = LoadedSchedule(schedule=self.schedule)
         self.initial_moods.clear()
         self.mood_events.clear()
@@ -248,8 +246,7 @@ class Session:
         self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         self.recompute()
 
-    def _sync_from_schedule(self, *, from_import: bool = False,
-                            entry_settings: bool = True) -> None:
+    def _sync_from_schedule(self, *, from_import: bool = False) -> None:
         """把排班自带（场景 JSON 顶层）的设置同步到会话（导入后调一次）。
 
         `from_import=True`（三条 `load_*` 传 `True`）时额外做一件事：**名单优先** ——
@@ -260,43 +257,28 @@ class Session:
         "锁着 + 在名单里"这个自相矛盾的状态（见 `set_detached`）；而导入是**数据**，
         报错会让老文件直接打不开 —— 两边口径不同是有意的（Q6 的 (d3) + (i)）。
 
-        `entry_settings=False`：**只同步名单，不用排班快照覆盖「换心情」那组字段**
-        （`entry_events / entry_swap_with / entry_scope / entry_restore_back / entry_when /
-        entry_per_shift`）。为什么要这个开关（2026-10 修 bug，用户报的「碰名单就静默打回
-        换心情设置」）：用户在「换心情」面板设的值**只写在 Session 上**、从不回写排班快照
-        （`ui/app.py::apply_entry_event` / `api/ops.py::op_set_entry_events` 都只写 `session.*`），
-        而 `set_detached` 末尾原来无条件调本方法 ⇒ **碰一次名单，面板设置就被文件里的旧值抹掉**
-        （实测 `(开, 最累的, anywhere, wait)` → `(开, None, dorm, immediate)`；文件里
-        `enable=false` 时连开关都被打回 `False`）。⇒「碰名单」只该同步名单（名册的事），
-        不该重同步「换心情」（自动化的事）。
-
-        ⚠️ `idle_*` 那一组**同样是"只写在 Session 上"**（`ui/app.py::apply_idle_to_dorm` /
-        `api/ops.py::op_set_idle_to_dorm`），**本次按用户口径没改**（只报告）。它的触发路径
-        有**两段**，比 `entry_*` 更绕：① `set_detached` 会 `Schedule.with_detached` 重建每个
-        `Shift`，而 `Shift.__post_init__` 建 `world` 时**只搬 `facilities / initial_global /
-        detached`** ⇒ `world.idle_to_dorm` 在那一步就已经变回**默认值**；② 本方法再把它读回
-        Session。实测：面板设成 `(True, 9, [])` 之后碰一次名单 ⇒ Session 变 `(True, 5, [])`
-        （连文件里那份 `protected_slots=2 / blacklist=['甲']` 都没保住）。
-        ⇒ 要一并修**不能只加这个开关**，还得让 `Shift`（或 `with_detached`）留住
-        `idle_to_dorm`；另见 `16-现状与校准记录.md` §3.2 第 15 条。
+        ⚠️ **本方法读的是"排班快照里那份设置"** ⇒「面板上设的值"碰名单"会不会被打回」
+        完全取决于 `Schedule` 重建时有没有把全局设置搬过去。2026-10 之前 `Shift.__post_init__`
+        **只搬 `facilities / initial_global / detached`**，于是「换心情」与「闲置入宿」两组
+        都会在 `with_detached` 重建时退回默认值、再被这里读回会话（实测：面板设
+        `(True, 9, ['甲'])` 碰一次名单 ⇒ `(True, 5, [])`）。**根因已修**（`Shift` 现在带
+        `entry_events` / `idle_to_dorm` 两个字段并被四条重建路径原样搬运）⇒ 这里**不再需要**
+        任何"只同步名单"的开关；「碰名单」也不再改动这两组设置。
         """
         if self.schedule is None:
             return
         self.detached = list(getattr(self.schedule, "detached", []) or [])
         if from_import and self.detached:
             self._resolve_imported_detached()
-        # ⚠️ 开关**只罩住「换心情」那一组**（下面 if 里的 6 个字段）——`idle_*` 照旧同步，
-        #    一字未动（见 docstring 末段：同病、本次按用户口径只报告）。
-        if entry_settings:
-            cfg = self.schedule.entry_config()
-            self.entry_events = bool(cfg.enabled)
-            self.entry_swap_with = cfg.swap_with
-            self.entry_scope = getattr(cfg, "scope", "dorm")
-            # 「位置也一起互换」按用户要求从界面收掉：界面固定"只换心情、两人留原位"。
-            # 场景 JSON 里写 restore_back: false 会被这条界面口径覆盖（CLI / API 不受影响）。
-            self.entry_restore_back = True
-            self.entry_when = normalize_entry_when(getattr(cfg, "when", None)) or "full"
-            self.entry_per_shift = list(getattr(cfg, "per_shift", []) or [])
+        cfg = self.schedule.entry_config()
+        self.entry_events = bool(cfg.enabled)
+        self.entry_swap_with = cfg.swap_with
+        self.entry_scope = getattr(cfg, "scope", "dorm")
+        # 「位置也一起互换」按用户要求从界面收掉：界面固定"只换心情、两人留原位"。
+        # 场景 JSON 里写 restore_back: false 会被这条界面口径覆盖（CLI / API 不受影响）。
+        self.entry_restore_back = True
+        self.entry_when = normalize_entry_when(getattr(cfg, "when", None)) or "full"
+        self.entry_per_shift = list(getattr(cfg, "per_shift", []) or [])
         idle = getattr(self.schedule.shifts[0].world, "idle_to_dorm", None) if self.schedule.shifts else None
         # ⚠️ 默认**开**（用户口径"闲置入宿默认是开启的"）：文件里没写这个键 → 开；
         #    显式写 `"idle_to_dorm": false` / `{"enabled": false}` → 关。
@@ -775,6 +757,10 @@ class Session:
         `recompute=False`（默认）：只改状态、**不重算**（导入路径随后自己会算一次）；
         只想改名单就要新结果时传 `recompute=True`。
 
+        ⚠️ **只动名册**（2026-10 修根因后）：本方法**不碰**任何自动化设置（换心情那 6 个字段 /
+        闲置入宿那一组）—— 它们只写在 `Session` 上、从不回写排班快照，所以这里若再
+        `_sync_from_schedule()` 一次，文件里写过的旧值就会把面板设置覆盖回去。详见方法末尾注释。
+
         ⚠️ **手动锁优先（用户裁决 2026-10，Q6）**：名单里的人若**已被手动锁在某个位次**上，
         本方法**拒绝执行**并抛 `ValueError`（消息里写明她被锁在第几班哪一间的第几位）。
         理由：手动锁的目的就是"把干员放回基建内"，所以"锁着 ↔ 在名单里"这个状态**不允许被
@@ -801,12 +787,57 @@ class Session:
         if remove_from_slots:
             self._remove_from_slots(out)
         self.schedule = self.schedule.with_detached(out)
-        # ⚠️ `entry_settings=False`：**碰名单只同步名单**。用户面板设的「换心情」只写在
-        #    Session 上、从不回写快照，无条件重同步会把它静默打回文件里的旧值
-        #    （见 `_sync_from_schedule` 的说明）。
-        self._sync_from_schedule(entry_settings=False)
+        # 把会话里那两份**权威**的自动化设置写回刚重建出来的快照（只在"本来就要重建"的
+        # 这条路上做，不额外付代价）⇒ 快照与面板**逐项一致**，不再是"会话 9 / 快照 2"。
+        self._push_automation_settings()
+        # ⚠️ **这里不再 `_sync_from_schedule()`**（用户口径：碰名单只动名册）。
+        #    `_sync_from_schedule` 是"**导入时**把文件里的设置读进会话"的那一次同步；
+        #    在编辑路径上再调一次，语义就变成"用排班快照覆盖面板设置" —— 而面板上那两组
+        #    自动化设置（换心情 / 闲置入宿）**只写在 Session 上、从不回写排班快照**
+        #    （`ui/app.py::apply_idle_to_dorm` / `apply_entry_event`、
+        #    `api/ops.py::op_set_idle_to_dorm` 都只写 `session.*`）⇒ 文件里写过 `idle_to_dorm`
+        #    或 `entry_events` 时，碰一次名单就把面板设置整组打回文件旧值（实测：
+        #    面板 `(True, 9, ['丙'])` + `(any, dorm, immediate)` → 碰名单后变回文件的
+        #    `(True, 2, ['甲'])` + `(缪尔赛思, anywhere, wait)`）。
+        #    `with_detached` 已经把名单写回 `Schedule` 与每个班的 `world`（这就是这次要同步的
+        #    全部内容），会话里那份 `self.detached` 上面也已更新 ⇒ 没有别的要同步的。
         if recompute:
             self.recompute()
+
+    def _push_automation_settings(self) -> None:
+        """把会话里那两组自动化设置（**换心情 / 闲置入宿**）写进排班快照。
+
+        ⚠️ 为什么要这一步：这两组设置**只写在 `Session` 上**（面板与 API 都只改 `session.*`），
+        而排班快照里带着一份"导入时读到的"副本。快照一旦与面板不同（用户改过面板），
+        两者就会**长期分叉**：随后任何一次 `Schedule` 重建（`with_detached` / `replaced_shift` …）
+        搬的都是**快照里那份旧值** ⇒ 导出、`_world_digest`、下一次导入回填看到的都不是面板值。
+        这里把会话那份写回快照（每个班次各一份深拷贝），让两边逐项一致。
+
+        调用时机：只在"**本来就要重建 `Schedule`**"的编辑路径上（`set_detached`）——
+        不额外付代价，也不改变任何现有调用点的语义（引擎照旧只读 `Session`，
+        `recompute_inputs` 传的还是 `Session` 的值）。
+        """
+        sch = self.schedule
+        if sch is None:
+            return
+        entries = [IdleToDormEntry(name=n, enabled=bool(use))
+                   for n, use in (self.idle_globals or {}).items()]
+        entries += [IdleToDormEntry(name=n, enabled=bool(use), cycle=c, shift=s)
+                    for (c, s, n), use in (self.idle_entries or {}).items()]
+        for sh in sch.shifts:
+            idle = IdleToDormConfig(enabled=bool(self.idle_to_dorm),
+                                    protected_slots=int(self.idle_protected_slots),
+                                    blacklist=[str(n) for n in self.idle_blacklist],
+                                    per_operator=deepcopy(entries))
+            sh.idle_to_dorm = idle
+            sh.world.idle_to_dorm = idle
+            cfg = build_entry_event_config({
+                "enabled": bool(self.entry_events), "swap_with": self.entry_swap_with,
+                "scope": self.entry_scope, "restore_back": bool(self.entry_restore_back),
+                "when": self.entry_when,
+                "per_shift": [asdict(o) for o in (self.entry_per_shift or ())]})
+            sh.entry_events = cfg
+            sh.world.entry_events = cfg
 
     def _remove_from_slots(self, names: Sequence[str]) -> int:
         """把这些人从**所有班次**的进驻位上摘掉（返回动过几个班次）。

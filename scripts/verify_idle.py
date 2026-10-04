@@ -403,6 +403,137 @@ def test_enabled_switch():
           len(apply_idle_to_dorm(world, idle={"甲": 5})) == 1, "")
 
 
+def test_import_and_keep_idle_globals():
+    """**全局设置（闲置入宿 / 换心情）在导入与"重建 Shift"两条路上的保真**。
+
+    两个缺陷（2026-10 由根因修掉，见 `documents/04-特殊机制.md` 第 30 条与
+    `documents/16-现状与校准记录.md` §3.2 第 15 条）：
+
+      A. **场景文件顶层的 `idle_to_dorm` 从来没被读进来** —— `Shift.__post_init__` 建
+         `world` 时只搬 `facilities / initial_global / detached`（解析口径本来是好的，
+         `store/layout.build_base_layout` 一直在读，只是导入层没把文件里那份交下去）。
+      B. **`idle_*` 只写在 `Session` 上、从不回写排班快照**（`ui/app.py::apply_idle_to_dorm`
+         / `api/ops.py::op_set_idle_to_dorm`），而 `set_detached` → `Schedule.with_detached`
+         **重建每个 `Shift`** ⇒ 世界由 `facilities` 现搭、全局设置退回默认值；随后
+         `_sync_from_schedule()` 又把它读回会话 ⇒ **碰一下「不在基建」名单，面板上的
+         闲置入宿配置就被文件旧值打回**（实测 `(True, 9, ['丙'])` → `(True, 2, ['甲'])`）。
+
+    ⚠️ **换心情那一组要分开说**（本次实测澄清）：`Shift.entry_events` 这个字段**本来就在**
+    并被四条重建路径搬运 ⇒ 旧代码上"碰名单"**并没有**把面板的换心情设置打回（三组场景实测
+    都是原样保持）；当时那个 `_sync_from_schedule(entry_settings=False)` 开关是**防御性的**、
+    不是修掉一个实测缺陷。本次修根因后把开关撤掉（`set_detached` 干脆不再重同步），
+    **这里一样钉住"换心情逐项保持"** —— 撤开关不能把它弄丢。
+
+    这一组断言里**"碰名单后 `idle_*` 逐项保持"与四个重建入口**在修根因之前必须全红。
+    """
+    print("全局设置保真：文件顶层 idle_to_dorm 真的生效 + 碰名单不打回面板配置")
+
+    from store.schedule import load_schedule_from_imports
+    from store.session import Session
+    from store.sources import import_data
+
+    facs = [{"type": "宿舍", "level": 1, "capacity": 3,
+             "operators": [{"name": "甲", "mood": "24"}]},
+            {"type": "制造站", "level": 1, "capacity": 1, "operators": []}]
+    cfg = {"enabled": False, "protected_slots": 2, "blacklist": ["甲"],
+           "per_operator": [{"name": "庚", "enabled": False}]}
+    scen = {"facilities": facs, "idle_to_dorm": cfg,
+            "entry_events": {"enabled": True, "swap_with": "缪尔赛思",
+                             "scope": "anywhere", "when": "wait"}}
+
+    # —— A. 文件顶层 idle_to_dorm 真的被读进 world / Session ——
+    sch = load_schedule_from_imports([import_data(scen, source="scen.json")]).schedule
+    world_cfg = sch.shifts[0].world.idle_to_dorm
+    check("文件 `idle_to_dorm` 进了 world 与班次（来源层 → Shift 那一段，改前退回默认值）",
+          (world_cfg.enabled, world_cfg.protected_slots, list(world_cfg.blacklist))
+          == (False, 2, ["甲"])
+          and [e.name for e in world_cfg.per_operator] == ["庚"],
+          f"world={world_cfg!r}")
+    s = Session()
+    s.load_layout({"facilities": facs, "idle_to_dorm": cfg})
+    check("`Session.load_layout`（内联那条路）读得进同一份（改前恒 (True, 5, [])）",
+          (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist) == (False, 2, ["甲"]),
+          f"{(s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist)}")
+
+    # —— A2. 不写这个键 ⇒ 仍默认开（全项目口径，防回归）——
+    s = Session()
+    s.load_layout({"facilities": facs})
+    check("文件**没写** `idle_to_dorm` ⇒ 仍默认开 `(True, 5, [])`",
+          (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist) == (True, 5, []),
+          f"{(s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist)}")
+
+    # —— A3. 裸布尔两种写法 ——
+    s = Session()
+    s.load_layout({"facilities": facs, "idle_to_dorm": False})
+    check("裸布尔 `false` ⇒ 关", s.idle_to_dorm is False, str(s.idle_to_dorm))
+    s = Session()
+    s.load_layout({"facilities": facs, "idle_to_dorm": {"enabled": False}})
+    check("`{\"enabled\": false}` ⇒ 关", s.idle_to_dorm is False, str(s.idle_to_dorm))
+
+    # —— A4. 导入 note 要如实（改前是不管内容一律「idle_to_dorm（闲置入宿）」）——
+    s = Session()
+    s.load_data(dict(scen), apply_file_settings=True)
+    notes = " / ".join(s.loaded.reports[0].notes)
+    check("导入报告如实写出读到的那一份（关 / 锁定位置 2 / 黑名单 甲）",
+          "idle_to_dorm" in notes and "关" in notes and "锁定位置 2" in notes and "甲" in notes,
+          notes)
+
+    # —— B. 碰名单不打回面板设置（快照值刻意与面板处处不同）——
+    s = Session()
+    s.load_data(dict(scen), apply_file_settings=True)
+    s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist = True, 9, ["丙"]
+    s.idle_globals = {"丙": False}
+    s.idle_entries = {(2, 1, "丁"): False}
+    s.entry_events, s.entry_swap_with, s.entry_scope, s.entry_when = (
+        True, "any", "dorm", "immediate")
+    before = (s.idle_to_dorm, s.idle_protected_slots, tuple(s.idle_blacklist),
+              dict(s.idle_globals), dict(s.idle_entries),
+              s.entry_events, s.entry_swap_with, s.entry_scope, s.entry_when)
+    s.set_detached(["乙"])
+    after = (s.idle_to_dorm, s.idle_protected_slots, tuple(s.idle_blacklist),
+             dict(s.idle_globals), dict(s.idle_entries),
+             s.entry_events, s.entry_swap_with, s.entry_scope, s.entry_when)
+    check("碰名单后：闲置入宿 + 换心情**逐项保持**（改前闲置入宿整组被打回文件旧值）",
+          after == before, f"{before} → {after}")
+    welt = s.schedule.shifts[0].world.idle_to_dorm
+    check("碰名单后：`world` 里那份也还是面板值（快照跟着会话走，不再是文件旧值）",
+          (welt.enabled, welt.protected_slots, list(welt.blacklist)) == (True, 9, ["丙"]),
+          f"world=({welt.enabled}, {welt.protected_slots}, {welt.blacklist})")
+    went = s.schedule.shifts[0].world.entry_events
+    check("碰名单后：`world` 的换心情也是面板值（撤销 `entry_settings` 开关之后仍对）",
+          (went.enabled, went.swap_with, getattr(went, "scope", None),
+           getattr(went, "when", None)) == (True, "any", "dorm", "immediate"),
+          f"world=({went.enabled}, {went.swap_with}, {went.scope}, {went.when})")
+
+    # —— B2. 四个重建入口都要把全局设置搬过去（`Shift` 是可重建的）——
+    sch = load_schedule_from_imports([import_data(scen, source="scen.json")]).schedule
+    rebuilt = {"with_hours": sch.with_hours([s.hours for s in sch.shifts]),
+               "replaced_shift": sch.replaced_shift(0, list(sch.shifts[0].facilities)),
+               "with_detached": sch.with_detached(["乙"]),
+               "with_start_clock": sch.with_start_clock("1")}
+    bad = {name: (getattr(new.shifts[0].world.idle_to_dorm, "enabled"),
+                  getattr(new.shifts[0].world.idle_to_dorm, "protected_slots"),
+                  list(getattr(new.shifts[0].world.idle_to_dorm, "blacklist")))
+           for name, new in rebuilt.items()
+           if (getattr(new.shifts[0].world.idle_to_dorm, "enabled"),
+               getattr(new.shifts[0].world.idle_to_dorm, "protected_slots"),
+               list(getattr(new.shifts[0].world.idle_to_dorm, "blacklist")))
+           != (False, 2, ["甲"])}
+    check("四个重建入口（with_hours / replaced_shift / with_detached / with_start_clock）都搬",
+          not bad, f"丢掉的：{bad}")
+    check("文件里的 `entry_events` 也一路在（重建不丢换心情）",
+          all(getattr(new.shifts[0].world.entry_events, "enabled", None) is True
+              and getattr(new.shifts[0].world.entry_events, "swap_with", None) == "缪尔赛思"
+              for new in rebuilt.values()),
+          str([(getattr(n.shifts[0].world.entry_events, "enabled", None),
+                getattr(n.shifts[0].world.entry_events, "swap_with", None))
+               for n in rebuilt.values()]))
+    check("`sch` 自己那份快照没被重建动作改到（每次重建各得一份世界）",
+          (sch.shifts[0].world.idle_to_dorm.enabled,
+           sch.shifts[0].world.idle_to_dorm.protected_slots) == (False, 2),
+          f"{(sch.shifts[0].world.idle_to_dorm.enabled, sch.shifts[0].world.idle_to_dorm.protected_slots)}")
+
+
 def test_protected_slots():
     print("全局配置：锁定位置数（竖向正序前 N 个**逻辑位次**）")
     check("默认值 = 5", DEFAULT_PROTECTED_SLOTS == 5, str(DEFAULT_PROTECTED_SLOTS))

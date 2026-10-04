@@ -55,8 +55,8 @@ from mood_soc.battery import ZERO, to_decimal
 from mood_soc.config import MOOD_MAX, MOOD_MIN, use_project_decimal_context
 from mood_soc.models import (BaseLayout, EntryEventConfig, EntryShiftOverride,
                              IdleToDormConfig, IdleToDormEntry,
-                             build_entry_event_config, normalize_entry_when,
-                             resolve_entry_config)
+                             build_entry_event_config, build_idle_to_dorm_config,
+                             normalize_entry_when, resolve_entry_config)
 from data.skills_data import DEFAULT_OPERATORS
 
 from .layout import build_base_layout
@@ -94,6 +94,15 @@ class Shift:
     source: str = ""
     # 进驻事件配置（models.EntryEventConfig）：来自场景 JSON 顶层，随班次一起搬运
     entry_events: Optional[object] = None
+    # **闲置入宿**配置（`models.IdleToDormConfig`，来自场景 JSON 顶层 `idle_to_dorm`）：
+    # 与 `entry_events` 同层、同样**随班次一起搬运**。两种写法都收：
+    # 已解析好的 `IdleToDormConfig`（重建时原样传），或**文件里那份原始值**
+    # （`True` / `False` / `dict`，由 `__post_init__` 解析）。
+    # ⚠️ 为什么必须留这个字段：`Shift` 是**可重建**的（`Schedule.with_hours` /
+    #     `replaced_shift` / `with_detached` / `with_start_clock` 都会重建每个 `Shift`），
+    #     而世界是由 `facilities` 现搭的 ⇒ 只挂在 `world` 上的全局设置在重建时会**静默
+    #     退回默认值**（"碰一下「不在基建」名单就把面板上的闲置入宿配置打回 5/[]" 就是它）。
+    idle_to_dorm: Optional[object] = None
     # 变量初始值（场景 JSON 的 `initial_global`；导入 v4 蓝图的 `scenario.initial_global`）
     initial_global: Dict[str, Decimal] = field(default_factory=dict)
     # 「不在基建」名单：**既不在工作设施、也不在宿舍**的干员（场景 JSON 顶层 `detached`）。
@@ -114,6 +123,14 @@ class Shift:
                                         "detached": list(self.detached)})
         if self.entry_events is not None:      # 顶层配置透传给 world
             self.world.entry_events = self.entry_events
+        # ⚠️ **闲置入宿配置也要保留调用方给的值**（不是退回 `build_base_layout` 的默认值）：
+        #    没有这一行，`Schedule.with_detached` 重建出来的世界就把全局设置丢成默认
+        #    （`_sync_from_schedule` 再把它读回 `Session` ⇒ 面板设置被打回）。
+        #    解析口径**只有一处**：`models.build_idle_to_dorm_config`（界面/导入同一份）。
+        if self.idle_to_dorm is not None:
+            self.world.idle_to_dorm = (
+                self.idle_to_dorm if isinstance(self.idle_to_dorm, IdleToDormConfig)
+                else build_idle_to_dorm_config(self.idle_to_dorm))
         self._names = [o.name for o in self.world.all_operators()]
 
     @property
@@ -127,11 +144,17 @@ class Shift:
 
 
 def shift_from_facilities(label: str, hours, facilities: List[dict], source: str = "",
-                          entry_events=None, initial_global=None, detached=None) -> Shift:
-    """由场景格式的 facilities 构建一个班次（`entry_events` 为可选进驻事件配置）。"""
+                          entry_events=None, initial_global=None, detached=None,
+                          idle_to_dorm=None) -> Shift:
+    """由场景格式的 facilities 构建一个班次（`entry_events` 为可选进驻事件配置）。
+
+    `idle_to_dorm`：顶层闲置入宿配置 —— 收**文件里的原始值**或已解析的
+    `IdleToDormConfig`（解析在 `Shift.__post_init__`，只此一处）。
+    """
     return Shift(label=label, hours=to_decimal(hours), facilities=list(facilities),
                  source=source, entry_events=entry_events,
                  initial_global=dict(initial_global or {}),
+                 idle_to_dorm=idle_to_dorm,
                  detached=list(detached or []))
 
 
@@ -139,6 +162,8 @@ def shifts_from_import(imp, source: str = "") -> List[Shift]:
     """把 `importer.ImportResult` 的一个文件转成班次列表。
 
     - 每班的 `entry_events`（换心情）：沿用该文件解析出来的配置（挂在每个班次上）；
+    - `idle_to_dorm`（闲置入宿）：**文件顶层那一份**（`imp.idle_to_dorm`，原样收下，
+      由 `Shift.__post_init__` 按唯一口径解析）—— 不写这个键 ⇒ `None` ⇒ 默认开；
     - `initial_global`（变量初始值）：挂到每个班次（同一份排班共用）；
     - `detached`（不在基建的人）：同样挂到每个班次（同一份排班共用）。
     """
@@ -146,6 +171,7 @@ def shifts_from_import(imp, source: str = "") -> List[Shift]:
     return [Shift(label=s.label, hours=s.hours if s.hours is not None else ZERO,
                   facilities=list(s.facilities), source=source or imp.report.source,
                   entry_events=cfg, initial_global=dict(imp.initial_global or {}),
+                  idle_to_dorm=getattr(imp, "idle_to_dorm", None),
                   detached=list(s.detached or []))
             for s in imp.shifts]
 
@@ -224,7 +250,10 @@ def shifts_from_maa_file(path: Union[str, Path], hours: Optional[Sequence] = Non
 
 
 def shifts_from_scenario_file(path: Union[str, Path], hours: Optional[Sequence] = None) -> List[Shift]:
-    """读一个本工具的场景 JSON（`{"facilities": [...]}`）→ 一个班次。"""
+    """读一个本工具的场景 JSON（`{"facilities": [...]}`）→ 一个班次。
+
+    顶层 `entry_events` / `idle_to_dorm` 都挂到这个班次上（解析口径只有一处，见 `Shift`）。
+    """
     p = Path(path)
     with open(p, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -233,7 +262,8 @@ def shifts_from_scenario_file(path: Union[str, Path], hours: Optional[Sequence] 
     label = str(data.get("_source_plan") or p.stem)
     h = to_decimal(hours[0]) if hours else ZERO
     return [Shift(label=label, hours=h, facilities=data["facilities"], source=p.name,
-                  entry_events=build_entry_event_config(data.get("entry_events")))]
+                  entry_events=build_entry_event_config(data.get("entry_events")),
+                  idle_to_dorm=data.get("idle_to_dorm"))]
 
 
 def shift_file_kind(path: Union[str, Path]) -> str:
@@ -257,6 +287,20 @@ class Schedule:
     也不在宿舍的干员。语义见 `simulate_schedule`：整段轨迹**心情恒定**（净速率 0），
     且**不参与任何技能计数**（他们不在 `world` 里）。
     它属于**整份排班**（不是逐班），`__post_init__` 会把各班的并集归一化后写回每一班。
+
+    **顶层全局设置存在哪**（改这块前先看这条链路，2026-10 修过一次静默丢失）：
+
+    | 设置 | 权威位置 | 传给 `world` |
+    |---|---|---|
+    | `entry_events`（换心情） | `Shift.entry_events` | `Shift.__post_init__` 透传 |
+    | `idle_to_dorm`（闲置入宿） | `Shift.idle_to_dorm` | `Shift.__post_init__` 解析后写入 |
+    | `initial_global` / `detached` | `Shift.*` | 经 `build_base_layout` 的 data |
+    | `start_clock` / `cycle_hours` | `Schedule.*` | —（只改显示口径） |
+
+    ⚠️ `Shift` 是**可重建**的（`with_hours` / `replaced_shift` / `with_detached` /
+    `with_start_clock`），而 `world` 每次都从 `facilities` 现搭 ⇒ **全局设置必须挂在
+    `Shift` 上并被重建路径原样搬运**；只挂在 `world` 上的那些会在重建时静默退回默认值
+    （`Session` 随后从 `world` 读回，于是"碰一下名单，面板上的闲置入宿配置被打回 5/[]"）。
     """
     shifts: List[Shift]
     cycle_hours: Decimal = DEFAULT_CYCLE_HOURS
@@ -395,6 +439,7 @@ class Schedule:
         new = [Shift(label=name, hours=h,
                      facilities=copy.deepcopy(s.facilities), source=s.source,
                      entry_events=cfg if has_cfg else None,
+                     idle_to_dorm=s.idle_to_dorm,
                      initial_global=dict(getattr(s, "initial_global", {}) or {}),
                      detached=list(getattr(s, "detached", []) or []))
                for s, h, name in zip(self.shifts, new_hours, names)]
@@ -411,6 +456,7 @@ class Schedule:
         new = [Shift(label=s.label, hours=s.hours,
                      facilities=(list(facilities) if i == index else copy.deepcopy(s.facilities)),
                      source=s.source, entry_events=s.entry_events,
+                     idle_to_dorm=s.idle_to_dorm,
                      initial_global=dict(getattr(s, "initial_global", {}) or {}),
                      detached=list(getattr(s, "detached", []) or []))
                for i, s in enumerate(self.shifts)]
@@ -422,9 +468,12 @@ class Schedule:
         ⚠️ 传进去的名单是**权威值**（`[]` 就是清空）：`__post_init__` 默认会把各班
         Shift 上的旧名单并回来，所以这里要 `_detached_authoritative=True` ——
         否则"清空名单"会被无声地撤销（踩过）。
+        ⚠️ 重建时会**原样搬运**每班的全局设置（`entry_events` / `idle_to_dorm` /
+        `initial_global`）——漏搬任何一项都会让"碰名单"顺手打回面板上的设置。
         """
         new = [Shift(label=s.label, hours=s.hours, facilities=copy.deepcopy(s.facilities),
                      source=s.source, entry_events=s.entry_events,
+                     idle_to_dorm=s.idle_to_dorm,
                      initial_global=dict(getattr(s, "initial_global", {}) or {}),
                      detached=[])
                for s in self.shifts]
