@@ -1296,6 +1296,25 @@ def test_entry_event_scope():
     check("① 锁定入宿顶掉 vs ② 显式名单：第 1 班三个周期班初都是「一次事件 + 龙舌兰 24」",
           rows[0] == rows[1] == [("24.00", 1), ("24", 1), ("24", 1)], f"{rows}")
 
+    # ⑩ **她的新心情必须写回那张表、且跨执行点 / 跨周期连续**（用户要求实测）。
+    #    构造：单班 24h（执行点＝0h 班初 ＋ 12h 内部换班点）、她在名单里（净速率 0 ⇒ 平线）、
+    #    初始 24、点名换「龙舌兰」（他 2）⇒ 换一次她变 2。**若写回失效**，t=12 她又会以 24 出现
+    #    ⇒ 再换一次（事件数变成 2+）；所以"只换一次 + 她一直是 2"就是写回生效的证据。
+    facs_t = [{"type": "贸易站", "level": 3, "name": "贸易站#1",
+               "operators": [{"name": "龙舌兰", "mood": "2"}]}]
+    sch_t = Schedule(shifts=[Shift(label="班1", hours="24", facilities=facs_t,
+                                   detached=["菲亚梅塔"])],
+                     cycle_hours=Decimal("24"), detached=["菲亚梅塔"])
+    traj_t = simulate_schedule(sch_t, cycles=3, initial_moods={"菲亚梅塔": Decimal("24")},
+                               entry_events=True, entry_swap_with="龙舌兰",
+                               entry_scope="anywhere", entry_when="wait",
+                               idle_to_dorm=False)
+    swaps_t = [mm.t for mm in traj_t.marks if mm.kind == "entry" and "互换" in mm.label]
+    her_t = [traj_t.mood_at("菲亚梅塔", t) for t in (0, 12, Decimal("23.9"), 24, 48)]
+    check("换完的新心情**写回那张表**：三个执行点只换一次、她一路是 2（写回失效就会换第二次）",
+          swaps_t == [Decimal("0")] and her_t == [Decimal("2")] * 5
+          and traj_t.rate_at("菲亚梅塔", 1) == Decimal("0"), f"{swaps_t} {her_t}")
+
 
 def test_seat_io_roundtrip():
     print("布局位次的**公开**读写（`seat_specs` / `seat_values` / `write_seats`）")
