@@ -27,6 +27,11 @@ from pathlib import Path
 import re
 import sys
 
+try:                                  # Windows 控制台默认 GBK，打不出「⇄」这类字符
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:                     # noqa: BLE001 —— 老解释器/被重定向时忽略
+    pass
+
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "documents"
 AGENTS = ROOT / "AGENTS.md"

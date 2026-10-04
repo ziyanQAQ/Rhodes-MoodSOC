@@ -42,6 +42,11 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+try:                                  # 输出被重定向时 Python 退回 GBK，中文会乱码/报错
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:                     # noqa: BLE001 —— 老解释器/已包装的流忽略
+    pass
+
 from mood_soc import build_base_layout                                  # noqa: E402
 from mood_soc.battery import to_decimal                                 # noqa: E402
 from mood_soc.config import FACILITY_LABELS, FacilityType                # noqa: E402
