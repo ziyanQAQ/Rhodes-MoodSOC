@@ -892,17 +892,17 @@ class Session:
         ⚠️ 位次语义：`operators[i]` 写的就是**第 i+1 位**。空串**留空洞、不左移**
         （"清空第 1 位"不会把后面的人往前挪），导出时写成 `slots: ["", …]`。
 
-        **手动编辑逻辑**：调用方传进来的整份列表都被当作"人写的"——
-        传进来的**整段位次**（**含被清空的那些**）与被写进去的人一起记进手动台账
-        （`_write_manual`，原来那份台账整份作废）。自动入宿从此不占这些位次、不换这些人；
-        **手动清空的位次从此"保持空着"**（2026-10 与 `set_facility_slots` 统一了这条口径，
-        见 `04-特殊机制.md` 第 30 条）。导入**不打标**（只有这个入口与 `set_facility_slots` 会打）。
+        **手动编辑逻辑（2026-10 口径＝摆位即上锁、清空即解锁）**：调用方传进来的整份列表里，
+        **摆了人的位次**与被写进去的人一起记进手动台账（`_write_manual`，原来那份台账整份作废）；
+        **被清空的位次不进台账** ⇒ 那一位交还自动入宿（自动入宿可以再占它、也可以换里面的人）。
+        自动入宿从此不占"摆着人"的位次、不换那些人。导入**不打标**
+        （只有这个入口与 `set_facility_slots` 会打）。见 `04-特殊机制.md` 第 30 条。
 
         `manual=False`：**只改布局、不打手动标**（API 用；默认 `True` 保持既有行为）——
         "改布局"与"上锁"是两件事，这个开关是它们的解耦口。
 
-        ⚠️ 传空列表（`[]`）＝**清空整间房**：位次"到过的长度"塌成 0，于是**一个位次都不上锁**
-        —— 相当于把整间房交还给自动入宿。要"锁住一整间空房"，请逐位用 `set_seat_lock`。
+        ⚠️ 传空列表（`[]`）或整份都清空＝把整间房交还给自动入宿。
+        要"锁住一个空位/一整间空房"，请用 `set_seat_lock`（那是"预留空位"的能力）。
         """
         facs = self.facilities_of(shift_index)
         if not (0 <= facility_index < len(facs)):
@@ -913,10 +913,10 @@ class Session:
             self._reject_detached_seats(names, shift_index, facility_index)
         _write_seats(fac, names)
         if manual:
-            # ⚠️ `touched=len(names)` ⇒ **清空即上锁**。只把"有名字的位次"记进台账的话，
-            #    手动清空的格子会被自动入宿立刻填上 —— 而文档（`04` 第 30 条 / AGENTS 坑 17）
-            #    写的是"手动清空的位次**保持空着**"：旧实现在这条上与文档相反，且两条写入口
-            #    （`set_slots` 解锁 / `set_facility_slots` 上锁）口径不一致。
+            # ⚠️ 2026-10 口径＝**摆位即上锁、清空即解锁**：只把"有名字的位次"记进台账，
+            #    被清空的那一位**不进** `slots` ⇒ 交还自动入宿（旧实现是 `touched=len(names)`
+            #    ⇒ 清空即上锁，用户 2026-10 拍板反转，见 `_write_manual` 的说明）。
+            #    `touched` 仍传，用作位次的上界校验（别让越界下标进台账）。
             _write_manual(fac, raw_slots=[i for i, n in enumerate(names) if n],
                           raw_names=[n for n in names if n], touched=len(names))
         facs[facility_index] = fac
@@ -928,7 +928,8 @@ class Session:
 
         与 `set_slots` 的区别是**不动没提到的位次**：传进来的每一位按原样写
         （`None`/空串 = 该位留空），后面的位次与它们的手动标记保持原样。
-        手动台账：这些位次被标成"人写的"（含被清空的 ⇒ "保持空着"），写了名字的连人一起标。
+        手动台账（2026-10）：**摆了人的位次**进台账（＝摆位即上锁）、写了名字的连人一起标；
+        **被清空的位次不进台账**（＝清空即解锁，那一位交还自动入宿）。
 
         `manual=False`：只改布局、不打手动标（与 `set_slots` 同一个开关）。
         """
@@ -1149,7 +1150,8 @@ class Session:
         "按位次对齐的名字列表"放在 `operators` 里，空串＝空槽）。返回**改动过的设施数**。
 
         **Q15=(a) 的落点**："任何界面摆位都算手动入宿" —— 所以这条路的台账语义与
-        `set_facility_slots` 一致：**传进来的整段位次都算人管**（含被清空的 ⇒ "保持空着"）。
+        `set_facility_slots` 一致（2026-10 口径）：**摆了人的位次**进台账（＝摆位即上锁）、
+        **被清空的位次不进台账**（＝清空即解锁，那一位交还自动入宿）。
 
         ⚠️ 为什么不是让调用方逐间调 `set_facility_slots`：
         ① **只动"占位真的变了"的设施** —— 面板给的是一整班布局，未动的房间不该被"手动钉住"
@@ -1178,7 +1180,7 @@ class Session:
                 fac = dict(item)                      # 面板给的整份（等级/名称/其它键都带上）
                 _write_seats(fac, _seat_specs(item))  # 收敛成唯一正式写法（紧凑/带空洞）
                 if new_values != old_values:
-                    # 占位变了 ⇒ 整段位次算人管（含被清空的：**清空即上锁**）
+                    # 占位变了 ⇒ 只把**摆了人的位次**记进台账（清空的那一位交还自动入宿）
                     _write_manual(fac, raw_slots=[k for k, n in enumerate(new_values) if n],
                                   raw_names=[n for n in new_values if n],
                                   touched=max(len(new_values), len(old_values)))
@@ -1615,21 +1617,28 @@ def write_seats(fac: dict, values: Sequence[object]) -> None:
 def _write_manual(fac: dict, *, raw_slots=(), raw_names=(), touched: Optional[int] = None) -> None:
     """写设施描述的 `manual` 台账（`store.session.set_slots` / `set_facility_slots` 用）。
 
-    规则（Q2/Q12/Q13）：
-      · 传进来的位次（前 `touched` 个）一律进 `slots`＝"这一位归人管"；
+    规则（Q2/Q12/Q13；2026-10 口径反转，见 `04-特殊机制.md` 第 30 条）：
+      · **摆了人的位次**进 `slots`＝"这一位归人管"（＝**摆位即上锁**）；
+      · **被清空的位次不进 `slots`**＝"这一位交还自动入宿"（＝**清空即解锁**）；
       · 写了名字的进 `names`＝"这个人是人放的"；
       · 同一份数据里**已经被写掉的人**（不再出现在 `values` 里）从 `names` 摘掉；
       · 台账空了就把 `manual` 键删掉（导出保持干净）。
 
-    ⚠️ **位次的上界是"容量"，不是"占位数组的长度"**：`_write_seats` 会**裁掉尾部空槽**
-    （`["甲","乙",""]` → `["甲","乙"]`），若 `limit` 跟着数组长度算，"清空最后一个有人位"
-    就连那一位都不存在了 ⇒ **"清空即上锁"落不到它身上**（实测过）。容量才是"这一位还能不能
-    存在"的正式上界（`_capacity_of_dict` 与 `Facility.capacity` 同一套规则）。
+    ⚠️ **上一轮这里是反的**：`slots |= set(range(limit)) if touched is not None else set()`
+    把"传进来的整段位次"（含清空的）全锁上＝「清空即上锁」。用户 2026-10 拍板改成
+    **「摆位即上锁、清空即解锁」**（原话：「放上去之后自动上锁。**不需要手动上锁**」
+    「解锁时只需要**将该位置空**就可以了」）⇒ 那一行删掉。要"锁住一个空位"请走
+    `set_seat_lock`（`_set_lock`，**"预留空位"的能力，没动过**）。
+
+    ⚠️ **`touched` / `limit` 仍留作位次的上界校验**（不是"锁哪些位次"）：
+    `_seat_values` 会**裁掉尾部空槽**（`["甲","乙",""]` → `["甲","乙"]`），不夹上界的话
+    越界的 `raw_slots`（比如同一批里第 3 位被清空、而前面几位的下标还在）会被写进台账。
+    上界取**容量**而不是"占位数组的长度"（`_capacity_of_dict` 与 `Facility.capacity`
+    同一套规则）。
     """
     cap = max(_capacity_of_dict(fac), len(_seat_values(fac)))
     limit = cap if touched is None else min(int(touched), cap)
     slots = {int(i) for i in raw_slots if 0 <= int(i) < limit}
-    slots |= set(range(limit)) if touched is not None else set()
     names = {str(n) for n in raw_names if n}
     live = {v for v in _seat_values(fac) if v}
     names &= live

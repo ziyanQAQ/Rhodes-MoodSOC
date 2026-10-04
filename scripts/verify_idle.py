@@ -6,8 +6,11 @@
 
 口径（2026-10 重写，见 `documents/04-特殊机制.md` 第 30 条）：
 
-  ① **手动编辑**（`models.ManualLedger`，跟着班次布局走）—— 钉住的**位次**与手动放进去的
-     **人**绝对不碰（不占、不换）；手动清空的那一位**保持空着**；导入不打标。
+  ① **手动编辑**（`models.ManualLedger`，跟着班次布局走）—— **摆位即上锁、清空即解锁**
+     （2026-10 口径反转）：摆了人的**位次**与手动放进去的**人**绝对不碰（不占、不换）；
+     **把该位置空＝那一位交还自动入宿**（不再"保持空着"）；导入不打标。
+     锁只在**内部**（自动入宿判定位置）用 —— 界面上没有 `☑ 锁` / 「全部解锁」，
+     但 `Session.set_seat_lock` / `clear_seat_locks` 仍保留给 API（能锁一个**空位**）。
   ② **全局配置** —— 总开关 / 锁定位置数（竖向正序前 N 个**逻辑位次**，默认 5）/
      黑名单（不能通过闲置入宿进宿舍）/ 逐人"不参与"。
   ③ **自动入宿** —— 两相：竖向正序填空床 → 全满则取**心情最低**的候选替换
@@ -301,7 +304,7 @@ def test_manual_locks_slot():
     world = make_layout([[("甲", 5)]], capacity=3, dorm_count=1, protected_slots=0,
                         manual={0: {"slots": [1], "names": []}})
     run(world, {"乙": 6})
-    check("手动清空的位次保持空着 ⇒ 乙 去第 3 位",
+    check("台账里钉住的位次保持空着（＝API 锁一个空位那种状态）⇒ 乙 去第 3 位",
           slots_text(world) == [["甲", None, "乙"]], str(slots_text(world)))
     check("该位次的裁决是 keep", _seat_verdict(world.facilities[0], 1)[0] == SEAT_KEEP,
           _seat_verdict(world.facilities[0], 1)[0])
@@ -601,18 +604,19 @@ def test_session_write_paths():
     fac = s.schedule.shifts[0].facilities[0]
     check("清空第 2 位 ⇒ 写 `slots` 且第 2 格是 null",
           fac.get("slots") == ["甲", None, "丙"], str(fac))
-    check("手动台账记下**整段**位次与人（含被清空的那一位 ⇒ 保持空着）",
-          fac.get("manual") == {"slots": [0, 1, 2], "names": ["丙", "甲"]}, str(fac.get("manual")))
+    check("手动台账只记**摆了人的位次**与人（清空的那一位不进 slots）",
+          fac.get("manual") == {"slots": [0, 2], "names": ["丙", "甲"]}, str(fac.get("manual")))
     w = s.schedule.shifts[0].world.facilities[0]
     check("引擎侧的位次映射保留空洞",
           {i: o.name for i, o in w.slot_map().items()} == {0: "甲", 2: "丙"},
           str({i: o.name for i, o in w.slot_map().items()}))
-    # ⚠️ 2026-10 改口径：`set_slots` 与 `set_facility_slots` 统一成"**清空即上锁**"。
-    #    这条断言就是那个口径的**回归网**：旧实现下被清空的第 2 位不进台账，
-    #    自动入宿会立刻把它填上（而文档写的是"手动清空的位次保持空着"）。
-    #    `next_open_slot()` 会跳过"已被手动钉住的位次"，所以下一个空位应当是第 4 位（0 基 3）。
-    check("清空的那一位不再算可入住（下一个空位是第 4 位）",
-          w.next_open_slot() == 3, f"next_open_slot={w.next_open_slot()}")
+    # ⚠️ **2026-10 口径反转**（用户原话：「放上去之后自动上锁。**不需要手动上锁**」
+    #    「解锁时只需要**将该位置空**就可以了」「锁功能只作为内部自动入宿进行位置判定时使用，
+    #    而**不对外输出暴露**」）：上一轮这里是「清空即上锁」（`manual.slots == [0, 1, 2]`），
+    #    现在是**「摆位即上锁、清空即解锁」** —— 被清空的第 2 位**不进** `slots`，
+    #    于是引擎把它**交还自动入宿**（`next_open_slot()` 立刻回到第 2 位＝0 基 1）。
+    check("清空的那一位被交还自动入宿（下一个空位是第 2 位）",
+          w.next_open_slot() == 1, f"next_open_slot={w.next_open_slot()}")
 
     s.set_facility_slots(0, 0, [None, "丁"])
     fac = s.schedule.shifts[0].facilities[0]
@@ -621,10 +625,11 @@ def test_session_write_paths():
     check("台账跟着更新（甲 被写掉、丁 被标为手动）",
           "甲" not in fac["manual"]["names"] and "丁" in fac["manual"]["names"],
           str(fac["manual"]))
+    check("清空的那一位同样交还（第 1 位不再是手动钉住的位次）",
+          fac["manual"]["slots"] == [1], str(fac["manual"]))
 
-    # ⚠️ 清空**最后一位**也要上锁：`_write_seats` 会裁掉尾部空槽，若台账的位次上界跟着
-    #    "占位数组长度"算，这一格会连"位次"一起消失，"清空即上锁"落不到它身上（修过的 bug）。
-    #    位次上界必须是**容量**。
+    # ⚠️ **尾位清空**也要真的"解锁"：`_write_seats` 会裁掉尾部空槽，台账的位次上界若跟着
+    #    "占位数组长度"算就会漏掉越界下标 —— 上界必须是**容量**（修过的 bug 的另一半）。
     s2 = Session()
     s2.load_data({"facilities": [{"type": "宿舍", "level": 1, "capacity": 5,
                                   "operators": ["甲", "乙", "丙"]}]})
@@ -632,11 +637,11 @@ def test_session_write_paths():
     s2.recompute()
     s2.set_slots(0, 0, ["甲", "乙", ""])
     fac2 = s2.schedule.shifts[0].facilities[0]
-    check("清空**末位** ⇒ 那一格仍留在台账里（位次上界＝容量，不是占位数组长度）",
-          fac2.get("manual") == {"slots": [0, 1, 2], "names": ["乙", "甲"]},
+    check("清空**末位** ⇒ 那一位不进台账（上界＝容量，越界下标不会被写进去）",
+          fac2.get("manual") == {"slots": [0, 1], "names": ["乙", "甲"]},
           str(fac2.get("manual")))
-    check("而且它的裁决是 keep（自动入宿不许填第 3 位）",
-          s2.schedule.shifts[0].world.facilities[0].next_open_slot() == 3,
+    check("而且它的裁决被交还（自动入宿可以填第 3 位）",
+          s2.schedule.shifts[0].world.facilities[0].next_open_slot() == 2,
           f"next_open_slot={s2.schedule.shifts[0].world.facilities[0].next_open_slot()}")
 
 
@@ -671,7 +676,7 @@ def test_seat_lock_primitives():
     check("又回到第 3 位可入住", world().next_open_slot() == 2,
           str(world().next_open_slot()))
 
-    s.set_slots(0, 0, ["甲", "乙", "丙"])           # 手动放人 ⇒ 位次 0/1/2 全进锁
+    s.set_slots(0, 0, ["甲", "乙", "丙"])          # 摆位即上锁 ⇒ 摆了人的 0/1/2 进锁
     s.set_seat_lock(0, 0, 1, locked=False)         # 再解锁第 2 位（"乙" 那一格）
     check("解锁**有人的**位次 ⇒ 位次与那个人名一起摘掉（只摘位次会被 pins_name 抵消）",
           raw().get("manual") == {"slots": [0, 2], "names": ["丙", "甲"]},
@@ -754,9 +759,9 @@ def test_apply_manual_shifts():
     facs[0] = dict(facs[0], operators=["甲", "", "丁"])
     n = s.apply_manual_shifts({0: facs})
     raw = s.schedule.shifts[0].facilities[0]
-    check("改过的设施被写回，且**整段位次**进台账（含被清空的那一位）",
+    check("改过的设施被写回，台账只记**摆了人的位次**（清空的那一位交还自动入宿）",
           raw.get("slots") == ["甲", None, "丁"]
-          and raw.get("manual") == {"slots": [0, 1, 2], "names": ["丁", "甲"]},
+          and raw.get("manual") == {"slots": [0, 2], "names": ["丁", "甲"]},
           str(raw))
     check("制造站没被改 ⇒ **一个标都不打**（不能因为「顺带过一遍」就把它锁上）",
           "manual" not in s.schedule.shifts[0].facilities[1],
