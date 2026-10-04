@@ -492,15 +492,18 @@ def test_section1_shrink():
     check("缩容：越界全是人 ⇒ 自检报出「超过 Lv2 容量」（不静默）",
           any("超过 Lv2 容量" in m for m in msgs), f"实际 {msgs}")
 
-    # ② ⚠ 越界处**既有空洞又有人** ⇒ 现状把空洞后面的人也一起删了（与 ① 及本函数 docstring 冲突）
+    # ② ⚠ 越界处**既有空洞又有人** —— 2026-10 修（A2 工单）：旧实现只看"越界段里有没有
+    #    **空位**"，有一个空位就放行，接着 `keep = values[:capacity]` 把整段（**连带里面的人**）
+    #    截断 ⇒ 静默删掉「丁」，而且 `validate()` 干净、0 告警。
+    #    新判据＝"越界段里**还有没有人**"：有人就一律保留，交给自检报超容量（与 ① 同口径）。
     s = with_slots({"slots": ["甲", "乙", None, "丁"]})
     s.set_room_level(0, 0, 2)
     got = seat_values(fac_of(s))
-    known("缩容：越界处有空洞+后面有人 ⇒ 现状**静默删掉**“丁”（期望：保留 4 人 + 自检报超容量）",
-          got == ["甲", "乙"] and not s.validate().messages(),
-          f"实际 {got}（丁还在＝{('丁' in got)}）／自检 {s.validate().messages()}；"
-          f"报告 §2 第 2 条（store/session.py:_trim_to_capacity，`keep = values[:capacity]`）",
-          issue="已知缺陷2")
+    eq("缩容：越界处有空洞+后面有人 ⇒ **保留 4 人**（位次留在原位，不左移、不删人）",
+       got, ["甲", "乙", "", "丁"])
+    msgs = s.validate().messages()
+    check("缩容：越界处有空洞+后面有人 ⇒ 自检报出「超过 Lv2 容量」（不静默）",
+          any("超过 Lv2 容量" in m for m in msgs), f"实际 {msgs}")
 
     # ③ 容量没变小 ⇒ 不动数据（含台账与练度对象）
     s = with_slots({"slots": [{"name": "甲", "elite": 1}, "乙"]})
@@ -686,17 +689,26 @@ def test_section3_lock():
     eq("manual=False：只改布局、**不打锁**", manual_of(fac_of(s3)), {})
 
     # —— 手动锁真的挡住自动入宿 ——
+    # ⚠️ 2026-10：这一条原来**钉的是缺陷现状**（"被顶掉的甲在闲置入宿候选表里也查不到"）
+    #    —— 同一根因（她已从整份排班消失）。修法＝`Schedule.roster`：她仍在心情表里，
+    #    于是她照旧进"候选池"（`idle_groups` 逐行扫描 `traj.names`）。**没进那张表**的
+    #    原因变成了**心情闸**（她缺省满 24、不需要恢复），不再是"人不见了"。
     s = sess_from_data(base)
     s.idle_protected_slots = 0
     s.place_operator(0, 0, 0, "庚")                       # 把庚钉在第 1 位（甲被顶掉）
     s.recompute()
-    ids = [r[0] for g in s.idle_groups() for r in g[2]]
     eq("被手动钉住的位次不进自动入宿的候选/目标（庚留在原位）",
        [n for n in layout_names(s, 0)["宿舍#1"]], ["庚", "乙", "丙"])
-    known("⚠ 被顶掉的甲在闲置入宿候选表里也**查不到**（同一根因：她已从整份排班消失）",
-          "甲" not in ids,
-          f"实际候选 {ids} vs 期望含「甲」（本班未排班也算候选）；同已知缺陷 1",
-          issue="已知缺陷1")
+    eq("被顶掉的甲**仍在心情表里**（修前她整个人从排班消失 ⇒ 面板也查不到）",
+       ("甲" in s.operator_names(), str(s.mood_at("甲", 0))), (True, "24"))
+    eq("被顶掉的甲**不在 `facilities` 里**（不参与任何技能计数）",
+       s.schedule.shifts[0].world.get_operator("甲"), None)
+    # 把她的心情调到 < 24 ⇒ 她真的会进候选池（顺带证明"不在表里"的旧解释已不成立）
+    s.initial_moods["甲"] = to_decimal("10")
+    s.recompute()
+    ids = [r[0] for g in s.idle_groups() for r in g[2]]
+    check("心情 < 24 的被顶掉者出现在闲置入宿候选表里（候选池并上了导入名册）",
+          "甲" in ids, f"实际候选 {ids}")
 
     # —— 锁空位（API 专属能力："预留空位"＝保持空着） ——
     s = sess_from_data(base)
@@ -1430,19 +1442,27 @@ def test_section6_import():
        (False, 2, ["甲"], {"乙": False}))
     s = Session()
     s.load_data(json.loads(p.read_text(encoding="utf-8")), apply_file_settings=True)
-    known("⚠ load_data(apply_file_settings=True) **不继承**文件里的 idle_to_dorm.enabled=false"
-          "（其余三项却继承 ⇒ 半继承，与 `op_load_json` 文档说的不一致）",
-          (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist, s.idle_globals)
-          == (True, 2, ["甲"], {"乙": False}),
-          f"实际 (enabled={s.idle_to_dorm}, protected={s.idle_protected_slots}, "
-          f"blacklist={s.idle_blacklist}, per_operator={s.idle_globals}) vs "
-          f"期望 enabled=False；报告 §2 第 4 条（store/session.py:load_data 第 219 行）",
-          issue="已知缺陷4")
+    # ⚠️ 2026-10 修（A4 工单）：原来是**半继承**（开关被拍回 True、其余三项却继承）。
+    #    现在整组继承 ⇒ 与 `load_paths` 和 `op_load_json` 的文档口径一致。
+    eq("load_data(apply_file_settings=True) ⇒ 文件级 idle_to_dorm **整组**继承"
+       "（enabled 也照文件，不再是半继承）",
+       (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist, s.idle_globals),
+       (False, 2, ["甲"], {"乙": False}))
     s = Session()
     s.load_data(json.loads(p.read_text(encoding="utf-8")), apply_file_settings=True,
                 idle_to_dorm=False)
     eq("显式传 idle_to_dorm=False ⇒ 以参数为准（这条口径本身就是「显式优先」）",
        s.idle_to_dorm, False)
+    s = Session()
+    s.load_data(json.loads(p.read_text(encoding="utf-8")), apply_file_settings=True,
+                idle_to_dorm=True)
+    eq("显式传 idle_to_dorm=True ⇒ **参数压过文件**里的 false（优先序：参数 > 文件 > 默认开）",
+       s.idle_to_dorm, True)
+    s = Session()
+    s.load_data(json.loads(p.read_text(encoding="utf-8")))          # 默认口径（不继承文件）
+    eq("默认（不继承文件）⇒ 开关回到本入口默认**开**，参数那三项也回项目默认",
+       (s.idle_to_dorm, s.idle_protected_slots, s.idle_blacklist, s.idle_globals),
+       (True, 5, [], {}))
 
     # —— 三个内联入口的口径差异（自动比对，钉住现状） ——
     layout = {"facilities": [{"type": "宿舍", "level": 5, "name": "宿舍#1",
@@ -1469,15 +1489,20 @@ def test_section6_import():
     c.load_layout({"facilities": [{"type": "宿舍", "level": 5, "name": "宿舍#1",
                                    "operators": ["甲"]}],
                    "idle_to_dorm": {"protected_slots": 3}})
-    known("⚠ 文件写 `idle_to_dorm` 对象却**不写 `enabled`** ⇒ Session 把开关判成 **False**"
-          "（模型与引擎的默认都是**开**：`IdleToDormConfig.enabled=True`、"
-          "`apply_idle_to_dorm` 把 `None` 当开）—— 只写 blacklist/protected_slots 的配置"
-          "会**静默关掉闲置入宿**",
-          (c.idle_to_dorm, c.idle_protected_slots) == (False, 3),
-          f"实际 (enabled={c.idle_to_dorm}, protected={c.idle_protected_slots}) vs 期望 enabled=True；"
-          f"报告 §2 第 6 条（store/session.py:_sync_from_schedule 的 "
-          f"`bool(getattr(idle, \"enabled\", True))` + mood_soc/models.py:build_idle_to_dorm_config）",
-          issue="已知缺陷6")
+    # ⚠️ 2026-10 修（A5 工单）：原来是 `bool(getattr(idle, "enabled", True))` ——
+    #    `getattr` 的缺省值救不了"**属性存在但值是 `None`**"（`bool(None) == False`）。
+    #    而 `models.build_idle_to_dorm_config` 对"只写了 protected_slots 的对象"留的
+    #    就是 `enabled=None`（"未指定"）⇒ 会话判**关**、引擎把 `None` 当**开**，
+    #    同一份 world 两套结论。全项目口径＝"没写这个键 ⇒ 结算；显式 false 才关"。
+    eq("文件写 `idle_to_dorm` 对象却**不写 `enabled`** ⇒ 开关照全项目口径判 **开**"
+       "（与 `IdleToDormConfig.enabled=True`、`apply_idle_to_dorm` 把 None 当开一致）",
+       (c.idle_to_dorm, c.idle_protected_slots), (True, 3))
+    c2 = Session()
+    c2.load_layout({"facilities": [{"type": "宿舍", "level": 5, "name": "宿舍#1",
+                                    "operators": ["甲"]}],
+                    "idle_to_dorm": {"enabled": False, "protected_slots": 3}})
+    eq("显式 `enabled: false` 仍然关（默认开不是「一律开」）",
+       (c2.idle_to_dorm, c2.idle_protected_slots), (False, 3))
 
     # —— 名单优先（导入时"detached 与占位冲突"⇒ 摘人 + 留洞不左移 + 解该位锁） ——
     d2 = make_tmpdir("detach")
@@ -1508,9 +1533,15 @@ def _roundtrip(s: Session, cycles=None) -> Session:
     """按用户会走的路往返：`export_schedule` → 每班 `scenario` 写文件 → 再按文件载入。
 
     ⚠️ 导出是**每班一份场景**的信封（顶层 `{shifts, detached, start_clock, cycles}`），
-    **这个信封本身不能再被导入**（`sources.detect_format` 不认 `shifts`），所以要走
+    **这个信封本身还不能被导入**（`sources.detect_format` 不认 `shifts`，症状①未做），所以要走
     "拆成每班一份场景文件"这条路；每班时长与班次名分别靠 `shifts[].hours` 与文件名带回来
-    （scenario 正文里**没有**这两个字段）。
+    （`scenario` 正文里**还没有**这两个字段，症状②③未做）。
+
+    ⚠️ 这里**手工走装配**（`load_schedule_ex` + 那几步），不是 `Session.load_paths` ——
+    因为 `Session.load_paths` **不接 `hours=`**（`store.schedule.load_schedule_ex` 支持）。
+    所以 `initial_moods` / `mood_events`（只有"读原始 JSON"那一层有）要在这里
+    **照 `Session._read_scenario_moods` 的口径补一次**，否则测出来的差异是"这个夹具没读"、
+    而不是"导出没写"。⚠️ ②③ 真做掉之后，本函数应当直接改成 `s2.load_paths(paths, hours=…)`。
     """
     out = op_export_schedule(s, {})
     _RT_SEQ[0] += 1
@@ -1523,13 +1554,16 @@ def _roundtrip(s: Session, cycles=None) -> Session:
         write_json(p, sh["scenario"])
         paths.append(p)
     s2 = Session()
-    # ⚠️ `Session.load_paths` **不接 `hours=`**（`store.schedule.load_schedule_ex` 支持，
-    #    但 Session 这个入口没暴露）⇒ 这里按 `load_paths` 的那几步自己装配一遍。
     ld = load_schedule_ex(paths, hours=[sh["hours"] for sh in out["shifts"]])
     s2.loaded = ld
     s2.schedule = ld.schedule
     s2.initial_moods.clear()
     s2.mood_events.clear()
+    # 场景格式的 `initial_moods` / `mood_events`（与 `load_paths` 同一口径地补读）
+    for sh in out["shifts"]:
+        got = s2._read_scenario_moods(sh["scenario"])
+        if got is not None:
+            s2.initial_moods, s2.mood_events = got
     s2._sync_from_schedule(from_import=True)
     s2._capture_import_layouts()
     s2.set_start_clock(to_decimal(out["start_clock"]))
@@ -1576,16 +1610,22 @@ def test_section7_roundtrip():
                 manual_keys |= set(f["manual"])
     eq("导出里的 `manual` 子键恰是 {slots, names}", manual_keys, {"slots", "names"})
     blob = json.dumps(out, ensure_ascii=False)
-    check("导出里没有「导入原样」的痕迹（imported/origin/restore）",
-          not [w for w in ("imported", "origin", "restore") if w in blob])
+    # ⚠️ 裸 `"restore"` **不能**做子串判据：`entry_events` 是本工具场景本就支持的顶层键，
+    #    它的子键就叫 `restore_back`（2026-10 起导出会写它）⇒ 裸子串会误报。
+    #    要钉的是"原位 / 恢复默认（session-only 的那两个能力）不进导出"，用真正的标识符。
+    check("导出里没有「导入原样 / 恢复默认」的痕迹"
+          "（imported / origin / restore_seat / restore_default / imported_seat）",
+          not [w for w in ("imported", "origin", "restore_seat", "restore_default",
+                           "imported_seat") if w in blob])
 
-    # ⚠ 往返的**已知缺口**（同一条：导出产物不是"能直接再导入的完整场景"）
+    # ⚠ 往返的**已知缺口**（导出产物还不是"能直接再导入的完整场景"的全部）
     d = make_tmpdir("roundtrip")
     whole = d / "whole.json"
     write_json(whole, out)
     bad = raises(Session().load_paths, [whole])
     known("⚠ 导出的**顶层信封**不能再被导入（`{shifts, detached, start_clock, cycles}` "
-          "不被格式识别）⇒ 必须自己拆成每班一份场景",
+          "不被格式识别）⇒ 必须自己拆成每班一份场景（症状①，**未做**：要动 "
+          "`sources.detect_format` 那层格式识别契约，按工单要求先报方案）",
           bad.startswith("ValueError") and "无法识别的 JSON" in bad,
           f"实际 {bad!r}；报告 §2 第 5 条（症状①）", issue="已知缺口5")
     d2 = make_tmpdir("roundtrip_nohours")
@@ -1593,17 +1633,25 @@ def test_section7_roundtrip():
     write_json(one, out["shifts"][0]["scenario"])
     s_nohours = Session()
     s_nohours.load_paths([one])
-    known("⚠ scenario 正文里**不带班次时长**：不带 `hours=` 再导入 ⇒ 按班次数均分默认 24h",
+    known("⚠ scenario 正文里**不带班次时长**：不带 `hours=` 再导入 ⇒ 按班次数均分默认 24h"
+          "（症状②，**未做**：`sources._import_scenario` 写死 `hours=None`）",
           str(s_nohours.schedule.cycle_hours) == "24" and
           str(s_nohours.schedule.shifts[0].hours) == "24",
           f"实际 hours={s_nohours.schedule.shifts[0].hours}（导出里写的是 "
           f"{out['shifts'][0]['hours']}）；报告 §2 第 5 条（症状②）", issue="已知缺口5")
-    known("⚠ scenario 正文里也**不带班次名** ⇒ 再导入时班次名由**文件名**决定",
+    known("⚠ scenario 正文里也**不带班次名** ⇒ 再导入时班次名由**文件名**决定"
+          "（症状③，**未做**：`sources._import_scenario` 用 `Path(source).stem`）",
           "label" not in out["shifts"][0]["scenario"] and
           s_nohours.schedule.shift_labels() == ["Shift1"],
           f"实际 scenario 键={sorted(out['shifts'][0]['scenario'])}、"
           f"再导入标签={s_nohours.schedule.shift_labels()}；报告 §2 第 5 条（症状③）",
           issue="已知缺口5")
+    # ✅ 症状④（设置全丢）**已修**（2026-10）：这四组现在都在 `shifts[].scenario` 里，
+    #    并有专门的回归（`tests/test_export_roundtrip.py`）。
+    check("每班 `scenario` 里带全四组设置（entry_events / idle_to_dorm / "
+          "initial_moods / mood_events）",
+          all({"entry_events", "idle_to_dorm", "initial_moods", "mood_events"}
+              <= set(sh["scenario"]) for sh in out["shifts"]))
 
     s2 = _roundtrip(s)
     eq("往返：布局（含位次空洞与 manual 台账）逐班次逐位次不变",
@@ -1627,14 +1675,11 @@ def test_section7_roundtrip():
 
     after = settings_snapshot(s2)
     diff = diff_settings(before, after)
-    eq("往返：设置里**会丢**的字段恰是这四项（entry_events / idle_to_dorm / "
-       "initial_moods / mood_events —— 导出格式不含它们）",
-       diff, ["entry_events", "idle_to_dorm", "initial_moods", "mood_events"])
-    known("⚠ 往返丢设置：entry_events 全组 / idle_to_dorm 全组 / 起点心情 / 心情锚点"
-          "（scenario 格式本就支持 entry_events 与 idle_to_dorm 两个顶层键，导出没写）",
-          diff == ["entry_events", "idle_to_dorm", "initial_moods", "mood_events"],
-          f"实际差异 {diff}；报告 §2 第 5 条（api/ops.py:op_export_schedule）",
-          issue="已知缺口5")
+    # ✅ 症状④（设置全丢）**已修**（2026-10）：四组设置现在都写进 `shifts[].scenario`、
+    #    并由导入层读回 ⇒ 往返**逐字段相等**。改前这里钉的是
+    #    `["entry_events", "idle_to_dorm", "initial_moods", "mood_events"]` 这个"会丢的集合"。
+    eq("往返：**全部设置逐字段不变**（`entry_events` / `idle_to_dorm` / `initial_moods` / "
+       "`mood_events` 都进了 `shifts[].scenario`）", diff, [])
 
     # —— 已知且有意：「原位」不进导出 ——
     s3 = Session()
@@ -1709,14 +1754,17 @@ def test_section8_survive_actions():
 
     # ⚠ 「快照 vs 会话」的分叉：**只有**走 `set_detached`（本来就要重建 Schedule 的那条路）
     #    才会把会话那两组自动化设置落回快照（`_push_automation_settings`）。
-    #    其余动作都不落 ⇒ 快照长期是旧值。今天无害（导出不含这两组、`_sync_from_schedule`
-    #    只在导入调），但一旦导出补上这两组就会导出旧值。
+    #    其余动作都不落 ⇒ 快照长期是旧值。
+    #    ✅ 2026-10 起这条**不再会导出旧值**：`op_export_schedule` 改成从**会话**读那两组设置
+    #    （`api/ops.py::_behavior_settings`，会话本来就是引擎的唯一权威），
+    #    而不是从快照读 —— 所以下面的"快照仍是旧值"照旧成立，但它只是"快照滞后"、
+    #    不再是"导出会写错"。回归：`tests/test_export_roundtrip.py::test_导出读会话而不是读快照`。
     t = sess_from_data(copy.deepcopy(base))
     _set_everything(t)
     t.set_room_level(0, 0, 2)                        # 一条"重建 Schedule 但不 push"的路
     snap = t.schedule.shifts[0].world.entry_events
     known("⚠ 除 `set_detached` 外的动作**不把**会话的两组自动化设置落回快照"
-          "（快照仍是文件里的旧值 ⇒ 将来导出若补上这两组会导出旧值）",
+          "（快照仍是文件里的旧值）；导出已改成读**会话**，所以只是快照滞后、不再影响导出",
           (bool(snap.enabled), int(t.schedule.shifts[0].world.idle_to_dorm.protected_slots))
           == (False, 5),
           f"实际 快照 entry.enabled={snap.enabled}、idle.protected_slots="
@@ -1794,31 +1842,39 @@ def test_section9_after_moves():
     print("\n=== §9 被移动 / 移除 / 换位之后，设置是否仍然生效 ===")
 
     # —— ① 单班：被人顶掉（锁定入宿 → place_operator） ——
+    # ⚠️ 2026-10：这一条原来**钉的是缺陷现状**（她被顶掉后从整份排班消失 ⇒ 0 事件）。
+    #    修法＝`Schedule.roster`（导入时出现过的干员名册，`operator_names()` 并上它）——
+    #    她被人顶掉后**仍在实时心情表里**，于是 `rules._entry_trigger_ops` 那条
+    #    "表里有、这一班的 world 里没有 ⇒ 算存在"的判据轮得到她，照旧触发一次互换。
     s = _entry_on(_entry_scene())
     eq("基线：她在宿舍、换心情触发（1 次事件）", len(entry_marks(s)), 1)
     s.place_operator(0, 0, 0, PAO)                 # 泡泡顶掉她那一格
     s.recompute()
     got = (s.mood_at(FEI, 0), entry_labels(s), FEI in s.operator_names(),
            [p["name"] for p in s.layout_at(0)["detached"]])
-    known("⚠ 被顶掉后她**整份排班都不在了**（不在设施、不在 detached、连心情都查不到）"
-          "⇒ 换心情 0 次事件、面板也显示不出她（期望：本班未排班也算存在、要触发）",
-          got == (None, [], False, []),
-          f"实际 mood_at={got[0]}、entry 事件={got[1]}、在 operator_names={got[2]}、"
-          f"layout_at.detached={got[3]} vs 期望 mood 有值 + 1 次事件；"
-          f"报告 §2 第 1 条（store/session.py:place_operators 摘人不补名册 + "
-          f"store/schedule.py:Schedule.operator_names）",
-          issue="已知缺陷1")
-    eq("同一动作下：她那条曲线/名单都消失 —— 连「不在基建」也不列她（静默）",
-       (FEI in s.bench_names(), s.rate_at(FEI, 1)), (False, ZERO))
+    check("被顶掉后她**仍在实时心情表里**（「本班未排班也算存在」）⇒ 换心情照旧触发 1 次",
+          got[0] is not None and len(got[1]) == 1 and got[2],
+          f"实际 mood_at={got[0]}、entry 事件={got[1]}、在 operator_names={got[2]}；"
+          f"期望 mood 有值 + 1 次事件 + 她在名册里")
+    # ⚠️ 三件"不许发生的副作用"：**不进 `facilities`**（所以不参与任何技能计数）、
+    #    不改变布局、面板「不在基建」那一列能看到她（她是 `bench_names()` 的一员）。
+    w = s.schedule.shifts[0].world
+    check("被顶掉后她**不进 `facilities`**（不参与任何技能计数）",
+          w.get_operator(FEI) is None, f"实际 world 里有她={w.get_operator(FEI) is not None}")
+    eq("被顶掉后她**只是心情表里的一个名字**（`traj.names` 含她、`world.all_operators()` 不含）",
+       (FEI in s.traj.names, FEI in [o.name for o in w.all_operators()]), (True, False))
+    check("被顶掉后她仍在面板「不在基建」那一列（`bench_names()` 含她）",
+          FEI in s.bench_names(), f"实际 {s.bench_names()}")
 
     # —— ①b 同一个动作的另一条入口：「干员与心情」位置列（清空她那格） ——
     s = _entry_on(_entry_scene())
     s.set_slots(0, 0, ["", MUR])                   # 位置列把第 1 位清空
     s.recompute()
-    known("⚠ 同一条形状的第二个入口：「干员与心情」位置列清空她那格 ⇒ 她同样整份排班消失",
-          (s.mood_at(FEI, 0) is None) and not entry_labels(s),
-          f"实际 mood_at={s.mood_at(FEI, 0)}、事件={entry_labels(s)}；同上（已知缺陷 1）",
-          issue="已知缺陷1")
+    check("同一条形状的第二个入口：「干员与心情」位置列清空她那格 ⇒ 她仍在心情表里、照旧触发",
+          (s.mood_at(FEI, 0) is not None) and len(entry_marks(s)) == 1
+          and FEI in s.operator_names(),
+          f"实际 mood_at={s.mood_at(FEI, 0)}、事件={entry_labels(s)}、"
+          f"在 operator_names={FEI in s.operator_names()}")
 
     # —— ② 多班：她在**别的班**有活 ⇒ 现状**能**触发（这是已被修过的那一半） ——
     other = shift("班2", 12, [{"type": "贸易站", "level": 3, "operators": [FEI]}])
@@ -1885,21 +1941,22 @@ def test_section9_after_moves():
     eq("名单 add/remove 往返之后设置逐项不变", diff_settings(before, settings_snapshot(s)), [])
     check("名单增删之后换心情照旧触发", bool(entry_labels(s)), f"实际 {entry_labels(s)}")
 
-    # —— ⑧ set_detached 的**紧凑化**：锁会跟着漂（已知未修的交互层例外） ——
+    # —— ⑧ set_detached 摘人**留洞不左移**（2026-10 修，A3 工单） ——
+    #     口径变更：原来这里钉的是"交互层唯一剩下的紧凑化例外"（`AGENTS.md` 坑 27 与
+    #     `documents/16-现状与校准记录.md` §3.2 第 2 条记的就是它）。用户裁决与
+    #     `models.remove_occupant` / 导入层"名单优先"同口径 ⇒ **留空洞、不左移**，
+    #     并把被摘空那一格的锁一并解掉（不留"锁着一个空位"）。
     s = sess_from_data({"facilities": [
         {"type": "宿舍", "level": 5, "name": "宿舍#1", "operators": ["甲", "乙", "丙"]},
         {"type": "贸易站", "level": 3, "operators": ["戊"]}]})
     s.idle_to_dorm = False
     s.place_operator(0, 0, 1, "乙")                # 乙 钉在第 2 位
-    s.set_detached(["甲"])                         # 甲 在第 1 位 ⇒ 现状会左移
+    s.set_detached(["甲"])                         # 甲 在第 1 位 ⇒ 留洞、后面的人不前移
     vals = seat_values(fac_of(s))
-    known("⚠ set_detached 摘人**紧凑化**（后面的人整体前移）⇒ 台账 `slots:[1]` 从「乙的位次」"
-          "漂到「丙的位次」：丙被静默上锁、乙靠 `names` 才没丢（口径：位次不左移）",
-          vals[:2] == ["乙", "丙"] and manual_of(fac_of(s)).get("slots") == [1],
-          f"实际 位次={vals}、台账={manual_of(fac_of(s))}；"
-          f"报告 §2 第 3 条（store/session.py:_remove_from_slots）；"
-          f"文档已记为「例外只剩交互层」（坑 27）",
-          issue="已知缺陷3")
+    eq("set_detached 摘人**留空洞、不左移**（[甲,乙,丙] → ['',乙,丙]）",
+       vals[:3], ["", "乙", "丙"])
+    eq("台账 slots:[1] 仍指向乙的位次（她没漂到丙身上、丙也没被静默上锁）",
+       manual_of(fac_of(s)), {"slots": [1], "names": ["乙"]})
     s2 = sess_from_data({"facilities": [
         {"type": "宿舍", "level": 5, "name": "宿舍#1", "operators": ["甲", "乙"]},
         {"type": "贸易站", "level": 3, "operators": ["戊"]}]})
@@ -1907,13 +1964,13 @@ def test_section9_after_moves():
     s2.place_operator(0, 0, 1, "乙")
     s2.set_detached(["甲"])
     dorm = s2.schedule.shifts[0].world.facilities[0]
-    known("⚠ 紧凑化的第二种症状：被钉的人前移后，原锁位变成**永久空锁**"
-          "（`_seat_verdict` 判 keep ⇒ 自动入宿永远填不进这一格）",
-          _seat_verdict(dorm, 1, world=s2.schedule.shifts[0].world)[0] == "keep"
-          and dorm.next_open_slot() == 2,
-          f"实际 verdict[1]={_seat_verdict(dorm, 1, world=s2.schedule.shifts[0].world)[0]}、"
-          f"next_open_slot={dorm.next_open_slot()}（跳过被钉的空位）",
-          issue="已知缺陷3")
+    eq("紧凑化的第二种症状也修了：位置留洞（乙不前移）",
+       seat_values(fac_of(s2))[:2], ["", "乙"])
+    check("被摘空那一格不再是 `keep`（自动入宿能填回第 1 位，不留永久空锁）",
+          _seat_verdict(dorm, 0, world=s2.schedule.shifts[0].world)[0] != "keep"
+          and dorm.next_open_slot() == 0,
+          f"实际 verdict[0]={_seat_verdict(dorm, 0, world=s2.schedule.shifts[0].world)[0]}、"
+          f"next_open_slot={dorm.next_open_slot()}")
 
     # —— ⑨ 被闲置入宿换出 ⇒ 下一个执行点重新评估（位置复位、心情连续） ——
     s = _idle_scene([

@@ -153,16 +153,110 @@ class Session:
     _resume_from: Optional[Tuple[Trajectory, list]] = None
 
     # ================================================================ 装配
+    @staticmethod
+    def _scenario_payload(data: Any) -> dict:
+        """从一份**已解析的 JSON** 里取出"本工具场景"那一层（取不到就是空 dict）。
+
+        **只认场景格式**（`store.sources.detect_format` 说了算，本项目不含第二份格式判断）：
+        顶层就是场景；v4 蓝图那种"场景嵌在 `layout.scenario`"的也认。
+        `detect_format` 对本函数关心的输入只会返回 `scenario` 或 `plan_compute_v4`，
+        所以它不会抛异常；真抛了（畸形文件）也只是**没有这两组设置**，不影响导入本身。
+        """
+        if not isinstance(data, dict):
+            return {}
+        from .sources import detect_format
+        try:
+            kind = detect_format(data)
+        except Exception:                      # noqa: BLE001 —— 格式判不出来 = 没有这两组设置
+            return {}
+        if kind == "scenario":
+            return data
+        if kind == "plan_compute_v4":
+            layout = data.get("layout")
+            scen = layout.get("scenario") if isinstance(layout, dict) else None
+            return scen if isinstance(scen, dict) else {}
+        return {}
+
+    def _read_scenario_moods(self, data: Any) -> Optional[Tuple[Dict[str, Decimal], List["MoodSetEvent"]]]:
+        """读**场景 JSON** 的两个"心情设置"顶层键：`initial_moods` / `mood_events`。
+
+        它们与 `facilities` / `entry_events` / `idle_to_dorm` / `initial_global` 同层，
+        是本工具场景格式**本来就允许写**的两个键（`export_schedule` 会写出来，
+        「导出 → 再导入 ⇒ 逐字段不变」靠的就是这里读回来）。
+
+        返回 `None` ＝ **这份数据里一个都没写**（调用方保持原样清空）；
+        写了（哪怕写成空对象/空数组）就返回整份 `({}, [])` 语义 ——
+        "显式清空"与"没写"必须分得开，否则导出过的空设置会被当成没写、又退回默认值。
+
+        ⚠️ **心里想的是 `initial_moods`，落点是 `Session.initial_moods`**：轨迹的**周期起点**
+        取的就是它（缺省才用第一班布局里写的值）；`cycle=1` 且 `t=0` 的心情锚点在设置接口里
+        本来就会被路由进 `initial_moods`（`set_mood_at`），两者语义一致。
+        """
+        scen = self._scenario_payload(data)
+        if not scen:
+            return None
+        raw_moods = scen.get("initial_moods")
+        raw_events = scen.get("mood_events")
+        if raw_moods is None and raw_events is None:
+            return None
+        moods: Dict[str, Decimal] = {}
+        if isinstance(raw_moods, dict):
+            for name, value in raw_moods.items():
+                if value is None:
+                    continue
+                try:
+                    moods[str(name)] = to_decimal(value)
+                except (ArithmeticError, ValueError):        # noqa: PERF203 —— 单个坏值不废整份
+                    continue
+        events: List["MoodSetEvent"] = []
+        for item in (raw_events or []):
+            if not isinstance(item, dict) or not item.get("name"):
+                continue
+            try:
+                event = MoodSetEvent(name=str(item["name"]),
+                                     cycle=int(item.get("cycle") or 1),
+                                     t=to_decimal(item.get("t") or 0),
+                                     mood=to_decimal(item["mood"]))
+            except (ArithmeticError, KeyError, TypeError, ValueError):
+                continue
+            if event.cycle == 1 and event.t == ZERO:
+                # 与 `set_mood_at` 同一条路由：第 1 周期 0:00 是"起点心情"，不是锚点
+                moods.setdefault(event.name, event.mood)
+                continue
+            events.append(event)
+        return moods, events
+
+    @staticmethod
+    def _load_json(path: Any) -> Any:
+        """读一个 JSON 文件（读不了就返回 `{}`）—— 只给 `load_paths` 取场景那两组设置用。
+
+        ⚠️ **不参与装配**（装配照旧只有 `store.sources.import_file` 一份实现）：
+        这里只把"原始 JSON"拿来做一次**只读**取值；文件读不动/不是 JSON 时返回空，
+        让 `load_schedule_ex` 去报那个**真正的**错（别在这里抢先抛，会盖掉原始报错）。
+        """
+        import json
+        try:
+            with open(Path(path), "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
     def load_paths(self, paths: Sequence[Union[str, Path]]) -> "LoadedSchedule":
         """按文件集合装配排班（自动识别 4 种格式），并把文件里的设置同步进来。
 
         可能抛 `ValueError`（格式不认识 / 班次拼不起来）——调用方展示原因即可。
         """
+        #: 场景格式的 `initial_moods` / `mood_events` 只有"原始 JSON"那一层有
+        #: （`ImportResult` 不带它们）⇒ 这里在装配**之前**取出来（见 `_read_scenario_moods`）。
+        scen_moods = [self._read_scenario_moods(self._load_json(p)) for p in paths]
         ld = load_schedule_ex(paths)
         self.loaded = ld
         self.schedule = ld.schedule
         self.initial_moods.clear()
         self.mood_events.clear()
+        for got in scen_moods:
+            if got is not None:
+                self.initial_moods, self.mood_events = got
         self._sync_from_schedule(from_import=True)
         self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         self.recompute()
@@ -196,8 +290,13 @@ class Session:
                                         cycle_hours=cycle_hours, hours=hours)
         self.loaded = ld
         self.schedule = ld.schedule
+        #: 场景格式的 `initial_moods` / `mood_events`（`export_schedule` 会写出来的那两个键）
+        scen_moods = self._read_scenario_moods(data)
         self.initial_moods.clear()
         self.mood_events.clear()
+        if scen_moods is not None:
+            self.initial_moods, self.mood_events = scen_moods
+
         self._sync_from_schedule(from_import=True)
         self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         if not apply_file_settings:
@@ -215,8 +314,20 @@ class Session:
             self.idle_blacklist = []
         if entry_events is not None:
             self.entry_events = bool(entry_events)
-        # 闲置入宿：本入口默认**开**（未显式指定时）；显式 `False` 才关。
-        self.idle_to_dorm = True if idle_to_dorm is None else bool(idle_to_dorm)
+        # 闲置入宿：**「文件级那一组」整组继承 / 整组不继承**（2026-10 修，A4 工单）。
+        # ⚠️ 旧写法把这行放在 `if not apply_file_settings:` **之外**，且无条件用
+        #    `True if idle_to_dorm is None else …` 覆盖 —— 于是
+        #    `load_data(data, apply_file_settings=True)` 只继承了**其余三项**
+        #    （锁定位置数 / 黑名单 / 逐人），开关却被拍回 `True` ⇒ **半继承**
+        #    （文件里明明写着 `"enabled": false`），与 `op_load_json` 的文档口径
+        #    （"给了 `apply_file_settings: true` 才按文件里那个 `idle_to_dorm` 走"）
+        #    以及 `load_paths` 的行为都对不上。
+        # ⚠️ 优先序：**显式参数 > 文件 > 本入口默认（开）** —— `idle_to_dorm=False` 照样说了算。
+        if idle_to_dorm is not None:
+            self.idle_to_dorm = bool(idle_to_dorm)
+        elif not apply_file_settings:
+            self.idle_to_dorm = True
+        # （`apply_file_settings=True` 且没显式给参数 ⇒ 保留 `_sync_from_schedule` 从文件读来的值）
         if cycles is not None:
             self.set_cycles(int(cycles))
         self.recompute()
@@ -240,8 +351,12 @@ class Session:
         self.schedule = Schedule([shift], to_decimal(hours if hours is not None else 24),
                                  detached=list(shift.world.detached or []))
         self.loaded = LoadedSchedule(schedule=self.schedule)
+        #: 场景格式的 `initial_moods` / `mood_events`（单班布局同义，见 `load_paths`）
+        scen_moods = self._read_scenario_moods(data)
         self.initial_moods.clear()
         self.mood_events.clear()
+        if scen_moods is not None:
+            self.initial_moods, self.mood_events = scen_moods
         self._sync_from_schedule(from_import=True)
         self._capture_import_layouts()             # ← 导入原样（名单优先之后、任何编辑之前）
         self.recompute()
@@ -268,6 +383,17 @@ class Session:
         if self.schedule is None:
             return
         self.detached = list(getattr(self.schedule, "detached", []) or [])
+        if from_import:
+            # —— 冻结「导入时出现过的干员名册」（A1 工单）——
+            # ⚠️ **必须赶在 `_resolve_imported_detached()` 之前**：那一步会按"名单优先"
+            #    把人从位次上摘掉，摘完名册就少了她（而名册的全部意义就是"她曾经在这份
+            #    排班里出现过"，用户 2026-10 裁决"本班未排班也算存在"）。
+            # ⚠️ 只在**导入**这条路上冻结：之后任何布局编辑都不再改它 —— 她被人顶掉 /
+            #    被清空 / 被缩容挤掉之后照旧留在 `operator_names()` 里（心情表），
+            #    于是 M15a 的"表里有、world 里没有 ⇒ 算存在"这条判据轮得到她。
+            # ⚠️ 时机上 `self.schedule` 此刻还是**导入装配后、任何编辑前**的那一份
+            #    （`load_*` 先 `_sync_from_schedule(from_import=True)` 再让用户编辑）。
+            self.schedule = self.schedule.with_roster(self.schedule.operator_names())
         if from_import and self.detached:
             self._resolve_imported_detached()
         cfg = self.schedule.entry_config()
@@ -282,7 +408,15 @@ class Session:
         idle = getattr(self.schedule.shifts[0].world, "idle_to_dorm", None) if self.schedule.shifts else None
         # ⚠️ 默认**开**（用户口径"闲置入宿默认是开启的"）：文件里没写这个键 → 开；
         #    显式写 `"idle_to_dorm": false` / `{"enabled": false}` → 关。
-        self.idle_to_dorm = bool(getattr(idle, "enabled", True))
+        # ⚠️ **"没写 `enabled`" ≠ "写了 `false`"**（2026-10 修，A5 工单）：旧实现是
+        #    `bool(getattr(idle, "enabled", True))` —— `getattr` 的缺省值救不了
+        #    **属性存在但值是 `None`** 那种情况（`bool(None) == False`）。而
+        #    `models.build_idle_to_dorm_config` 对"只写了 protected_slots / blacklist
+        #    的配置对象"就是留一个 `enabled=None`（"未指定"）⇒ 会话把开关判成 **关**、
+        #    引擎（`rules.apply_idle_to_dorm` 把 `None` 当**开**）却照旧结算
+        #    ⇒ **同一份 world 两套结论**。全项目口径是"文件里没写这个键 ⇒ 结算；
+        #    显式 `false` 才关"（`IdleToDormConfig.enabled` 缺省也是 `True`）。
+        self.idle_to_dorm = getattr(idle, "enabled", None) is not False
         protected_slots = getattr(idle, "protected_slots", None)
         self.idle_protected_slots = 5 if protected_slots is None else int(protected_slots)
         self.idle_blacklist = [str(n) for n in (getattr(idle, "blacklist", None) or [])]
@@ -440,6 +574,10 @@ class Session:
         glob = (
             n, str(sch.cycle_hours), tuple(str(s.hours) for s in sch.shifts),
             str(getattr(sch, "start_clock", "")),
+            # ⚠️ **导入名册**也要进指纹：它决定"心情表里有谁"（`operator_names()`），
+            # 名册一变（新导入 / 换了排班）⇒ 轨迹的成员集合就变了，前缀**一段都不能复用**
+            # （复用会让 `continue_from` 的 `names` 与旧轨迹对不上）。一律走整条重算。
+            tuple(getattr(sch, "roster", None) or ()),
             tuple(sorted((str(k), str(v)) for k, v in self.initial_moods.items())),
             bool(self.entry_events), self.entry_swap_with, self.entry_scope,
             bool(self.entry_restore_back), self.entry_when,
@@ -849,6 +987,22 @@ class Session:
         （`{"name": "泡泡", "mood": 10}`，场景 JSON 允许）—— 两种都要认。
         曾经直接 `n not in wanted`，遇到对象写法会 `TypeError: unhashable type: 'dict'`
         （2026-09 由"面板行序"用例暴露出来）。
+
+        ⚠️ **摘人留空洞、不左移**（2026-10 修，A3 工单）—— 与
+        `mood_soc.models.remove_occupant`、"导入层名单优先"（`_resolve_imported_detached`）
+        以及 `_strip_from_other_facilities` **同口径**。旧实现是
+        `kept = [s for s in specs if …]` 之后直接 `_write_seats(f, kept)`，把过滤后的
+        **紧凑**列表写回去 ⇒ 后面的人整体前移，两种症状都实测过：
+          · **锁漂到别人身上**：`["甲","乙","丙"]` 里乙钉在第 2 位（台账 `slots:[1]`），
+            摘掉第 1 位的甲之后布局变 `["乙","丙"]`、台账仍是 `slots:[1]` ⇒ **丙**从此
+            被当成"手动钉住"、自动入宿再也不换她；
+          · **永久空锁**：`["甲","乙"]` 同样操作 ⇒ 布局 `["乙"]`、`slots:[1]` 指向一个
+            不存在的位次 ⇒ `_seat_verdict(dorm,1)` 判 `keep`、`next_open_slot()==2`
+            ⇒ **第 2 位永远填不进人**。
+
+        ⚠️ **被摘空的那一格若在手动台账里 ⇒ 一并解掉**（照抄导入层那一条：先
+        `_set_lock(f, i, False)` 再留洞）—— 她都不在那儿了，留一把"锁住这一格"的锁
+        只会让自动入宿永远填不进它，语义上也说不通。
         """
         if self.schedule is None or not names:
             return 0
@@ -860,10 +1014,19 @@ class Session:
             hit = False
             for f in facs:
                 specs = _seat_specs(f)
-                kept = [s for s in specs if _spec_name(s) not in wanted]
-                if len(kept) != len(specs):
-                    hit = True
-                    _write_seats(f, kept)
+                hit_idx = [j for j, s in enumerate(specs)
+                           if _spec_name(s) in wanted]
+                if not hit_idx:
+                    continue
+                # ① 先按"摘人之前"的占位解掉被摘空那几格的锁（`_set_lock` 要读`who`）
+                for j in hit_idx:
+                    _set_lock(f, j, False)
+                # ② 再把那几格**留成空洞**（列表长度不变 ⇒ 后面的人不左移）
+                kept = list(specs)
+                for j in hit_idx:
+                    kept[j] = ""
+                _write_seats(f, kept)
+                hit = True
             if hit:
                 self.schedule = self.schedule.replaced_shift(i, facs)
                 touched += 1
@@ -2392,16 +2555,26 @@ def _rebuild_ledger(fac: dict, *, extra_slots: Sequence[int] = ()) -> None:
 def _trim_to_capacity(fac: dict, capacity: int) -> dict:
     """容量变小 ⇒ **越界的空位次与它的手动标记一起丢掉**（Q37 的裁决）。
 
-    ⚠️ **只丢空位、不丢人**：越界格子里还住着人时**保留**（那正是"超容量"这种布局问题，
+    ⚠️ **只丢空位、不丢人**：越界段里**只要还有人就不截断**（那正是"超容量"这种布局问题，
     要交给自检报出来，不能在用户没看见的时候把人悄悄删掉 —— 曾经的实现就是那样）。
+    只有越界段**全空**时才把它连同里面的手动标记一起丢掉。
+
+    ⚠️ **判据是"越界段里还有没有人"，不是"越界段里有没有空位"**（2026-10 修，A2 工单）：
+    旧实现是 `drop = [越界段里的空位]; if not drop: return fac` —— 于是
+    `["甲","乙",null,"丁"]` 缩到 2 位时，越界段里**有一个空位**就通过了那道检查，
+    接着 `keep = values[:capacity]` 把整段（**连带里面的人**）截断 ⇒ **静默删掉「丁」**，
+    而且 `validate()` 干净、0 告警。这与它自己的 docstring 以及相邻分支
+    （"越界段全是人 ⇒ 4 人全留 + 报 2 条超容量"）直接冲突。
+    ⚠️ 判据必须按**位次**看（`values[capacity:]` 里有没有非空格），不能按"紧凑列表长度"：
+    空洞也算位次，`capacity` 是**位次**上界。
     ⚠️ 用 `_seat_specs`（带对象写法）而不是 `_seat_values`（只有名字）：否则裁一次容量
     就把这批人的练度 `{"elite": 1, "level": 30}` 悄悄丢成纯名字。
     """
     values = _seat_specs(fac)
     if len(values) <= capacity:
         return fac
-    drop = [i for i in range(capacity, len(values)) if not values[i]]
-    if not drop:
+    # ⚠️ 越界段里还有人 ⇒ 一律保留（交给 `validate()` 报超容量）；只有**全空**才截断
+    if any(values[capacity:]):
         return fac
     keep = values[:capacity]
     ledger = dict(fac.get("manual") or {})

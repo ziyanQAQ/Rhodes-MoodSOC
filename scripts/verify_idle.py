@@ -1686,12 +1686,15 @@ def test_restore_origin_and_per_shift():
             if f.get("manual"):
                 manual_keys |= set(f["manual"])
     blob = json.dumps(out, ensure_ascii=False)
+    # ⚠️ 判据不许用裸 `"restore"` 子串：`entry_events` 的子键叫 `restore_back`（场景格式本就支持，
+    #    2026-10 起导出会写它）⇒ 裸子串会误报。要钉的是"原位 / 恢复默认不进导出"。
+    _traces = ("imported", "origin", "restore_seat", "restore_default", "imported_seat")
     check("导出里 `manual` 恰是 `{slots, names}`、顶层键恰是那四个、且没有「原位」的痕迹",
           manual_keys == {"slots", "names"}
           and sorted(out) == ["cycles", "detached", "shifts", "start_clock"]
-          and not [w for w in ("imported", "origin", "restore") if w in blob],
+          and not [w for w in _traces if w in blob],
           f"{sorted(manual_keys)} / {sorted(out)} / "
-          f"{[w for w in ('imported', 'origin', 'restore') if w in blob]}")
+          f"{[w for w in _traces if w in blob]}")
 
     # ⑦ `entry_events.per_shift` 的**列表写法改读内层 `key`**（修掉 MAA 逐班覆盖整体错一位）
     outs = build_entry_shift_overrides([{"key": 2, "enabled": True, "swap_with": "甲"},

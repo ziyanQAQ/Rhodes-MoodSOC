@@ -874,19 +874,86 @@ def op_bottleneck(session: Session, args: dict) -> dict:
             "operators": lows}
 
 
+def _exact_num(value):
+    """数值出参 —— **定长十进制字符串**（`Decimal` 原样、不做 6 位舍入）。
+
+    为什么这个 op 不用 `_num()`：`_num()` 会 `float()` + 6 位舍入，
+    `Decimal("0.1")` 会写成 `0.1`、但 `1/3` 那种会变成 `0.333333` ⇒ 「导出→再导入」
+    就不再逐位相等。本 op 的**全部意义**就是"能直接再导入的完整场景"，
+    所以量值一律写成字符串（导入侧 `to_decimal()` 本来就接受字符串），
+    往返逐位不变。*非*设置量的值（`hours` / `start_clock` / `cycles`）照旧走 `_num()`。
+    """
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    return value
+
+
+def _behavior_settings(session: Session) -> dict:
+    """这份排班的**行为设置**（写进每班 `scenario` 的那四组）。
+
+    ⚠️ **从 `Session` 读，不从 `Schedule` 快照读**（用户工单 §3 的联动项）：
+
+    | 读法 | 结论 |
+    |---|---|
+    | 从快照读（`shift.world.entry_events` …） | ❌ **会导出旧值** —— 面板/API 改的那两组**只写在 `Session` 上**，快照里那份只在 `set_detached`（`_push_automation_settings`）那一条路上才被刷新 |
+    | 从 `Session` 读（本实现） | ✅ 会话本来就是引擎的**唯一权威**（`recompute_inputs` 读的就是它），导出与界面/API 看到的必然同一份；且**导出是只读操作**，不改会话任何状态 |
+
+    所以**不调 `_push_automation_settings()`**：那会在一个"读"操作里改 `Schedule` 快照
+    （连带影响 `session.shifts()` 给 `list_shifts` / 界面的那份），只为让导出读到值 —— 不值得。
+
+    ⚠️ 四组都**无条件**写（哪怕等于默认值）：导入层"没写这个键"与"写了 false"是两回事
+    （`_sync_from_schedule` 的默认口径），只有写全才能保证往返逐位相等。
+    """
+    d = session.settings_dict()
+    return {
+        "entry_events": dict(d["entry_events"]),
+        "idle_to_dorm": dict(d["idle_to_dorm"]),
+        "initial_moods": {str(n): _exact_num(v) for n, v in session.initial_moods.items()},
+        "mood_events": [{"name": str(e.name), "cycle": int(e.cycle),
+                         "t": _exact_num(e.t), "mood": _exact_num(e.mood)}
+                        for e in session.mood_events],
+    }
+
+
 def op_export_schedule(session: Session, args: dict) -> dict:
     """把当前排班导回**本工具场景 JSON**（每班一份 `{"facilities": [...]}`）。
 
-    `detached`（不在基建名单）与 `initial_global` 写在**场景顶层**，与导入时同键同层，
-    所以「导出 → 再导入」能原样还原（含这些人）。
+    产出是"**能直接再导入的完整场景**"：顶层信封 `{shifts, detached, start_clock, cycles}`
+    逐班取出 `shifts[].scenario` 写成一份文件，再 `load_paths` 回去，**设置逐字段不变**。
+
+    兼容性红线（不许动）：顶层**恰是四个键**；每个 `facilities[].manual` 子键**恰是**
+    `{slots, names}`；新增的东西**只许长在 `shifts[].scenario` 里面**
+    （`tests/test_restore_origin_blackbox.Test导出没有新增字段` /
+    `tests/test_settings_blackbox.Test导出往返` / `scripts/verify_settings.py` §7 都钉着它）。
+
+    `scenario` 里写什么、各由导入层的哪一处消费：
+
+    | 键 | 消费方 |
+    |---|---|
+    | `facilities` | `store.sources._import_scenario` → `build_base_layout`（布局 + `manual` 台账） |
+    | `detached`（非空才写） | `_import_scenario` 的 `build_detached` |
+    | `initial_global`（非空才写） | `_import_scenario` → `store.layout.build_initial_variables` |
+    | `entry_events` | `_import_scenario` → `Shift.entry_events` → `Session._sync_from_schedule` |
+    | `idle_to_dorm` | `_import_scenario` → `Shift.idle_to_dorm` → `Session._sync_from_schedule` |
+    | `initial_moods` | `Session._read_scenario_moods`（**本工单新增**，scenario 专属顶层键） |
+    | `mood_events` | 同上 |
+
+    ⚠️ **仍有两个"导出产物装不下"的字段**（用户工单的症状 ②③，未做，方案见报告）：
+    班次时长（`shifts[].hours` 在信封里、`scenario` 正文没有 ⇒ 不带 `hours=` 再导入会被
+    `store.schedule._hours_from_hints` 按班次数均分 24h）与班次名（由**文件名**决定）。
+    ⚠️ 顶层信封本身也**还不能直接 `load_paths`**（`store.sources.detect_format` 不认 `shifts`
+    —— 症状 ①，未做：那要动"4 种 JSON"的格式识别契约，用户要求先报方案）。
     """
     _require_session(session)
+    behavior = _behavior_settings(session)
     return {"shifts": [{"label": s.label, "hours": _num(s.hours),
                         "scenario": {"facilities": s.facilities,
                                      **({"detached": list(s.detached)}
                                         if getattr(s, "detached", None) else {}),
-                                     **({"initial_global": dict(s.initial_global)}
-                                        if getattr(s, "initial_global", None) else {})}}
+                                     **({"initial_global": {str(k): _exact_num(v)
+                                                            for k, v in s.initial_global.items()}}
+                                        if getattr(s, "initial_global", None) else {}),
+                                     **behavior}}
                        for s in session.shifts()],
             "detached": session.bench_names(),
             "start_clock": _num(session.schedule.start_clock),

@@ -85,6 +85,18 @@ MIN_EVENT_GAP = Decimal("0.000001")     # 1e-6 小时 ≈ 3.6 毫秒
 # ============================================================================
 # 班次与排班
 # ============================================================================
+def _merged_names(*groups: Iterable[str]) -> List[str]:
+    """把若干组名字**去重保序**并成一份（`Schedule.detached` / `roster` 共用同一手法）。"""
+    seen, out = set(), []
+    for group in groups:
+        for n in (group or ()):
+            n = str(n)
+            if n and n not in seen:
+                seen.add(n)
+                out.append(n)
+    return out
+
+
 @dataclass
 class Shift:
     """一个班次：一段时长 + 一份布局（+ 可选的「不在基建」名单）。"""
@@ -306,6 +318,17 @@ class Schedule:
     cycle_hours: Decimal = DEFAULT_CYCLE_HOURS
     start_clock: Decimal = ZERO
     detached: List[str] = field(default_factory=list)
+    #: **导入时出现过的干员名册**（2026-10 新增，见 `operator_names()` 与 A1 工单）。
+    #: `None` = 还没冻结过 ⇒ `__post_init__` 按"当前各班的进驻者 ∪ 名单"算一份。
+    #: 冻结之后**不随布局编辑变化**：被人顶掉 / 被清空 / 被缩容挤掉的人**仍留在名册里**，
+    #: 于是她照旧在实时心情表（`operator_names()`）里 —— M15a 的判据是
+    #: "**心情表里有、这一班的 world 里没有 ⇒ 算存在**"（`rules._entry_trigger_ops`），
+    #: 前提就是她**得在表里**。只靠"当前布局里还有没有人"算名册时，单班排班下她两边
+    #: 都不在 ⇒ 换心情**静默 0 事件**（用户 2026-10 报的静默失效的残余一半）。
+    #: ⚠️ 她**不进 `facilities`、不参与任何技能计数、不改变布局**（`names` 与 `world` 分离）。
+    #: ⚠️ **必须被四条重建路径原样搬运**（`with_hours` / `replaced_shift` /
+    #: `with_detached` / `with_start_clock`）—— 与 `entry_events` / `idle_to_dorm` 同一个坑。
+    roster: Optional[List[str]] = field(default=None, repr=False, compare=False)
     #: 内部用：`True` = `detached` 是**权威值**，别把各班 Shift 上的旧名单并回来。
     #: （`with_detached()` 用它实现"清空名单"；外部构造时不要传。）
     _detached_authoritative: bool = field(default=False, repr=False, compare=False)
@@ -336,6 +359,13 @@ class Schedule:
         for s in self.shifts:
             s.detached = list(merged)
             s.world.detached = list(merged)
+        # —— 导入名册：没冻结过就按"当前各班的进驻者 ∪ 名单"算一份（去重保序）——
+        # ⚠️ 只在 `roster is None` 时算：一旦冻结，后面的布局编辑（顶人 / 清空 / 缩容）
+        #    都不许改变它 —— 那正是"她还在心情表里"的依据。
+        if self.roster is None:
+            self.roster = _merged_names(self.detached, *(s.operators for s in self.shifts))
+        else:
+            self.roster = [str(n) for n in self.roster]
         self._starts: List[Decimal] = []
         t = ZERO
         for s in self.shifts:
@@ -373,18 +403,17 @@ class Schedule:
         为什么把不在基建的人也算进来：他们要能设心情、要能在曲线/全员一览里看到
         （一天一条平线），也要能被程序接口读到。数值上他们**不参与任何技能**
         ——见 `simulate_schedule` 的说明。
+
+        ⚠️ **并上 `roster`（导入时出现过的名册）**（2026-10，A1 工单）：光靠"当前布局里
+        还有谁"是不够的 —— 被人顶掉 / 被清空 / 被缩容挤掉之后，她就**两边都不在**
+        （不在任何设施、也不在显式名单），于是连"心情表"里都没有她 ⇒ M15a 的
+        "**表里有、world 里没有 ⇒ 算存在**"这条判据根本轮不到她 ⇒ 换心情**静默 0 事件**。
+        并上名册之后：她仍在表里、仍是一条平线、**仍不进 `facilities`、不参与任何技能计数**，
+        直接走现有那条分支。顺序＝名单 → 名册 → 各班进驻者（与旧口径向后兼容：
+        旧口径就是"名单 → 各班进驻者"）。
         """
-        seen, out = set(), []
-        for n in (self.detached or []):
-            if n not in seen:
-                seen.add(n)
-                out.append(n)
-        for s in self.shifts:
-            for n in s.operators:
-                if n not in seen:
-                    seen.add(n)
-                    out.append(n)
-        return out
+        return _merged_names(self.detached or (), self.roster or (),
+                             *(s.operators for s in self.shifts))
 
     def stationed_names(self) -> List[str]:
         """**进驻在某个设施里**的干员（副手不算；跨班次去重保序）= `all_operators()` 的并集。"""
@@ -444,12 +473,25 @@ class Schedule:
                      detached=list(getattr(s, "detached", []) or []))
                for s, h, name in zip(self.shifts, new_hours, names)]
         return Schedule(new, sum((s.hours for s in new), ZERO), self.start_clock,
-                        list(self.detached))
+                        list(self.detached), roster=list(self.roster or []))
 
     def with_start_clock(self, clock) -> "Schedule":
         """改「周期起点钟点」（纯显示口径，返回新的 Schedule）。"""
         return Schedule(copy.deepcopy(self.shifts), self.cycle_hours, to_decimal(clock),
-                        list(self.detached))
+                        list(self.detached), roster=list(self.roster or []))
+
+    def with_roster(self, names: Sequence[str]) -> "Schedule":
+        """**冻结导入名册**（`operator_names()` 会并上它；返回新的 Schedule）。
+
+        只在导入装配那一步调一次（`Session._sync_from_schedule(from_import=True)`）——
+        传进来的就是"**导入时这份排班里出现过的全部干员**"。之后任何布局编辑都**不再动它**
+        （她被人顶掉之后照旧留在名册里，见 `operator_names()` 的说明）。
+
+        ⚠️ 传 `[]` 是**权威值**：`roster=[]` 会被 `__post_init__` 原样收下（不再按当前
+        布局重算）—— 否则"冻结成空"会被无声地撤销。
+        """
+        return Schedule(copy.deepcopy(self.shifts), self.cycle_hours, self.start_clock,
+                        list(self.detached), roster=[str(n) for n in (names or [])])
 
     def replaced_shift(self, index: int, facilities: List[dict]) -> "Schedule":
         """替换某个班次的布局（返回新的 Schedule）。"""
@@ -460,7 +502,8 @@ class Schedule:
                      initial_global=dict(getattr(s, "initial_global", {}) or {}),
                      detached=list(getattr(s, "detached", []) or []))
                for i, s in enumerate(self.shifts)]
-        return Schedule(new, self.cycle_hours, self.start_clock, list(self.detached))
+        return Schedule(new, self.cycle_hours, self.start_clock, list(self.detached),
+                        roster=list(self.roster or []))
 
     def with_detached(self, names: Sequence[str]) -> "Schedule":
         """改「不在基建」名单（返回新的 Schedule；各班的副本同步更新）。
@@ -469,7 +512,8 @@ class Schedule:
         Shift 上的旧名单并回来，所以这里要 `_detached_authoritative=True` ——
         否则"清空名单"会被无声地撤销（踩过）。
         ⚠️ 重建时会**原样搬运**每班的全局设置（`entry_events` / `idle_to_dorm` /
-        `initial_global`）——漏搬任何一项都会让"碰名单"顺手打回面板上的设置。
+        `initial_global`）与**导入名册**（`roster`）——漏搬任何一项都会让"碰名单"顺手
+        打回面板上的设置、或让被顶掉的人从心情表里再次消失。
         """
         new = [Shift(label=s.label, hours=s.hours, facilities=copy.deepcopy(s.facilities),
                      source=s.source, entry_events=s.entry_events,
@@ -478,7 +522,8 @@ class Schedule:
                      detached=[])
                for s in self.shifts]
         return Schedule(new, self.cycle_hours, self.start_clock,
-                        [str(n) for n in (names or [])], _detached_authoritative=True)
+                        [str(n) for n in (names or [])], _detached_authoritative=True,
+                        roster=list(self.roster or []))
 
     def entry_config(self):
         """本排班的进驻事件配置（取第一个班次的；MAA 排班没有则为默认值）。"""
