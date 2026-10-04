@@ -188,6 +188,9 @@ class ImportResult:
     initial_global: Dict[str, Decimal] = field(default_factory=dict)   # 变量初始值
     entry_enabled: Optional[bool] = None                    # 菲亚梅塔开关（None = 文件没说）
     entry_events: Optional[dict] = None                     # 场景格式的 `entry_events`（上层直接用）
+    # 场景格式的 `idle_to_dorm`（**原样收下**，由 `store.schedule.Shift.__post_init__`
+    # 按唯一口径 `models.build_idle_to_dorm_config` 解析；不在这里另写一套读法）。
+    idle_to_dorm: Optional[object] = None
     detached: List[str] = field(default_factory=list)       # 「不在基建」名单（场景 JSON 顶层）
     scenario: Optional[dict] = None                         # 场景类文件原样透传
     report: ImportReport = field(default_factory=ImportReport)
@@ -424,8 +427,24 @@ def _import_scenario(data: dict, report: ImportReport, source: str = "") -> Impo
     report.notes.append(f"facilities {len(data['facilities'])} 间房")
     if data.get("entry_events"):
         report.notes.append("entry_events（换心情）")
-    if data.get("idle_to_dorm"):
-        report.notes.append("idle_to_dorm（闲置入宿）")
+    # 闲置入宿：**文件里真的写了才记**，而记的话要说清读到什么（这段 note 是对文件内容的
+    # 如实描述：`false` 与"没写"必须一眼分得开）。生效由 `Shift`/`Session` 那两层负责。
+    if isinstance(data.get("idle_to_dorm"), dict):
+        idle_raw = data["idle_to_dorm"]
+        bits = []
+        if "enabled" in idle_raw:
+            bits.append("开" if idle_raw.get("enabled") else "关")
+        if idle_raw.get("protected_slots") is not None:
+            bits.append(f"锁定位置 {idle_raw['protected_slots']}")
+        if idle_raw.get("blacklist"):
+            bits.append("黑名单 " + "、".join(str(n) for n in idle_raw["blacklist"]))
+        if idle_raw.get("per_operator") is not None:
+            bits.append("逐人设置")
+        report.notes.append("idle_to_dorm（闲置入宿：" + ("，".join(bits) if bits else "无字段")
+                            + "）")
+    elif data.get("idle_to_dorm") is not None:
+        report.notes.append("idle_to_dorm（闲置入宿：" + ("开" if data["idle_to_dorm"] else "关")
+                            + "）")
     if data.get("initial_global"):
         report.notes.append("initial_global（变量初始值）")
     detached = build_detached(data.get("detached"))
@@ -446,6 +465,7 @@ def _import_scenario(data: dict, report: ImportReport, source: str = "") -> Impo
         report=report,
         entry_events=entry if isinstance(entry, dict) else None,
         entry_enabled=(bool(entry.get("enabled")) if isinstance(entry, dict) else None),
+        idle_to_dorm=data.get("idle_to_dorm"),
         detached=list(detached))
 
 
