@@ -45,16 +45,19 @@ from typing import Dict, List, Optional
 
 from . import theme
 from .batch import BatchPanel
-from .dialogs import EntryEventPanel, IdleToDormPanel, TimelinePanel
+from .dialogs import EntryEventPanel, IdleToDormPanel, LockPanel, TimelinePanel
 from .schedule import all_operator_names      # 转发自 store.schedule（选人候选全表）
 from store.session import MAX_CYCLES
 
 # (分区键, 标题, 一句话说明)
 # ⚠️ 说明**一律一行 ≤20 字**（页标题下面那一行）：纯解释性段落全删了、搬进
 # `documents/10-图形界面.md` §6.2 —— 那里是界面口径的正式落点，这里只留"这一页管什么"。
+# ⚠️ **顺序即优先级**（三层解耦：**锁定入宿 > 自动入宿 > 导入布局**）：
+#    「锁定入宿」放在「闲置入宿」**之前**（工单 §2.1）。
 PAGES = (
     ("timeline", "时间轴", "周期多长、分几班、每班几小时"),
     ("batch", "干员与心情", "房间等级 · 放谁 · 练度 · 心情"),
+    ("lock", "锁定入宿", "行＝位次 × 列＝班次，把某人钉在宿舍某位"),
     ("entry", "换心情", "进驻那一刻与谁互换心情"),
     ("idle", "闲置入宿", "没上班、没在宿舍、心情未满的人进宿舍"),
 )
@@ -422,6 +425,20 @@ class SettingsDialog(tk.Toplevel):
                                per_shift=app.entry_per_shift,
                                on_change=app.apply_entry_event)
 
+    def _build_lock(self) -> tk.Frame:
+        """「锁定入宿」分区（**独立整页**：行＝位次 × 列＝班次；工单 §2）。
+
+        ⚠️ 2026-10：这一块原先挤在「闲置入宿」页里（左栏 380px 的 ③ 手动入宿子面板），
+        现在独占整页宽 —— 矩阵本身就是横向的（列＝班次），半栏放不下。
+        只读数据源 `app.lock_dorm_view`，唯一写入口 `app.apply_lock_dorm`。
+        """
+        panel = LockPanel(self.host, on_manual=self.app.apply_lock_dorm,
+                          view_provider=self.app.lock_dorm_view, page_height=PAGE_H)
+        # ⚠️ 重算是**异步**的：面板拿到的那份数据是改动前的，真正的新数据要等结果落地
+        #    —— 注册一个落地回调按新轨迹重建（弱引用，面板销毁即失效）。
+        self.app.add_recalc_listener(panel.refresh_view)
+        return panel
+
     def _build_idle(self) -> tk.Frame:
         app = self.app
         # 闲置入宿的表也按内容区剩余高度算：它要跟别的分区共用同一块内容区
@@ -431,15 +448,7 @@ class SettingsDialog(tk.Toplevel):
                                 groups_provider=app.idle_groups,
                                 protected_slots=app.idle_protected_slots(),
                                 blacklist=app.idle_blacklist(),
-                                all_names=app.idle_name_pool(),
-                                # —— ③ 手动入宿编辑器：只读数据源 + 唯一写入口 ——
-                                # ⚠️ 2026-10 起**不再传 `locked_probe` / `session` / `on_after`**：
-                                #    那三样只服务「全部解锁…」按钮，而锁已按用户口径不再对外暴露
-                                #    （逐位 `☑ 锁` 与「全部解锁…」都删了；API 的
-                                #    `set_seat_lock` / `clear_seat_locks` 仍留在 `Session`）。
-                                state_provider=app.session.manual_dorm_editor_state,
-                                on_manual=app.apply_manual_dorm,
-                                operator_names=all_operator_names(app.schedule.operator_names()))
+                                all_names=app.idle_name_pool())
         # ⚠️ 重算是**异步**的（`app.recompute_async`）：面板拿到的那份 `groups` 是改动前的，
         #    真正的新表要等结果落地 —— 注册一个落地回调按新轨迹重建（弱引用，面板销毁即失效）。
         app.add_recalc_listener(panel.refresh_from_provider)
