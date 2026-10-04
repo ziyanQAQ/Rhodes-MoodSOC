@@ -915,7 +915,9 @@ class Session:
         names = [str(n) if n else "" for n in operators]
         fac = dict(facs[facility_index])
         if manual:
-            self._reject_detached_seats(names, shift_index, facility_index)
+            # ⚠️ 2026-10 口径再改（「锁定入宿」工单 §3.2）：名单里的人**先剔名单、再写入**
+            #    —— 旧行为是抛 `ValueError` 拒绝，用户拍板改成"把她从名单里剔掉再执行"。
+            self._detach_guard(names)
         _write_seats(fac, names)
         if manual:
             # ⚠️ 2026-10 口径＝**摆位即上锁、清空即解锁**：只把"有名字的位次"记进台账，
@@ -929,7 +931,8 @@ class Session:
 
     def set_facility_slots(self, shift_index: int, facility_index: int,
                            slots: Sequence[Optional[str]], manual: bool = True,
-                           touched: Optional[Sequence[int]] = None) -> None:
+                           touched: Optional[Sequence[int]] = None,
+                           pin: bool = False) -> None:
         """**带空洞的逐位写入**（界面的看板/表格走这条）：`slots[i]` = 第 i+1 位的干员名或 `None`。
 
         与 `set_slots` 的区别是**不动没提到的位次**：传进来的每一位按原样写
@@ -948,52 +951,154 @@ class Session:
           越界的下标按容量裁掉。细节见 `_write_manual`。
 
         `manual=False`：只改布局、不打手动标（与 `set_slots` 同一个开关）。
+
+        `pin=True`（**可选开关，默认关 ⇒ 既有调用方行为一字不变**）：每格**先把她从本班
+        其它设施里摘掉**再写（工单 §3.1「指定时清原位」）。「锁定入宿」矩阵与「干员与心情」
+        位置列都开它 —— 这样同一个动作在两个入口表现一致。
         """
         facs = self.facilities_of(shift_index)
         if not (0 <= facility_index < len(facs)):
             raise ValueError(f"第 {shift_index + 1} 班没有第 {facility_index + 1} 间房")
-        fac = dict(facs[facility_index])
-        current = _seat_values(fac)
-        merged = list(current)
-        for i, spec in enumerate(slots):
-            value = str(spec) if spec else ""
-            while len(merged) <= i:
-                merged.append("")
-            merged[i] = value
+        # ⚠️ `_write_manual` 的上界＝**传进来的那一段的长度**（不是 `len(merged)`）：
+        #    旧契约里 `set_facility_slots([None, "丁"])` 的台账是 `slots=[1]`，
+        #    改成 `len(merged)` 会把它变成 `[1, 2]`（既有断言与 API 契约都被改坏）。
+        bound = len(slots)
+        values = [str(spec) if spec else "" for spec in slots]
         if manual:
-            self._reject_detached_seats(merged, shift_index, facility_index)
-        _write_seats(fac, merged)
+            # ⚠️ 工单 §3.2：名单里的人**先剔名单、再写入**（旧行为是抛错拒绝）。
+            self._detach_guard(list(_seat_values(facs[facility_index])) + values)
+        if not pin:
+            fac = dict(facs[facility_index])
+            merged = _seat_values(fac)
+            for i, value in enumerate(values):
+                while len(merged) <= i:
+                    merged.append("")
+                merged[i] = value
+            _write_seats(fac, merged)
+            if manual:
+                _write_manual(fac, raw_slots=[i for i, n in enumerate(merged) if n],
+                              raw_names=[n for n in merged if n], touched=bound,
+                              touched_indices=None if touched is None else
+                              [int(i) for i in touched])
+            facs[facility_index] = fac
+            self.replace_facilities(shift_index, facs)
+            return
+        # —— `pin=True`：逐格"先摘后写"（工单 §3.1）——
+        #    ⚠️ 台账由 `_write_one_seat` 自己写（按**累积**语义记"这一格"），它同时保证
+        #    被摘掉的那一格从台账里退掉。`touched` 在这条路上**只用来收窄**：调用方说
+        #    "我这次真的碰过哪几格"，没碰过的那几格保持它们原来的名字、不额外放锁。
         if manual:
-            # ⚠️ `touched=len(slots)`（**传进来的那一段的长度**）只作 `touched=None` 那条
-            #    旧契约的上界，别改成 `len(merged)`：那会把"没提到的位次"也算进上界，
-            #    于是 `set_facility_slots([None, "丁"])` 的台账从 `slots=[1]` 变成 `[1, 2]`
-            #    （既有断言与 API 契约都会被改坏）。
-            _write_manual(fac, raw_slots=[i for i, n in enumerate(merged) if n],
-                          raw_names=[n for n in merged if n], touched=len(slots),
-                          touched_indices=None if touched is None else [int(i) for i in touched])
-        facs[facility_index] = fac
+            keep_set = {int(k) for k in touched} if touched is not None \
+                else {i for i, v in enumerate(values) if v}
+            for i in range(len(values)):
+                if i in keep_set:
+                    continue
+                fac2 = dict(facs[facility_index])
+                _write_manual(fac2, touched=bound, touched_indices=[])
+                facs[facility_index] = fac2
+        for i, value in enumerate(values):
+            _write_one_seat(facs, facility_index, i, value, pin=manual)
         self.replace_facilities(shift_index, facs)
 
-    def _reject_detached_seats(self, values: Sequence[str], shift_index: int,
-                               facility_index: int) -> None:
-        """**不许把「不在基建」名单里的人手动安排到在用位次上**。
+    def place_operator(self, shift_index: int, facility_index: int, slot: int,
+                       name: str, replace_in_shift: bool = True) -> None:
+        """**「锁定入宿」的唯一语义入口**：把某人钉到「本班 · 某设施 · 某位次」。
 
-        否则"**既在名单、又坐在位上、还被锁住**"这个自相矛盾的状态就被造出来了 ——
-        与 `set_detached` / `set_seat_lock` 的拒绝是同一条口径（三处一起守住才会没有例外）。
+        与 `set_facility_slots` 的差别只有一条，但它是必需的：
 
-        ⚠️ **只在本入口要打手动标（`manual=True`）时校验**：`manual=False` 只是改布局，
-        而那份"名单 ∧ 在位"的状态是 `set_detached(..., remove_from_slots=False)` **明确允许**的
-        （API 文档里就这么写的），不该在别处被顺手禁掉。
+        > **先把她从本班其它设施里摘掉**（留空洞、**不左移**），再写这一格。
+
+        为什么必需（工单 §1 两条实测）：手动指定过去**不摘人** ⇒ 她会在同一班里
+        **同时在控制中枢和宿舍#4**，而技能计数是**逐设施**数的（`len(facility.operators)`、
+        `variables.basis_count`）⇒ 把「能天使」塞进「芳汀」（独处，`basis=dorm_others`）
+        的宿舍后，芳汀的心情从 −5.00 变成 **−5.05**；`evaluate_base` 还会给她**输出两行**
+        （`all_operators()` 不去重）。副作用（用户已知并接受）：她的**工作设施位次真空出来**。
+
+        `replace_in_shift`（默认 `True`）：**她把原来待的那一处交出去**。
+        ⚠️ 这条正是工单 §3.3「同一班次里把同一人指定到两个位次 ⇒ **后者覆盖**」——
+        「锁定入宿」矩阵按班次逐格写，用户第二次点的是"改主意"，首次那一格必须腾出来。
+        只有"允许同一人占两格"的老调用方需要显式传 `False`。
+
+        ⚠️ **只动 `shift_index` 这一个班次**（逐班写入）—— 每班各自一份布局与台账。
+        ⚠️ 摘人**留空洞、不左移**（与 `models.remove_occupant` 一致；**不走**
+        `set_detached` 那条会紧凑化的路）。
+        ⚠️ 她在「不在基建」名单里 ⇒ **先剔名单再写入**（工单 §3.2），不抛错。
+        """
+        self.place_operators({int(shift_index): [(int(facility_index), int(slot), name)]},
+                             replace_in_shift=replace_in_shift)
+
+    def place_operators(self, pins: Dict[int, List[Tuple[int, int, str]]],
+                        detach_note: Optional[list] = None,
+                        replace_in_shift: bool = True) -> int:
+        """`pins` = `{班次下标: [(设施下标, 位次, 人名或空串), …]}` —— 批量"先摘后写"。
+
+        每个班次**只写回一次**布局；同一次调用里同一格被写两次 ⇒ **后写的那次说了算**
+        （工单 §3.3 的"后者覆盖"）。**不重算**（与 `set_facility_slots` 一样由
+        `replace_facilities` 触发；界面走异步重算），返回落下去的格数。
+
+        `replace_in_shift`（默认 `True`）：**她把原来待的那一处交出去**（工单 §3.3）。
+        传 `False` ＝ 只写这一格、**不摘她在本班别处的位置**（老的"允许两处"语义；
+        `apply_manual_shifts` 内部就是自己扫一遍再摘，走 `False` 免得重复摘）。
+
+        `detach_note`（可选 `list`）：被**剔出「不在基建」名单**的人名会追加进去
+        （工单 §3.2 的回执要用）。
+        """
+        if self.schedule is None:
+            return 0
+        written = 0
+        for i, cells in pins.items():
+            if not (0 <= int(i) < len(self.schedule.shifts)):
+                continue
+            # ⚠️ 工单 §3.2：名单里的人**先剔名单、再写入**（旧行为是抛错拒绝）。
+            hits = self._detach_guard([str(name or "") for _fi, _s, name in cells])
+            if detach_note is not None:
+                for n in hits:
+                    if n not in detach_note:
+                        detach_note.append(n)
+            facs = self.facilities_of(int(i))
+            hit = False
+            for fac_index, slot, name in cells:
+                if not (0 <= int(fac_index) < len(facs)):
+                    continue
+                _write_one_seat(facs, int(fac_index), int(slot), str(name or ""),
+                                pin=True, replace_in_shift=replace_in_shift)
+                hit = True
+                written += 1
+            if hit:
+                self.schedule = self.schedule.replaced_shift(int(i), facs)
+        return written
+
+    def _detach_guard(self, values: Sequence[str]) -> List[str]:
+        """把 `values` 里**在「不在基建」名单里**的人**先剔出名单**，返回被剔掉的名字。
+
+        ⚠️ **2026-10 口径改动（工单 §3.2「三条里改了一条」）**：本方法原来叫
+        `_reject_detached_seats`，遇到名单里的人**抛 `ValueError` 拒绝**。用户拍板改成
+        「**先把那个干员从名单里剔掉，再执行操作**」—— 因为「锁定入宿」的主语就是
+        "把她放回基建"，拒绝只会逼用户先去另一个页面手动摘名单。
+
+        ⚠️ **另外两处拒绝仍然保留**（只改了"放人"这一条路），「名单 ∧ 在位 ∧ 被锁」
+        这个不变式照旧守得住：
+          · `set_detached`：名单里的人**已被手动锁**在某个位次 ⇒ 拒绝；
+          · `set_seat_lock(locked=True)`：要锁的那一位坐着的人**在名单里** ⇒ 拒绝。
+        ⚠️ 名单是**会话级**的（不分班次）：剔掉一次，她在**所有班次**都不再是"不在基建"。
+        ⚠️ 只改 `self.detached` 与 `schedule.detached`，**不摘位置**（她马上要被写到目标格上；
+        走 `set_detached(remove_from_slots=True)` 会先把她从所有班次摘一遍，多绕一圈）。
         """
         wanted = set(self.detached)
-        hits = [(i, n) for i, n in enumerate(values) if n and n in wanted]
+        hits: List[str] = []
+        for n in values:
+            name = str(n or "")
+            if name and name in wanted and name not in hits:
+                hits.append(name)
         if not hits:
-            return
-        detail = "、".join(f"第 {i + 1} 位 {n}" for i, n in hits)
-        raise ValueError(
-            f"无法手动安排：{detail} 已在「不在基建」名单里"
-            f"（第 {shift_index + 1} 班 第 {facility_index + 1} 间房）。"
-            "请先把她移出名单（「不在基建」名单与「手动锁在基建内」不能同时成立）。")
+            return []
+        rest = [n for n in self.detached if n not in set(hits)]
+        self.detached = rest
+        if self.schedule is not None:
+            # 名单与各班的 `world` 必须一致（引擎读的是 `world.detached`）；
+            # ⚠️ 用 `with_detached`（**不动位置**）—— 她马上要被写到目标格上，这里只摘名单。
+            self.schedule = self.schedule.with_detached(rest)
+        return hits
 
     def set_seat_lock(self, shift_index: int, facility_index: int, slot: int,
                       locked: bool = True) -> None:
@@ -1167,7 +1272,7 @@ class Session:
         return out
 
     def apply_manual_shifts(self, changes: Dict[int, List[dict]],
-                            recompute: bool = True) -> int:
+                            recompute: bool = True, detach_note=None) -> int:
         """**整批**落地"按班次的布局改动"，并把**占位真的变了**的设施记进手动台账。
 
         `changes` = `{班次下标: 布局列表}`；每个布局项是**设施描述**（`ui/batch.py` 给的
@@ -1192,12 +1297,27 @@ class Session:
         if self.schedule is None or not changes:
             return 0
         written = 0
-        marked = 0
         for i in sorted(changes):
             if not (0 <= i < len(self.schedule.shifts)):
                 continue
             facs = self.facilities_of(i)
-            hit = False
+            # —— ① 先算"这一班谁最后落在哪一格"（面板给的整班布局）：摘人要放在
+            #    **写完整班布局之后**（面板那份布局里往往还写着"她在原来那处"，
+            #    反过来的话会被 `_write_seats` 又写回来）。
+            #    ⚠️ 同一人出现两处时**由"面板交来的先后"决定谁赢**（后写的那一处留下
+            #    ＝工单 §3.3）。**不能按坐标 `(设施, 位次)` 比大小**：面板是按"改过哪几间房"
+            #    给的（`ui/batch.py` 的 `_fac_names` 按设施下标），可制造站的下标比宿舍大
+            #    ⇒ 按坐标取大值会把"她还在制造站上班"那份**旧**布局当成最新意图，
+            #    宿舍那一处就腾不出来了（实测踩到）。
+            pins: Dict[str, Tuple[int, int]] = {}
+            for fi, item in enumerate(changes[i]):
+                if fi >= len(facs) or not isinstance(item, dict):
+                    continue
+                for k, n in enumerate(_seat_values(item)):
+                    if n:
+                        pins[str(n)] = (fi, k)
+            written_before = written
+            # —— ② 落面板给的那份整班布局（逐位差异 → 累积台账）——
             for fi, item in enumerate(changes[i]):
                 if fi >= len(facs):
                     break
@@ -1219,13 +1339,21 @@ class Session:
                     _write_manual(fac, raw_slots=[k for k, n in enumerate(new_values) if n],
                                   raw_names=[n for n in new_values if n],
                                   touched=width, touched_indices=diff)
-                    marked += 1
                 facs[fi] = fac
-                hit = True
                 written += 1
+            # —— ③ 「指定时清原位」（工单 §3.1）：把每个人从**除最后那一格以外**的
+            #    所有位次上摘掉（留空洞、不左移），并解掉被摘空那一格的手动标记。
+            if pins:
+                for n, cell in pins.items():
+                    _strip_from_other_facilities(facs, n, keep=cell)
+                hits = self._detach_guard(list(pins))
+                if detach_note is not None:
+                    for n in hits:
+                        if n not in detach_note:
+                            detach_note.append(n)
             # ⚠️ 只要写过就装这份布局 —— **不能只看"有没有打标"**：面板只改房间等级时
             #    占位一个都没变，但那份 `level` 必须落进 `schedule`（否则改等级静默失效）。
-            if hit:
+            if written > written_before:
                 self.schedule = self.schedule.replaced_shift(i, facs)
         if written and recompute:
             self.recompute()
@@ -1766,6 +1894,92 @@ def _capacity_of_dict(fac: dict) -> int:
     if ftype is None:
         return 0
     return int(facility_slots(ftype, int(fac.get("level", 1))))
+
+
+def _strip_from_other_facilities(facs: List[dict], name: str,
+                                 keep: Optional[Tuple[int, int]] = None) -> int:
+    """把 `name` 从这一班里**除 `keep` 那一格以外的所有位次**上摘掉（留空洞、**不左移**）。
+
+    `keep` ＝ `(设施下标, 位次)`：**只有这一格不动**（它是这次要保留/写进去的那一格）。
+    ⚠️ 别写成"跳过 `keep[0]` 那一整间设施"：同一个人**在同一间房的另一个位次**上也得摘
+    （工单 §3.3「同一班次里把同一人指定到两个位次 ⇒ 后者覆盖」就是这条）。
+
+    「指定时清原位」的语义核心（工单 §3.1）：手动指定过去**不摘人** ⇒ 她会在同一班里
+    同时在控制室与宿舍，而技能计数是**逐设施**数的（`len(facility.operators)`、
+    `variables.basis_count`）⇒ 实测把「能天使」塞进「芳汀」（独处，`basis=dorm_others`）
+    的宿舍后，芳汀从 −5.00 变 **−5.05**；`evaluate_base` 还会给她输出两行。
+
+    ⚠️ **不走** `set_detached` 那条路：`Session._remove_from_slots` 摘完人会**紧凑化**，
+    位次整体前移，与"位次不左移"直接冲突。
+    ⚠️ 被摘空的那一格若在手动台账里 ⇒ **一并解掉**（那一格已经空了，留着"钉住一个空位"
+    会让 `_seat_verdict` 第 1 层把它**保持空着**，而用户这次要的是"把她挪到这一格"）。
+    ⚠️ **只写回真的动过的设施**（`hit` 才 `facs[k] = fac`）：否则会把每个设施都重写成
+    `slots` 写法（导出形态跟着变），而这条路上大多数设施本来就没人。
+    """
+    if not name:
+        return 0
+    keep_fi, keep_slot = (int(keep[0]), int(keep[1])) if keep is not None else (-1, -1)
+    hit = 0
+    for k, f in enumerate(facs):
+        old_specs = _seat_specs(f)
+        old_values = _seat_values(f)
+        idx = [i for i, v in enumerate(old_values) if v == name
+               and not (k == keep_fi and i == keep_slot)]
+        if not idx:
+            continue
+        for i in idx:
+            while len(old_specs) <= i:
+                old_specs.append("")
+            old_specs[i] = ""
+        fac = dict(f)
+        _write_seats(fac, old_specs)
+        _write_manual(fac, raw_slots=[k2 for k2, n in enumerate(old_values) if n],
+                      raw_names=[n for n in old_values if n],
+                      touched=len(old_values), touched_indices=idx)
+        facs[k] = fac
+        hit += len(idx)
+    return hit
+
+
+def _write_one_seat(facs: List[dict], fac_index: int, slot: int, spec, *,
+                    pin: bool = False, replace_in_shift: bool = True) -> None:
+    """**把一格位次写成 `spec`**（`store.session` 的「锁定入宿」一族共用这一处），并维护台账。
+
+    `facs` ＝ 某一班次的**可改副本列表**（`Session.facilities_of(i)` 的产物），
+    本函数就地改 `facs[...]`（调用方自己决定何时 `replaced_shift` 写回）。
+
+    · `pin=False`：只写这一格；写名字 ⇒ 这一格进台账、名字进 `names`（＝**摆位即上锁**）、
+      被清空 ⇒ 这一格**退出**台账（＝**清空即解锁**，交还自动入宿）。与
+      `set_facility_slots`（不传 `touched` 的那条旧契约）逐格等价。
+    · `pin=True`：先**把她从本班其它设施里摘掉**（留空洞、**不左移**）再写这一格
+      —— 这是「锁定入宿」的核心语义（工单 §3.1）。**不走** `set_detached` 那条会紧凑化的
+      路（`_remove_from_slots` 摘完人不留洞）。被摘掉的那一格若在台账里也**一并解掉**：
+      那一格已经空了，留着"钉住一个空位"会把它**保持空着**（`_seat_verdict` 第 1 层），
+      而用户这次的意图是"把她挪到这一格"。
+    · `replace_in_shift=False`：**只摘别的设施、不摘宿主的别处**（`apply_manual_shifts`
+      自己扫一遍再摘，用它免得重复摘；老调用方也用它保留"允许两处"的旧语义）。
+
+    ⚠️ 写进去的是**纯名字**（`_spec_name(spec)`）：练度由面板给的那份布局（`_seat_specs`）
+    保留，用对象写回会把旁边几位的练度拍回默认 E2/Lv30。
+    ⚠️ `pin=True` 时 `names` 会把写进来的这位**重新加回**（她刚被从别处摘掉、`names`
+    里那份记录也被摘过一次）。
+    """
+    name = _spec_name(spec)
+    if pin and name and replace_in_shift:
+        _strip_from_other_facilities(facs, name, keep=(fac_index, int(slot)))
+    fac = dict(facs[fac_index])
+    seats = _seat_values(fac)
+    bound = max(_capacity_of_dict(fac), len(seats), int(slot) + 1)
+    while len(seats) <= int(slot):
+        seats.append("")
+    seats[int(slot)] = name
+    _write_seats(fac, seats)
+    if name:
+        _write_manual(fac, raw_slots=[int(slot)], raw_names=[name], touched=bound,
+                      touched_indices=[int(slot)])
+    else:
+        _write_manual(fac, touched=bound, touched_indices=[int(slot)])
+    facs[fac_index] = fac
 
 
 def _trim_to_capacity(fac: dict, capacity: int) -> dict:
