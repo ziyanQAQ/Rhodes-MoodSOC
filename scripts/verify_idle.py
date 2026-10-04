@@ -579,6 +579,56 @@ def test_per_operator_disabled():
     check("参与的人照常安排", dorm_names(world) == [["乙"]], str(dorm_names(world)))
 
 
+def test_per_operator_disabled_in_swap():
+    print("全局配置：逐人「这一位不参与」在**相 2（换人）**里同样生效")
+    # 场景：**空床 1 个 < 候选 3 位**，且「不参与」的丙 按 (心情, 名字) 排在「床位用完」之后
+    # —— 乙(5) 占掉唯一的空床、相 1 在 戊(6) 身上 `break` 把队列交棒给相 2，丙 只在**相 2**
+    # 里被处理。⚠️ 改前相 2 只查黑名单与心情、**不查 `cfg.entry_for`** ⇒ 用户勾的「不参与」
+    # 被忽略、丙 照旧被换进宿舍（与黑名单不同口径的漏洞）。
+    per_op = [{"name": "丙", "enabled": False}]
+    world = make_layout([[("甲", 24)], [], [("己", 24)]], capacity=1, dorm_count=3,
+                        protected_slots=0, per_operator=per_op)
+    run(world, {"乙": 5, "戊": 6, "丙": 7}, scope=(1, 1))
+    check("相 2 也尊重「不参与」：丙 没被换进宿舍（宿舍 = 戊 / 乙 / 己）",
+          slots_text(world) == [["戊"], ["乙"], ["己"]], str(slots_text(world)))
+    check("丙 整个没进基建（勾「不参与」＝不把她安排进宿舍）",
+          world.get_operator("丙") is None, str(mood_of(world, "丙")))
+    check("相 2 的换人照旧发生（戊 顶掉甲、不是「整相跳过」）",
+          world.get_operator("甲") is None and dorm_at(world, 1).slot_of("戊") == 0,
+          str(slots_text(world)))
+
+    # 带作用域（周期 × 班次）的设置：相 2 必须用**同一个 `scope`** 去问 `entry_for`
+    scoped = [{"name": "丙", "enabled": False, "cycle": 1, "shift": 1}]
+    world = make_layout([[("甲", 24)], [], [("己", 24)]], capacity=1, dorm_count=3,
+                        protected_slots=0, per_operator=scoped)
+    run(world, {"乙": 5, "戊": 6, "丙": 7}, scope=(1, 1))
+    check("带 (周期, 班次) 的「不参与」在相 2 同样生效（scope 传对了）",
+          slots_text(world) == [["戊"], ["乙"], ["己"]], str(slots_text(world)))
+    world = make_layout([[("甲", 24)], [], [("己", 24)]], capacity=1, dorm_count=3,
+                        protected_slots=0, per_operator=scoped)
+    run(world, {"乙": 5, "戊": 6, "丙": 7}, scope=(2, 1))
+    check("作用域不匹配（第 2 周期）时她照旧参与、照旧被换进去（别修成一刀切）",
+          slots_text(world) == [["戊"], ["乙"], ["丙"]], str(slots_text(world)))
+
+    # 相 1 原本就查（防回归：这个判据不许从相 1 挪走或删掉）
+    world = make_layout([[("甲", 24)]], capacity=2, dorm_count=1, protected_slots=0,
+                        per_operator=per_op)
+    run(world, {"丙": 5})
+    check("相 1（有空床）里不参与 ⇒ 也不填空床",
+          slots_text(world) == [["甲", None]], str(slots_text(world)))
+
+    # 用户拍板的另一半：**仍可被换出**（「不参与」只拦"她自己进宿舍"，不拦"别人换她出去"）
+    world = make_layout([[("丙", 5)]], capacity=1, dorm_count=1, protected_slots=0,
+                        per_operator=per_op)
+    events = run(world, {"丁": 4})
+    check("「不参与」的人坐在宿舍里仍可被换出（与黑名单同口径）",
+          world.get_operator("丙") is None and dorm_at(world, 1).slot_of("丁") == 0,
+          str(slots_text(world)))
+    check("换出她时照旧走**换人**那条路（「闲置入宿」事件，而不是「未执行」）",
+          events and all(ev.group == "idle_to_dorm" for ev in events),
+          str(groups_of(events)))
+
+
 def test_dorm_state():
     print("宿舍态（面板 / trace 的唯一来源）")
     world = make_layout([[("甲", 5)], [("乙", 5)]], capacity=3, dorm_count=2, protected_slots=0)

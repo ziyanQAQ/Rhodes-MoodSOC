@@ -1093,6 +1093,10 @@ def reset_entry_events(world: BaseLayout) -> int:
 #   · **空洞**：清空某一位**不左移**后面的人（位次粘人，`models.set_seat`）；
 #     "可入住空位"＝第一个**既没住户、又没被手动钉住**的位次。
 #   · **黑名单** = 永远不能"通过闲置入宿进宿舍"的人（可被换出，不是保护位次）。
+#   · **逐人「这一位不参与」**（`IdleToDormConfig.per_operator`，`scope` 决定它是哪一周期哪一班）
+#     与黑名单**同一口径**：不被安排进宿舍，但**仍可被换出**。⚠️ **相 1 与相 2 都要查**：
+#     相 1 一碰到"没有空床"就 `break` 把队列交给相 2，只查相 1 会漏掉"排在空床用完之后"
+#     的那几位（2026-10 修：她们照旧被换进宿舍，用户勾的设置被静默忽略）。
 #
 # ⚠️ 已作废（别再加回来）：手动指定位置 / 手动点名交换（那两件事归**手动编辑逻辑**，
 #    入口是看板与「干员与心情」表，写进布局快照 + 台账）；竖向反序扫描取"首个严格大于"
@@ -1301,6 +1305,11 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
           找不到合格住户 ⇒ 立刻停（终态：锁定区外每位住户的心情都 ≥ 队列剩下的所有人）
     ```
 
+    ⚠️ **逐人「这一位不参与」与黑名单两相都查**（黑名单在 `_enqueue` 就拦掉了，逐人设置在
+    两相各查一次）：相 1 一碰到"没有空床"就 `break` 把整个队列交给相 2，所以候选多于空床时
+    "排在空床用完之后的候选"**只经过相 2** —— 那里不查，用户勾的"不参与"就被静默忽略。
+    两者的口径都是**"不能通过闲置入宿进宿舍"，但"仍可被换出"**（见相 2 循环里的说明）。
+
     与 `apply_entry_events` 同一层：它改的是**布局**（谁在哪个房间），不是每小时速率，
     所以不进 `consume_ledger` / `recovery_ledger`，由调用方在**每个换班执行点**显式结算
     （`store.schedule.simulate_schedule` 会为「每个真实班次的班初 ＋ 长班的每个内部换班点」各调一次）。
@@ -1436,6 +1445,19 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
         if name in blacklist:
             settled.add(name)
             continue
+        # ⚠️ 逐人「这一位不参与」在**相 2 里也要查**（与相 1 **同判据、同一个**
+        #    `cfg.entry_for`）：相 1 一碰到"没有空床"就 `break`，把整个队列**交棒**给相 2 ——
+        #    所以"候选数多于空床数"时，排在"空床用完"**之后**的候选**只经过相 2**，
+        #    相 1 那一次判断根本没走到她（实测：空床 1 个、候选 3 位时 `entry_for` 只被问了
+        #    前两位，而勾了"不参与"的第三位照旧被换了进去 ⇒ 用户勾的设置被静默忽略）。
+        #    口径与黑名单一致（`documents/04-特殊机制.md` 第 30 条 / `AGENTS.md` 坑 17）：
+        #    **不能通过闲置入宿进宿舍，但仍可被换出** —— 所以这里只拦"她作为候选被换进去"；
+        #    `_best_swap_victim` 那份"换出谁"的逻辑一字不动（她坐在宿舍里时照旧能被换出去）。
+        #    `settled.add` 与相 1 同款：了结过的人不再参与本执行点的后续判定，防打转。
+        entry = cfg.entry_for(name, cycle_no, shift_no) if cfg is not None else None
+        if entry is not None and not entry.enabled:
+            settled.add(name)
+            continue                               # 逐人设置：这一位不参与
         if op is not None:
             mood = op.mood
         if mood >= MOOD_MAX:
