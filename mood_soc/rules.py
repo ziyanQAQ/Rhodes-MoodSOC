@@ -1079,9 +1079,9 @@ def reset_entry_events(world: BaseLayout) -> int:
 #
 # 自动入宿本身只有两相：
 #
-#   相 1（填空床） 竖向正序取第一个"可入住空位"，候选按 (心情↑, 名字↑) 依次入住；
+#   相 1（填空床） **竖向反序**取第一个"可入住空位"，候选按 (心情↑, 名字↑) 依次入住；
 #   相 2（换人）   队列改最小堆：反复取**心情最低**的候选，让她替换
-#                  **锁定区外、心情 ≥ 她、心情最大**的那位住户。
+#                  **锁定区外、心情 ≥ 她、心情最大**的那位住户（并列取竖向反序最靠前）。
 #
 #   相 2 的终态＝**锁定区之外的每位住户，心情都 ≥ 队列里剩下的所有人**；找不到
 #   这样的住户就立刻停下（这句就是"低心情优先入宿"的可判定形式）。
@@ -1090,6 +1090,9 @@ def reset_entry_events(world: BaseLayout) -> int:
 #
 # 关键概念：
 #   · **竖向正序** = 位次优先、宿舍序号其次：宿1位1、宿2位1、…、宿1位2、…
+#     （2026-10 起**只用于锁定位置**：锁定区＝竖向正序前 N 个逻辑位次）
+#   · **竖向反序** = 竖向正序的完全逆序：宿4位5、宿3位5、…、宿1位1
+#     （2026-10 起用于**相 1 填空床**与**相 2 并列裁决**）
 #   · **空洞**：清空某一位**不左移**后面的人（位次粘人，`models.set_seat`）；
 #     "可入住空位"＝第一个**既没住户、又没被手动钉住**的位次。
 #   · **黑名单** = 永远不能"通过闲置入宿进宿舍"的人（可被换出，不是保护位次）。
@@ -1249,7 +1252,9 @@ def _next_free_slots(world: BaseLayout) -> List[tuple]:
     """每间可用宿舍"当前可入住的下一个位置" → `[((位次, 宿舍序号), 设施, 0 基位次), …]`。
 
     只有**既没住户、又没被手动钉住**的位次才算可入住（手动清空的位次会被锁住）。
-    排序键＝竖向正序 `(位次, 宿舍序号)`。
+    ⚠️ 排序键＝**竖向反序** `(位次↓, 宿舍序号↓)`（2026-10 口径反转，旧的是竖向正序）：
+    相 1 取 `[0]` ⇒ 填的是**竖向反序最靠前**的那个空位（＝竖正序最靠后的空位）。
+    锁定位置不受影响：它仍按**竖向正序**取前 N 个（`_protected_positions`）。
     """
     out: List[tuple] = []
     for no, fac in _dorm_numbered(world):
@@ -1257,14 +1262,14 @@ def _next_free_slots(world: BaseLayout) -> List[tuple]:
             action, _who, _why = _seat_verdict(fac, i, world=world)
             if action == SEAT_AUTO:
                 out.append(((i + 1, no), fac, i))
-    out.sort(key=lambda row: row[0])
+    out.sort(key=lambda row: row[0], reverse=True)      # 竖向反序（2026-10 口径反转）
     return out
 
 def _best_swap_victim(world: BaseLayout, candidate_mood, *, protected=None, ceiling=None):
     """**相 2 的目标** → `(设施, 0 基位次, 干员)`；没有合格目标 → `(None, None, None)`。
 
     口径（相 2 的终态）：在**锁定区之外、且没被手动钉住**的住户里，取
-    **心情 ≥ 候选、且心情最大**的那一位（并列时取竖向正序最靠前）。
+    **心情 ≥ 候选、且心情最大**的那一位（并列时取**竖向反序最靠前**）。
 
     为什么是"≥ 里取最大"：相 2 按候选心情**从小到大**处理，且被换出者不在本执行点再入队。
     取"≥ 候选里最大的那位"＝**把最少的那点余量让出去**，剩下的住户仍然够后面的候选换；
@@ -1283,7 +1288,7 @@ def _best_swap_victim(world: BaseLayout, candidate_mood, *, protected=None, ceil
                 continue
             if ceiling is not None and occupant.mood < ceiling:
                 continue
-            key = (-occupant.mood, i, no)     # 心情最大优先；再竖向正序
+            key = (-occupant.mood, -i, -no)   # 心情最大优先；再竖向反序（2026-10 口径反转）
             if best is None or key < best[0]:
                 best = (key, fac, i, occupant)
     if best is None:
@@ -1299,7 +1304,7 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
     口径＝三层解耦后的**自动入宿**（见本段开头的说明与 `_seat_verdict`）：
 
     ```
-    相 1  竖向正序填空床（候选按 心情↑、名字↑）
+    相 1  **竖向反序**填空床（候选按 心情↑、名字↑）
     相 2  队列改最小堆：取最低心情候选 → 替换"锁定区外、心情 ≥ 她、心情最大"的住户
           被换出者（心情 < 24、非黑名单）按 (心情↑, 名字↑) 插回队列
           找不到合格住户 ⇒ 立刻停（终态：锁定区外每位住户的心情都 ≥ 队列剩下的所有人）
@@ -1398,7 +1403,7 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
             Bucket.EVENT, "闲置入宿", ZERO, group="idle_to_dorm",
             owner=name, target=fac.display_name, detail=(
                 f"（{name} 心情 {mood} 未满且在闲置（{where}）→ 进 {fac.display_name} "
-                f"第 {slot + 1} 位（竖向正序最靠前的空位）；{how}）")))
+                f"第 {slot + 1} 位（竖向反序最靠前的空位）；{how}）")))
 
     def _swap(fac, slot, victim, name, op, mood, where, how):
         # 进来的人**接替被换出者的原位次**（不产生空洞）；被换出者离开宿舍 → 闲置。
@@ -1415,7 +1420,7 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
                 f"{slot + 1} 位、心情 {victim.mood} 的 {victim.name} 互换：{name} 进宿舍恢复，"
                 f"{victim.name} 换出来闲置（既不工作也不在宿舍）；{how}）")))
 
-    # ================= 相 1：填空床（竖向正序） =================
+    # ================= 相 1：填空床（竖向反序） =================
     while queue:
         mood, name, op, where = _pop()
         if trace is not None:
@@ -1436,7 +1441,7 @@ def apply_idle_to_dorm(world: BaseLayout, *, enabled=None,
             break
         _key, fac, slot = free[0]
         _place(fac, slot, name, op, mood, where,
-               "自动：竖向正序最靠前的空位")
+               "自动：竖向反序最靠前的空位")
         settled.add(name)
 
     # ================= 相 2：换人（最小堆 + 定点） =================

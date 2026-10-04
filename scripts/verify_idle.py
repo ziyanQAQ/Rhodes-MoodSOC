@@ -17,14 +17,15 @@
      但 `Session.set_seat_lock` / `clear_seat_locks` 仍保留给 API（能锁一个**空位**）。
   ② **全局配置** —— 总开关 / 锁定位置数（竖向正序前 N 个**逻辑位次**，默认 5）/
      黑名单（不能通过闲置入宿进宿舍）/ 逐人"不参与"。
-  ③ **自动入宿** —— 两相：竖向正序填空床 → 全满则取**心情最低**的候选替换
-     "锁定区外、心情 ≥ 她、且心情最大"的住户（并列取竖向正序靠前）；换人接替原位次；
+  ③ **自动入宿** —— 两相：**竖向反序**填空床 → 全满则取**心情最低**的候选替换
+     "锁定区外、心情 ≥ 她、且心情最大"的住户（并列取**竖向反序最靠前**）；换人接替原位次；
      被换出者不在本执行点再入队，留到下一个执行点重新评估；
      定点＝**宿舍里（锁定区外）最低的那位也 ≥ 外面剩下的候选**。
   ④ **导入布局**＝基线不是护身符：住进宿舍的人照样可以被换出去。
 
 ⚠️ 已作废、别再加回来：手动指定位置 / 手动点名（归**锁定入宿**这一层，走布局快照）、
-   竖向反序取"首个严格大于"、被换出者追加队尾、连续排列（留空洞即跳过）、
+   竖向反序**扫描取"首个严格大于"**（⚠️ 2026-10 的"竖向反序"是**填空顺序与并列裁决**，
+   与这条旧规则不是一回事）、被换出者追加队尾、连续排列（留空洞即跳过）、
    以及更早的四级优先级 / 挂件门 / 阵营门 / 菲亚梅塔例外。
 """
 from __future__ import annotations
@@ -202,23 +203,22 @@ def test_execution_points():
 
 
 # ============================================================================
-# ② 相 1：竖向正序填空床
+# ② 相 1：竖向反序填空床
 # ============================================================================
 def test_vertical_order():
-    print("相 1：竖向正序填空床（位次优先、宿舍序号其次）")
+    print("相 1：竖向反序填空床（位次大的优先、宿舍序号大的优先）")
     world = make_layout([[("甲", 5), ("乙", 5), ("丙", 5), ("丁", 5)], []],
                         capacity=4, dorm_count=2, protected_slots=0)
     run(world, {"戊": 6, "己": 7})
-    check("空床按 宿1位5 → 宿2位1 依次入住",
-          slots_text(world) == [["甲", "乙", "丙", "丁", "戊"], ["己", None, None, None, None]]
-          or slots_text(world) == [["甲", "乙", "丙", "丁"], ["戊", "己", None, None]],
+    check("空床按竖向反序入住 ⇒ 宿2位4 给戊、宿2位3 给己（宿1 已满）",
+          slots_text(world) == [["甲", "乙", "丙", "丁"], [None, None, "己", "戊"]],
           str(slots_text(world)))
 
     # 空洞位次照样可入住
     world = make_layout([[("甲", 5)]], capacity=3, dorm_count=1, protected_slots=0)
     set_seat(world.facilities[0], 1, None) if 1 in world.facilities[0].slot_map() else None
-    check("空洞位次照样是可入住位（位次不左移）",
-          [s for _k, _f, s in _next_free_slots(world)] == [1, 2],
+    check("空洞位次照样是可入住位（位次不左移；反序 ⇒ 先给靠后的，[2, 1]）",
+          [s for _k, _f, s in _next_free_slots(world)] == [2, 1],
           str([s for _k, _f, s in _next_free_slots(world)]))
 
 
@@ -256,12 +256,12 @@ def test_swap_lowest_mood_first():
 
 
 def test_swap_victim_tiebreak():
-    print("相 2：并列时取**竖向正序最靠前**的住户（旧口径是反序取最靠后）")
+    print("相 2：并列时取**竖向反序最靠前**的住户（旧口径取竖向正序最靠前）")
     world = make_layout([[("甲", 24), ("乙", 24)], [("丙", 24), ("丁", 24)]],
                         capacity=2, dorm_count=2, protected_slots=0)
     fac, slot, victim = _best_swap_victim(world, Decimal("10"),
                                           protected=_protected_positions(world, 0))
-    check("竖向正序最靠前 = 宿1位1（甲）", victim is not None and victim.name == "甲",
+    check("竖向反序最靠前 = 宿2位2（丁）", victim is not None and victim.name == "丁",
           str(victim))
 
 
@@ -575,8 +575,8 @@ def test_protected_slots():
           str(slots_text(world)))
     world = make_layout([[]], capacity=2, dorm_count=1, protected_slots=2)
     run(world, {"丙": 5, "丁": 6})
-    check("锁定区的**空位**照样能入住（两个都在锁定区）",
-          dorm_names(world) == [["丙", "丁"]], str(dorm_names(world)))
+    check("锁定区的**空位**照样能入住（两个都在锁定区；反序 ⇒ 丁在第 1 位、丙在第 2 位）",
+          dorm_names(world) == [["丁", "丙"]], str(dorm_names(world)))
     world = make_layout([[("甲", 24)]], capacity=1, dorm_count=1, protected_slots=5,
                         labels=True)
     run(world, {"乙": 20})
@@ -1036,20 +1036,20 @@ def test_manual_lock_holds_every_point():
     starts = [seg[0] for seg in s.traj.segments]
     check("前提：这份排班确实有多个执行点（2 周期 × 24h ⇒ 班初 + 班内 12h）",
           len(starts) >= 4, f"{len(starts)} 段：{starts}")
-    check("没锁时：**班初那一段**她被安排到第 1 位",
-          dorm_seats(starts[0])[0] == "乙",
+    check("没锁时：**班初那一段**她被安排到第 5 位（反序的第一个空位）",
+          dorm_seats(starts[0])[4] == "乙",
           str([dorm_seats(t) for t in starts]))
     # ⚠️ 后面几段她**不在宿舍**是**文档化行为**、不是 bug：候选条件是"实时心情 < 24"，
     #    而她在宿舍里回满 24 之后就不再是候选；位置又每个执行点从 `pristine` 重建
     #    （她不在原始布局里）⇒ 那几段她是"不在基建"的平线。心情是满的，数值无害。
 
-    s.set_seat_lock(0, 1, 0)                      # 锁住"宿舍"第 1 位（空位）
+    s.set_seat_lock(0, 1, 4)                      # 锁住"宿舍"第 5 位（空位；反序下它是第一个空位）
     starts2 = [seg[0] for seg in s.traj.segments]
-    check("锁住第 1 位后：**每个**执行点的第 1 位都是空的（锁跨周期、跨执行点都成立）",
-          all(dorm_seats(t)[0] == "" for t in starts2),
+    check("锁住第 5 位后：**每个**执行点的第 5 位都是空的（锁跨周期、跨执行点都成立）",
+          all(dorm_seats(t)[4] == "" for t in starts2),
           str([dorm_seats(t) for t in starts2]))
-    check("班初那一段她被改安排到第 2 位（锁只是把她挪开，不是把她挡在门外）",
-          dorm_seats(starts2[0])[1] == "乙",
+    check("班初那一段她被改安排到第 4 位（锁只是把她挪开，不是把她挡在门外）",
+          dorm_seats(starts2[0])[3] == "乙",
           str([dorm_seats(t) for t in starts2]))
     # ★ 这条才是勘察点名的空白：**台账随深拷贝走到每一段、每个周期**
     from mood_soc.models import read_manual
@@ -1058,8 +1058,8 @@ def test_manual_lock_holds_every_point():
         w = s.traj.world_at(t)
         dorm = next(f for f in w.facilities if f.ftype == FacilityType.DORMITORY)
         leds.append(sorted(read_manual(dorm).slots))
-    check("每一段的世界里那份手动锁都在（`read_manual(...).slots == [0]` × 4 段）",
-          all(x == [0] for x in leds), str(leds))
+    check("每一段的世界里那份手动锁都在（`read_manual(...).slots == [4]` × 4 段）",
+          all(x == [4] for x in leds), str(leds))
 
     # —— 手动锁优先于**进驻事件**（用户裁决 Q-A=(a)：只换心情、不换位置）——
     #    入驻事件在 `restore_back=False` 时会顺手对调两人的位置，而它过去**绕过台账**
