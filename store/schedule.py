@@ -1001,9 +1001,10 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         entry_scope      `"dorm"`（限同宿舍）/ `"anywhere"`（**基建任意位置**）；`None` = 用 JSON
         entry_restore_back  `True` = 只换心情、两人留在原位置（默认）；`False` = **位置也一起互换**
         entry_force      **旧参数**（`True` = 等她回满再换；`False` = 只在她满心情时换）
-        entry_when       **什么时候换**：`"immediate"`（默认，**强制立刻换**：不管她满不满、
-                       也不管对方心情是多少）/ `"wait"`（等她回满再换）/ `"full"`（只在她满心情时换）；
-                       `None` = 用场景 JSON
+        entry_when       **什么时候换**：`"immediate"`（默认；她满 24 就换）/
+                        `"wait"`（到点没满就等她回满再换）/ `"full"`（只在她满心情时换）；
+                        ⚠️ **三档都以"她满 24"为前提**（2026-10 用户裁决）：她没满时三档都不换；
+                        `None` = 用场景 JSON
         entry_per_shift  **按班次覆盖**（`[EntryShiftOverride, ...]`）——
                        3 班排班就可以"第 1 班换给巫恋、第 2 班自动挑最累的、第 3 班不用"；
                        `None` = 用场景 JSON 里的 `per_shift`
@@ -1078,7 +1079,7 @@ def simulate_schedule(schedule: Schedule, cycles: int = 1,
         restore_back=(entry_restore_back if entry_restore_back is not None else cfg.restore_back),
         force=(entry_force if entry_force is not None else cfg.force),
         # ⚠️ `when` 必须显式带上：否则会退化成 dataclass 默认值，把 JSON 里的
-        #    "只在她满心情时换 / 等她回满再换" 覆盖成"强制立刻换"。
+        #    "只在她满心情时换 / 等她回满再换" 覆盖成 `immediate`（满 24 就换、双方都 24 也换）。
         when=(normalize_entry_when(when) or "immediate"),
     )
     #: 每个班次一份**"从未被动过"的计划副本** —— 引擎每段（含每个周期）都从它**重建**当前布局，

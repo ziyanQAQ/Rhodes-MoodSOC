@@ -1079,15 +1079,24 @@ def test_facility_auto_name():
 
 
 def test_entry_event_scope():
-    """M15a「换心情」触发条件**放宽**后的存在性口径（2026-10，用户裁决）。
+    """M15a「换心情」的两条口径（2026-10，**用户裁决**）。
 
-    用户原话：「换心情菲亚梅塔**不要求一定出现在宿舍中**，只要该布局中**存在**菲亚梅塔
-    就可以生效。」两条边界：① 她在**这一班的任意设施**里即可（工作设施 / 控制中枢…都算）；
-    ② 她即使在**「不在基建」名单**里，也算"存在"、照样触发。
-    ⚠️ ② 是**有意例外**（用户明确知道它与"不在基建的人不参与任何技能计数"冲突并要求照做），
-    不是 bug —— 见 `mood_soc/rules.apply_entry_events` 的说明与 `04-特殊机制.md` 第 29 条。
+    ① **触发者放宽**：用户原话「换心情菲亚梅塔**不要求一定出现在宿舍中**，只要该布局中
+       **存在**菲亚梅塔就可以生效。」两条边界：她在**这一班的任意设施**里即可（工作设施 /
+       控制中枢…都算）；她即使在**「不在基建」名单**里，也算「存在」、照样触发。
+       ⚠️ 后者是**有意例外**（用户明确知道它与「不在基建的人不参与任何技能计数」冲突并要求
+       照做），不是 bug —— 见 `mood_soc/rules.apply_entry_events` 与 `04-特殊机制.md` 第 29 条。
+
+    ② **「她满 24」这道门三种模式都生效**：用户原话「换心情这块改为只要布局内存在菲亚梅塔
+       且**心情为满 24** 就可以进行换心情的操作，不需要一定在宿舍内。」⇒ `when` 的
+       `immediate` / `full` / `wait` **都要过这道门**（旧口径只在 `mode != immediate` 时检查
+       ⇒ `immediate` 在她 20 时也换 —— 那正是本节的**核心回归**）。
+       ⚠️ 「双方心情相同也照换」**与 `when` 无关**（三档都照换）：这一次复核过 `5e52396`
+       「换心情改为强制立刻换」提交，它把「等值就跳过」整段删了并留下用户口径「不管对方心情是
+       多少，只要设置了就执行互换（数值相同时位置该换也换）」—— 别把它当成「只有 `immediate`
+       才有的特权」再给 `full`/`wait` 补回去。
     """
-    print("进驻事件（M15a）：触发者放宽成「任意设施 + 不在基建名单」")
+    print("进驻事件（M15a）：触发者放宽 + 「满 24」这道门三种模式都生效")
 
     # ① 她在宿舍里 ⇒ 触发（**防回归**：旧口径同样触发）
     w = build_base_layout({"facilities": [
@@ -1170,6 +1179,45 @@ def test_entry_event_scope():
           traj.mood_at("菲亚梅塔", 0) == Decimal("6")
           and traj.mood_at("路人", 0) == Decimal("24"),
           f"{traj.mood_at('菲亚梅塔', 0)} / {traj.mood_at('路人', 0)}")
+
+    # ⑥ **「满 24」这道门三种模式都生效**（2026-10 用户裁决，见本节 docstring ②）。
+    #    ⚠️ 这是本次改动的**核心回归**：`immediate` + 她 20 那一条在**旧代码上是红的**
+    #    （旧口径 `immediate`＝「连她满不满都不看」⇒ 她会拿 20 去换路人的 6）。
+    def _world(her_mood, other_mood="6"):
+        return build_base_layout({"facilities": [
+            {"type": "贸易站", "level": 3, "operators": [
+                {"name": "路人", "mood": other_mood},
+                {"name": "菲亚梅塔", "mood": her_mood}]}]})
+
+    for mode in ("immediate", "full", "wait"):
+        w = _world("24")
+        ev = apply_entry_events(w, when=mode, swap_with="路人", scope="anywhere")
+        # 证据：那一刻她的**实际心情**与「满 24」的判定都写进用例名，方便肉眼核对
+        check(f"{mode} + 她满 24 ⇒ 换（三档都要过「满 24」这道门）"
+              f"［她换前 24 ≥ MOOD_MAX({MOOD_MAX})］",
+              len(ev) == 1 and ev[0].group == "entry_swap"
+              and w.get_operator("菲亚梅塔").mood == Decimal("6")
+              and w.get_operator("路人").mood == Decimal("24"),
+              f"{mode}: {[(e.group, e.detail) for e in ev]}")
+
+        w20 = _world("20")
+        ev20 = apply_entry_events(w20, when=mode, swap_with="路人", scope="anywhere")
+        check(f"{mode} + 她 20 ⇒ **不换**（三档都要求满 24；只有 wait 多一条「等她回满」的说明）"
+              f"［她换前 20 < MOOD_MAX({MOOD_MAX})］",
+              not [e for e in ev20 if e.group == "entry_swap"]
+              and w20.get_operator("菲亚梅塔").mood == Decimal("20")
+              and w20.get_operator("路人").mood == Decimal("6"),
+              f"{mode}: {[(e.group, e.detail) for e in ev20]}")
+
+    # ⑦ **「双方心情相同也照换」与 `when` 无关**（防回归：别给 `full`/`wait` 补「等值就跳过」）
+    for mode in ("immediate", "full", "wait"):
+        w = _world("24", "24")
+        ev = apply_entry_events(w, when=mode, swap_with="路人", scope="anywhere",
+                                restore_back=False)
+        check(f"{mode} + 双方都 24 ⇒ 照样记一条互换事件（`5e52396` 起「数值相同也照换」）",
+              len(ev) == 1 and ev[0].group == "entry_swap" and "本来就相同" in ev[0].detail
+              and [o.name for o in w.facilities[0].operators] == ["菲亚梅塔", "路人"],
+              f"{mode}: {[(e.group, e.detail) for e in ev]}")
 
 
 def test_seat_io_roundtrip():

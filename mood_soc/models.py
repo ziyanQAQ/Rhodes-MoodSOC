@@ -40,9 +40,12 @@ from .config import (
 
 
 ENTRY_WHEN_MODES = ("immediate", "wait", "full")
-# 「什么时候换」的中文说明（界面与文档共用一套说法）
+# 「什么时候换」的中文说明（界面与文档共用一套说法）。
+# ⚠️ **三档都要"她满 24"**（2026-10 用户裁决）：`immediate` 不再是"不管她满不满都换"，
+#    三档的差别只剩"她没满时等不等"（收紧后 `immediate` 与 `full` 的判定口径一致）。
+#    见 `mood_soc/rules.apply_entry_events` 的 docstring 与 `04-特殊机制.md` 第 29 条。
 ENTRY_WHEN_LABELS = {
-    "immediate": "强制立刻换（不管双方心情）",
+    "immediate": "满 24 就换（她没满就不换）",
     "wait": "到点没满就等她回满再换",
     "full": "只在她满心情时换（游戏原口径）",
 }
@@ -420,8 +423,8 @@ class EntryShiftOverride:
       ＝第 `i+1` 班）自动编号。
     - `swap_with`：`None` = 继承全局；`""`（JSON 里的 `null`/空串）= **明确"不指定"**
       （回到默认口径：同宿舍「前一位进驻」）。
-    - `when`：`"immediate"`（强制立刻换）/ `"wait"`（等她回满再换）/ `"full"`（只在她满心情时换）；
-      `None` = 继承全局。
+    - `when`：`"immediate"`（她满 24 就换）/ `"wait"`（等她回满再换）/ `"full"`（只在她满
+      心情时换）——**三档都要"她满 24"**（2026-10 用户裁决）；`None` = 继承全局。
     """
     key: object = 0                      # int（1 基序号）或 str（班次名 / 数字串）
     enabled: Optional[bool] = None
@@ -652,11 +655,14 @@ class EntryEventConfig:
       `False` = **位置也一起互换**（触发者接管对方岗位，对方进触发者的位置）。
     - `force`：**旧字段**（`True` = 等她回满再换；`False` = 只在她满心情时换）。保留兼容，
       新写法请用 `when`。
-    - `when`：**什么时候换**（三选一，默认 `"immediate"`）：
-      - `"immediate"`（**强制立刻换**，默认）——只要开了并设了对象，到点就换，
-        **不管她满不满、也不管对方心情是多少**（哪怕两边都是 24，也照做，位置该换也换）；
+    - `when`：**什么时候换**（三选一，默认 `"immediate"`）——**三档都以"她满 24"为前提**
+      （2026-10 用户裁决，见 `rules.apply_entry_events`）：
+      - `"immediate"`（默认）——她满 24 就换（收紧后它与 `full` 的判定口径一致）；
       - `"wait"` —— 到点若她不满心情，就**等她回满的那一刻再换**；
       - `"full"` —— **只在她满心情时换**（游戏原文口径），不满就这一次不换。
+      ⚠️ **`immediate` 不再是"不管她满不满都换"**：她没满（如 20）时三档**都不换**。
+      ⚠️ 「双方心情相同也照换」与 `when` **无关**（三档都照换 —— 数值不变、`restore_back=False`
+      时位置照换）：那是 `5e52396` 留下的用户口径，别给 `full`/`wait` 另加"等值就跳过"。
       ⚠️ 兼容规则：没写 `when` 时，若写了 `force` 则按旧语义（`true`→`wait`、`false`→`full`），
       两者都没写才是新默认 `immediate`。
     - `per_shift`：**按班次覆盖**上列各项（见 `EntryShiftOverride`）——

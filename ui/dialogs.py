@@ -463,7 +463,7 @@ class EntryEventMixin:
     | ① 开启心情交换（总开关） | `enabled` |
     | 表格每行「用」 | `per_shift[key].enabled`（不勾＝这一班不换心情） |
     | 表格每行「换谁」 | `swap_with` + `scope`（**每个选项自带范围**） |
-    | 表格每行「强制切换」 | `when`：勾＝`"wait"`（等她满心情再换）/ 不勾＝`"full"`（判定时没满就不换） |
+    | 表格每行「强制切换」 | `when`：勾＝`"wait"`（她没满就等她回满再换）/ 不勾＝`"full"`（判定时没满就不换）。⚠️ **两档都以"她满 24"为前提**（2026-10 用户裁决）；界面**不提供** `immediate`（它与 `full` 的判定口径一致，只是不在界面里） |
 
     为什么是"每班一行"：真正逐班的东西本来就是**这一整组**（用不用 + 换谁 + 要不要等），
     所以不再做"全局值 + 例外"那两层（旧版的 ①②③ + ④ + 折叠高级区就是那么分的，
@@ -471,8 +471,10 @@ class EntryEventMixin:
     其余班次只有和它不同才写一条 `per_shift` 覆盖 ⇒ 三班设置相同时 `per_shift` 为空、
     行为与"没有这张表"逐位相同。
 
-    固定口径（不设开关）：**「对方心情是多少」照换**（双方都是 24 也执行）；
+    固定口径（不设开关）：**「对方心情是多少」照换**（双方都是 24 也执行，标记注明"数值不变"）；
     **位置不动**（只换心情，界面固定 `restore_back=True`）。
+    ⚠️ 这两条与 `when` 无关：三档都照换、界面两档因此都照换（2026-10 复核过
+    `5e52396 换心情改为强制立刻换` —— "等值就跳过"早就删了，见 `rules.apply_entry_events`）。
 
     ⚠️ 本类**只建控件、只收结果**，自己不是窗口：宿主有两种——
     `EntryEventDialog`（独立对话框）与 `ui.settings` 里的设置中心分区（Frame）。
@@ -522,7 +524,8 @@ class EntryEventMixin:
         # ② 一张表：每个班次自己的「用 / 换谁 / 强制切换」（没有"全局值 + 例外"两层）
         self._build_shift_table()
 
-        tk.Label(self, text="「强制切换」勾上＝等她回满再换；不勾＝判定时没满就不换",
+        tk.Label(self, text="「强制切换」勾上＝她没满就等她回满再换；不勾＝判定时没满就不换"
+                           "（两档都要她满 24 才换）",
                  bg=theme.BG, fg=theme.MUTED, justify="left", wraplength=520,
                  font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(anchor="w", **pad,
                                                                pady=(theme.GAP, 0))
@@ -585,9 +588,17 @@ class EntryEventMixin:
         box.pack(fill="x", padx=theme.PAD)
         hdr = tk.Frame(box, bg=theme.BG)
         hdr.pack(fill="x", padx=theme.GAP, pady=(4, 0))
+        # 「强制切换」表头的悬停提示：界面这两档**都要求她满 24**（2026-10 用户裁决），
+        # 且"双方同心情也照换"与 `when` 无关 —— 这两句容易误解，挂在表头上。
+        when_hint = ("勾＝她没满心情就等她回满再换（wait）；不勾＝判定时没满就不换（full）。"
+                     "⚠️ 两档都要「她满 24」才换；双方都是 24 时照换（标记注明「数值不变」，"
+                     "与 when 选哪档无关）。界面不提供 immediate 这一档。")
         for text, width in (("班次", 24), ("用", 5), ("换谁", 26), ("强制切换", 10)):
-            tk.Label(hdr, text=text, bg=theme.BG, fg=theme.MUTED, width=width, anchor="w",
-                     font=(theme.FONT_FAMILY, theme.FS_SMALL)).pack(side="left")
+            head = tk.Label(hdr, text=text, bg=theme.BG, fg=theme.MUTED, width=width,
+                            anchor="w", font=(theme.FONT_FAMILY, theme.FS_SMALL))
+            head.pack(side="left")
+            if text == "强制切换":
+                _hint(head, when_hint)
         values = [self.PREV, self.AUTO] + [n for n in self._candidates
                                            if n not in (self.PREV, self.AUTO)]
         for i, label in enumerate(self._shift_labels):

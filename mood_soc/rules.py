@@ -878,12 +878,28 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
     | `swap_with` | 人名 / `any`（自动挑最累的）/ `None`（用 JSON，再没有＝「前一位进驻」） | 显式 > JSON > 默认前一任 |
     | `scope` | `"dorm"`（限**她所在的那一间**，旧称"同宿舍"）/ `"anywhere"`（**基建任意位置**） | 显式 > JSON > 默认 dorm |
     | `restore_back` | `True`（默认）= 只换心情、两人都留在原位置；`False` = **位置也一起互换** | 显式 > JSON > 默认 True |
-    | `when` | **什么时候换**：`"immediate"`（默认，**强制立刻换**：不管她满不满、也不管对方心情是多少）/ `"wait"`（等她回满再换）/ `"full"`（只在她满心情时换，游戏原口径） | 显式 > JSON > 默认 immediate |
+    | `when` | **什么时候换**：`"immediate"`（默认）/ `"wait"`（等她回满再换）/ `"full"`（游戏原口径）——**三者都要"她满 24"**，差别只在"她没满时等不等"，见下面 | 显式 > JSON > 默认 immediate |
     | `detached_moods` | **「不在基建」名单里那些人的当前心情** `{名字: Decimal}`（**就地读写**） | 排班模拟传实时心情表；不传＝名单里的人不算在场 |
 
-    **强制交换**（用户口径）：只要开了并设了对象，就**执行互换**——
-    `when="immediate"` 时连"她是否满心情"都不检查；而且**不再因为"双方心情相同"而跳过**
-    （哪怕两边都是 24，事件照记、`restore_back=False` 时位置照换）。
+    ⚠️⚠️ **「她满 24」这道门在三种模式下都生效（2026-10，用户裁决 —— 对上一版口径的收紧）**
+      **用户原话**：「换心情这块改为只要布局内存在菲亚梅塔且**心情为满 24** 就可以进行换心情的
+      操作，不需要一定在宿舍内。」⇒ 「满 24」是**唯一的进入条件**，与 `when` 选哪一档无关。
+      于是 `when` 三档收敛成"**只在「她没满」时才有区别**"：
+
+      | `when` | 她满 24 | 她没满 | 双方心情相同（她满 24 时＝两边都 24） |
+      |---|---|---|---|
+      | `immediate`（默认） | 换 | **不换**（静默跳过，这一次就是没换） | 照换（事件照记，`restore_back=False` 时位置照换） |
+      | `full`（游戏原口径） | 换 | 不换 | 照换（同上） |
+      | `wait` | 换 | 不换，但带时间的排班模拟里**等她回满那一刻再换** | 照换（同上） |
+
+      ⚠️ **`immediate` 与上一版的差别就在这里**：它以前是"不管她满不满都换"（`mode != "immediate"`
+      才检查条件），现在**也要求满 24**。⚠️ 代价是收紧之后 `immediate` 与 `full` 在**判定口径上
+      已经没有区别**（都要满 24、都不等、双方同心情都照换）—— 保留两档只为兼容既有配置；
+      `wait` 仍多一条"没满就等回满"。
+      ⚠️ **"双方心情相同"照旧不跳过**（`rules.py` 里那处跳过早在 `5e52396` 就删了，
+      `04-特殊机制.md` 第 29 条与 `10-图形界面.md` §6 都记着"事件照记、数值不变"）——
+      别顺手给 `full`/`wait` 补一条"等值就跳过"。
+      ⇒ 若哪天发现 `immediate` 在她 20 时也换了，那是**回归**，不是"用户要的强制"。
 
     若指定的对象找不到，**不换**，但会记一条 `Bucket.EVENT`（group=`entry_swap_skipped`）说明原因。
     `when="wait"` 的"等待"是**带时间**的语义，只在 `ui.schedule.simulate_schedule` 里生效；
@@ -913,9 +929,13 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
         for skill in _template_skills(op, "M15a"):
             # `facility` 可能是 `None`（她只在名单里）——本技能的条件只读 `ctx.owner.mood`
             ctx = SkillContext(world, op, op, facility)
-            if mode != "immediate" and skill.condition is not None \
-                    and not skill.condition(ctx):
-                # 「非强制」模式才检查"她是否满心情"；配了 wait 又没满时给一条说明
+            # ⚠️ **条件（对 M15a 就是"自身满心情 24"）三种模式都要过**（2026-10 用户裁决，
+            #    见 docstring）：上一版这里是 `if mode != "immediate" and …`，
+            #    ⇒ `immediate` 在她没满时也换。现在 `immediate` **也要求满 24**
+            #    （于是它与 `full` 的判定口径一致，只有 `wait` 多一条"没满就等回满"）。
+            if skill.condition is not None and not skill.condition(ctx):
+                # 只有 wait 多给一条说明（"没满 → 等她回满再换"）；
+                # `immediate`/`full` 的"没满就不换"就是这一次没换，静默跳过。
                 if mode == "wait" and op.mood < MOOD_MAX:
                     events.append(Contribution(
                         Bucket.EVENT, "进驻事件未执行", ZERO, group="entry_swap_skipped",
@@ -934,8 +954,10 @@ def apply_entry_events(world: BaseLayout, swap_with=None, enabled=None,
                         owner=op.name, target=(swap_with or ""), skill_id=skill.id,
                         skill_name=skill.name, template=skill.template_id, detail=note))
                 continue
-            # ⚠️ 这里**不再**做 `other.mood == op.mood` 的跳过：用户口径是
-            #    "不管对方心情是多少，只要设置了就执行互换"（数值相同时位置该换也换）。
+            # ⚠️ 到这里**不再**看"双方心情是否相同"：用户口径是"不管对方心情是多少，
+            #    只要设置了就执行互换"（数值相同时事件照记、`restore_back=False` 时位置照换）。
+            #    `when` 三档**都**如此（它只决定"她没满时等不等"）——别给 `full`/`wait`
+            #    补一条"等值就跳过"（那是 `5e52396` 之前的老口径，已删）。
             before = (op.mood, other.mood)
             op.mood, other.mood = before[1], before[0]
             how = {"auto": f"自动挑的 {other.name}",

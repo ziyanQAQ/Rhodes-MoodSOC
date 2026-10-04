@@ -463,7 +463,8 @@ def op_set_entry_events(session: Session, args: dict) -> dict:
     - `enabled`：总开关；
     - `swap_with`：人名、`"any"`（全基建最累的）、`null`（同宿舍前一位进驻）；
     - `scope`：`"dorm"`（默认）或 `"anywhere"`；
-    - `when`：`"immediate"` / `"wait"` / `"full"`；
+    - `when`：`"immediate"` / `"wait"` / `"full"` —— **三档都要求"她满 24"**（2026-10 用户裁决），
+      差别只在"她没满时等不等"（`wait` 等回满、另两档这一次不换）；
     - `restore_back`：默认 `true`（只换心情、两人留原位）；
     - `per_shift`：按班次覆盖（见 `mood_soc.models.build_entry_shift_overrides` 的写法）。
     """
