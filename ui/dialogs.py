@@ -32,12 +32,27 @@ MOOD_MAX_TEXT = Decimal("24")
 ROW_PAD = 1
 
 # 「闲置入宿」页的两栏布局（③ 手动入宿 ∥ ④ 逐次表，见 `_init_idle_body`）：
-# 左栏固定这么宽（4 行逐位控件本来就不宽），右栏吃剩下的；
+# 左栏固定这么宽，右栏吃剩下的；
 # `IDLE_TABLE_H_INIT` 是表格的**初始可视高度**（建表格之前只能给个估值，
 # 见 `_resolve_table_height`）；建表之后由它自己的 `_fit_table_height()` 自校正。
-IDLE_MANUAL_W = 330
+#
+# ⚠️ **左栏 380 是怎么定的**（改前 330 ⇒ 位次格子横排 5 个被裁掉大半，见
+#    `SLOT_COLS` 那段注释）：左栏里最宽的一行是那 5 个位次格子，
+#    而列数由 `SLOT_COLS` 静态算出来 ⇒ 380 必须**够 2 列**、又**不许把右栏压到不能用**。
+#    实测（`_scratch/probe_manual.py`）：`slots_frame` 的可用内宽 = `IDLE_MANUAL_W - 28`
+#    （`theme.PAD` 10×2 ＋ LabelFrame 的边框与标签），2 列要 `2×146 = 292` ⇒ 380-28 = 352 ✔；
+#    右栏随后仍剩 ~430px（逐次表是"干员 / 心情 / 参与 / 说明"四段流式 `pack`，
+#    430 够一行放下前两段 + 说明的截断版）。
+IDLE_MANUAL_W = 380
 IDLE_TABLE_H_INIT = 320
 MIN_TABLE_H = 190
+
+# 一格逐位控件（`第 N 位` + 人名按钮 + `☑ 锁`）的请求宽，**实测值**、不是估的：
+# `_scratch/probe_cellw.py` 量到 5 格全是 `144x35`（`Label width=4` 34 ＋ Button 74
+# ＋ Checkbutton 34 ＋ 两次 `padx=(1,1)`），加上 `_build_slots` 的 `padx=(0, 2)` ⇒ **146/列**。
+# 改这一格的控件（多一个字、换字号、给按钮留位）就要重量一遍并同步这个常量
+# —— `SLOT_COLS` 由它算出来，量错了格子就又会被裁。
+SLOT_CELL_W = 146
 
 
 def parse_mood(text) -> Optional[Decimal]:
@@ -876,7 +891,10 @@ class IdleToDormMixin:
                    command=lambda: self._set_all_shift_pick(True)).pack(side="left", padx=(4, 0))
         ttk.Button(row1, text="全不选", width=6,
                    command=lambda: self._set_all_shift_pick(False)).pack(side="left", padx=(2, 0))
-        # —— ② 「正在看」+ 宿舍 + 「全部解锁」（第二行）——
+        # —— ② 「正在看」+ 宿舍（第二行）——
+        # ⚠️ 这一行**只放这两个下拉**（42+115+30+108 ≈ 295px）。「全部解锁…」原先挤在这里，
+        #    整行请求 421 > 半栏可用的 302 ⇒ **溢出 119px**（实测缺陷，见 §0）；
+        #    现在它自己一行、在位次网格下面（见下面的 `row3`）。
         row2 = tk.Frame(box, bg=theme.BG)
         row2.pack(fill="x", padx=theme.GAP, pady=(2, 0))
         tk.Label(row2, text="正在看", bg=theme.BG, fg=theme.TEXT,
@@ -892,9 +910,6 @@ class IdleToDormMixin:
                                        width=12, values=[])
         self.dorm_combo.pack(side="left", padx=(4, 0))
         self.dorm_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_dorm_pick())
-        self.unlock_btn = ttk.Button(row2, text="全部解锁…", width=10,
-                                     command=self._clear_locks)
-        self.unlock_btn.pack(side="left", padx=(6, 0))
 
         # —— ③ 提示行（「改动落到哪些班次」+ 口径说明）——
         # ⚠️ `set_facility_slots(manual=True)` 锁的是**传进来的整段位次**（`touched=len(slots)`），
@@ -905,7 +920,15 @@ class IdleToDormMixin:
                                "交还自动入宿（人留在原位、可被换出）。")
 
         self.slots_frame = tk.Frame(box, bg=theme.BG)
-        self.slots_frame.pack(fill="x", padx=theme.GAP, pady=(4, 6))
+        self.slots_frame.pack(fill="x", padx=theme.GAP, pady=(4, 2))
+
+        # —— ④ 「全部解锁…」（**位次网格的下方单独一行**）——
+        row3 = tk.Frame(box, bg=theme.BG)
+        row3.pack(fill="x", padx=theme.GAP, pady=(0, 6))
+        self.unlock_btn = ttk.Button(row3, text="全部解锁…", width=10,
+                                     command=self._clear_locks)
+        self.unlock_btn.pack(side="left")
+
         self.manual_msg = self.manual_notice
         self._refresh_manual_state()
         self._build_slots()
@@ -1065,8 +1088,19 @@ class IdleToDormMixin:
             self._set_manual_msg(message)
 
     # ------------------------------------------------------------ 位次与锁
-    #: 逐位控件的每行格数：宿舍容量 5 ⇒ **一行放得下**（纵向空间要留给逐次表）
-    SLOT_COLS = 5
+    #: 逐位控件的每行格数 —— **按栏宽静态算**，不再写死 5。
+    #:
+    #: ⚠️ 这里曾经写死 `SLOT_COLS = 5`（整页 760px 宽时定的：5×144 = 720 正好一行），
+    #:    改成两栏后它被原样搬进 330px 的半栏 ⇒ `_build_slots` 把 5 格排成**一行**、
+    #:    请求宽 730 > 可用 302，**后 3 格看不见也点不到**（实测缺陷，见 §0）。
+    #:    现在按 `IDLE_MANUAL_W` 算：可用内宽 = 栏宽 − 28（`theme.PAD`×2 ＋ LabelFrame
+    #:    的边框与标签），每列 `SLOT_CELL_W`；容量 5 ⇒ 380 的栏排 **2 列 3 行**。
+    #:    这样"以后改栏宽"只是改上面那个常量，列数会自己跟着变。
+    #: ⚠️ 有意**不**做运行时 `<Configure>` 自适应重建：面板宽度由常量固定、
+    #:    `pack_propagate(False)` 已切断传播，动态重建容易和 `_build_slots` /
+    #:    `_refresh_manual_state` 形成刷新回路（见 `ui/batch.py` 那条自激回路的教训）。
+    SLOT_COLS = max(1, (IDLE_MANUAL_W - 2 * theme.PAD
+                        - 2 * (theme.PAD + theme.GAP)) // SLOT_CELL_W)
 
     def _build_slots(self) -> None:
         """重建当前宿舍的逐位控件：每格＝`第 N 位` ＋ `人名按钮` ＋ `☑ 锁`。"""
