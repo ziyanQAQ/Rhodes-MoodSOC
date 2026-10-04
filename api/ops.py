@@ -225,9 +225,17 @@ def op_load_schedule(session: Session, args: dict) -> dict:
         if key in args:
             data[key] = args[key]
     session.load_layout(data, hours=args.get("hours"), label=args.get("label") or "班次 1")
-    return {"loaded": True, "schedule": session.describe()["shifts"],
-            "operators": session.operator_names(),
-            "validation": session.validate().to_dict()}
+    out = {"loaded": True, "schedule": session.describe()["shifts"],
+           "operators": session.operator_names(),
+           "validation": session.validate().to_dict()}
+    # ⚠️ `notes` **只在有说明时才出现**（additive：不动既有键）—— 例：内联布局里带了
+    #    已撤的 `per_operator` ⇒ 回一条"该设置已撤、已忽略"（口径见 `08-程序接口.md` §15）。
+    #    理由：`load_file(s)` / `load_json` 走的是 `LoadedSchedule.summary()`（note 在里面），
+    #    只有这一个 op 的返回体没有它 ⇒ 纯 API 调用方会**看不到自己带了个被忽略的键**。
+    notes = list(getattr(session.loaded, "notes", ()) or ())
+    if notes:
+        out["notes"] = notes
+    return out
 
 
 def op_load_file(session: Session, args: dict) -> dict:

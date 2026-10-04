@@ -354,6 +354,21 @@ def test_section0_surface():
     eq("已撤的 `per_operator`：不落任何会话状态（字段本身不存在）",
        [hasattr(t, "idle_globals"), hasattr(t, "idle_entries")], [False, False])
 
+    # ⚠️ `load_schedule` 那条路的 note 也要透出来：`load_file(s)` / `load_json` 走
+    #    `LoadedSchedule.summary()`（note 在里面），只有这一个 op 的返回体原本没有它
+    #    ⇒ 纯 API 调用方会看不到"自己带了个被忽略的键"。**additive**：不带旧键时**没有**这个键。
+    u = sess_from_data({"facilities": [
+        {"type": "宿舍", "level": 5, "name": "宿舍#1", "operators": [PAO]}]})
+    out_n = handle(u, "load_schedule", {
+        "facilities": [{"type": "宿舍", "level": 5, "name": "宿舍#1", "operators": [PAO]}],
+        "idle_to_dorm": {"per_operator": [{"name": PAO, "enabled": False}]}})
+    eq("已撤的 `per_operator`：`load_schedule` 也回一条同措辞的 `notes`",
+       out_n.get("notes"), ["per_operator（逐人「参不参与」）该设置已撤、已忽略"])
+    out_plain = handle(u, "load_schedule", {
+        "facilities": [{"type": "宿舍", "level": 5, "name": "宿舍#1", "operators": [PAO]}]})
+    eq("不带旧键时 `load_schedule` **没有** `notes` 键（additive、不动既有形状）",
+       "notes" in out_plain, False)
+
     # 每个 op 都在 op 表里（别只写了函数忘了注册）
     for op in ("set_timeline", "set_slots", "set_room_level", "set_seat_lock",
                "clear_seat_locks", "set_moods", "set_initial_moods", "set_mood_at",
