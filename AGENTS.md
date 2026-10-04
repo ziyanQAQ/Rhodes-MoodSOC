@@ -47,32 +47,31 @@
 **默认口径已定**：换干员**默认关**（手动配置）、闲置入宿**默认开**（三层解耦：
 **锁定入宿 > 自动入宿 > 导入布局**；自动入宿＝竖向正序填空床，全满后取**心情最低**的候选、
 换出"锁定区外、心情 **≥ 她**、心情最大"的住户；**不设班次数量门槛**，长班 >12h 在班内
-12h 整数倍处还有内部换班执行点）、周期**默认取文件里的各班时长**。见 `documents/12-v3接入.md`。
+12h 整数倍处还有内部换班执行点）、周期**默认取文件里的各班时长**。见 `documents/11-程序接口.md`。
 
 ---
 
 ## 📚 文档索引（按门类）
 
 ```
-documents/
+documents/   ← 11 份（2026-10 由 17 份并成 11；**§编号 / 第 N 条 / 坑 N 一个都没改**）
 ├── README.md              ← 文档索引 + §编号约定 + 维护约定（先看这个）
 ├── 01-架构.md              分层 / 目录结构 / 数据流 / 解析解vs数值解 / 公共 API
 ├── 02-数值规则.md          心情⇔电池 / I 的完整构成 / 设施表 / 宿舍回复 / 工休比
-├── 03-技能系统.md          Skill / SkillEquip / SkillKind / 精英化 / 阵营联动 / 模板入口
+│                           ＋附 §5 技能系统（Skill / 精英化 / 阵营联动 / 模板入口）
 ├── 04-特殊机制.md          ★ 35 条特殊情况 + 12 条建模假设（改代码前必读）
 ├── 05-技能分类大纲.md       六轴 + 模板字典 M01~M17 / X01~X11 + 决策记录
 ├── 06-数据来源.md          ★ 数据查找策略（强制）+ 上游缺失清单
+│                           ＋附 A 上游仓库结构分析（首次摸底留档）
 ├── 07-设计史.md            架构诊断 + P1~P9 重构决策记录
-├── 08-上游数据源分析.md     上游仓库结构分析（首次摸底留档）
-├── 09-开发指南.md          运行与测试 / 公共 API 速查 / 改完代码自查清单
+│                           ＋附 开发指南（§7 运行与测试 / §10 改完自查清单）
 ├── 10-图形界面.md          图形界面 ui/：导入多班排班 / 时间滑动 / 对点曲线
 ├── 11-程序接口.md          ★ api/：NDJSON 常驻服务 + 一次性 CLI + 求解器适配面
-├── 12-v3接入.md            ★ v3（Rust）侧接入：调用序列 / 三组配置 / 默认口径 / 踩坑
-├── 13-版本记录.md          发布版本对照（v1.0/v1.1 差异）+ 打包口径 + 资产 sha256
+│                           ＋§10~§18 **v3（Rust）侧接入**（调用序列 / 配置 / 默认口径 / 踩坑）
 ├── 14-架构总览.md          ★ **要动架构 / 拆模块前先读**：现状测绘（四条线 + 横切）+ 逐条病灶清单
-├── 15-架构图.md            ★ **想一眼看懂全流程**：分层大图（数据→处理→功能→API→UI）+
-│                           端到端数据流 + 一次重算的时序 + 界面编辑的写路径（图 1 附 ASCII 速览）
+│                           ＋附 四张架构图（分层大图 / 数据流 / 重算时序 / 界面写路径）
 └── 16-现状与校准记录.md    ★ 现状快照 + 已修/未修清单（**改代码前扫一遍 §3**）
+                            ＋附 版本记录（v1.0 / v1.1 / 未发布 + 打包口径 + 资产 sha256）
 ```
 
 > ⚠️ **要改架构 / 拆模块 / 大改界面归属**：先读 `documents/14-架构总览.md`（每条病灶带 `file:line`），
@@ -93,6 +92,9 @@ documents/
 
 > **§编号约定**：`§4.16` / `§8.5` / `§11` 之类引用沿用原 `AGENTS.md` 的**稳定章节号**，
 > 换算表见 `documents/README.md`。代码注释里也会出现这些引用。
+> ⚠️ **`§编号` / `第 N 条` / `坑 N` 是跨文件的稳定 ID**：2026-10 把 `documents/` 从 17 份并成 11 份时
+> **一个号都没改**（只搬结构、只改引用里的文件名），所以旧引用照旧有效。再合并时也必须如此 ——
+> 目标文件里若出现同号，要么换存活方（让号多的那层级留下），要么给并进来的部分顺延编号。
 
 ---
 
@@ -143,7 +145,7 @@ documents/
     合同与字段对照见 `documents/10-图形界面.md` §2。
     **按文件（`load_file`/`load_files`）与内联（`load_json` / `Session.load_data`）走同一条装配路**
     （`store.schedule.load_schedule_from_imports`）——同一份 JSON 两条入口必须逐位相同；
-    `load_json` 是**给 v3 的适配入口**，默认口径见 `documents/12-v3接入.md`（换干员不继承文件开关、
+    `load_json` 是**给 v3 的适配入口**，默认口径见 `documents/11-程序接口.md`（换干员不继承文件开关、
     闲置入宿默认开）。**闲置入宿的"默认开"是全项目统一口径**（用户裁决"闲置入宿默认是开启的"）：
     界面 / `load_file` / `simulate_schedule` / `apply_idle_to_dorm` 都默认结算，只有显式关
     （JSON `false` / 取消勾选 / `idle_to_dorm=False` / `--no-idle-to-dorm`）才不动布局。
@@ -244,7 +246,7 @@ documents/
     ⚠️ **打包成 exe 之后 `resources/` 整目录不存在**（exe 里只带 `data/operators.txt`）：
     `data/paths.py: project_root()` 冻结时指向 `sys._MEIPASS`（回归 `Test打包路径`），
     所以**凡是读 `RES/…` 的代码都要容错"文件不存在"**（现有唯一一处＝界面冷启动的
-    `if SAMPLE.exists()`）。构建见 `scripts/build_exe.py` 与 09-开发指南 §9.6；
+    `if SAMPLE.exists()`）。构建见 `scripts/build_exe.py` 与 `documents/07-设计史.md`「附 · 开发指南」§9.6；
     ② 给界面加**状态或重算**要改 `store/session.py`，别把业务状态写回 `ui/app.py`；
     ③ 加程序接口能力 = 在 `api/ops.py` 加一个 op（步骤见 `documents/11-程序接口.md` §8）；
     ④ 老路径 `mood_soc.importer/output/scenario/maa`、`ui.schedule` 是**兼容转发壳**，别往里加逻辑。
@@ -345,7 +347,7 @@ documents/
     回归：`test_equivalence.Test变量快照共享`（① 共享快照 vs 逐人自收的速率逐位相同；
     ② 把引擎猴子补丁回"每人各收一份"后**整条轨迹逐位相同**）＋ 全量绿。
     渲染层不用管：`idle_groups` 6.8ms、`_build_shift_buttons` 5.4ms、`world_at` 0ms —— **瓶颈只在引擎**。
-    详见 `documents/09-开发指南.md` 的性能基线表与 `documents/07-设计史.md` P9。
+    详见 `documents/07-设计史.md` 的性能基线表与 `documents/07-设计史.md` P9。
 24. **编辑走「异步重算」，而 `decimal` 上下文是线程局部的 —— 两者是一套，别拆开看**（2026-09，P5）：
     ① 界面上的**编辑**（改布局/心情/换心情/闲置入宿/时间轴）调 `ui/app.py: recompute_async()`：
     工作线程算、主线程 `after(30, _poll_recalc)` 收结果并 `Session.adopt()`；**导入/测试/程序路径**仍走
@@ -413,7 +415,7 @@ documents/
     `<ISO_Left_Tab>` **逐个 try、绑上第一个就 break**（只绑一个：都绑在 X11 上可能触发两次）。
     ⚠️ 推论：**"测试全绿"是"在某个具体 Tk 上"成立的事实** —— 换 Python / 换 Tk / 重建 `.venv`
     之后 GUI 用例必须真跑一遍（`tests/` 无图形环境时会整套 skip，**不能用跳过代替验收**）。
-    细节与回归见 `documents/10-图形界面.md` §7.1 第 21 条、`documents/13-版本记录.md`。
+    细节与回归见 `documents/10-图形界面.md` §7.1 第 21 条、`documents/16-现状与校准记录.md`。
 
 27. **「锁定入宿」与「不在基建」名单：三条拒绝里改了"放人"那一条**（2026-10；细节见 `04-特殊机制.md` 第 30 条）：
     **不许造出「名单 ∧ 在位 ∧ 被锁」**这个自相矛盾的状态 —— 三条路里：
@@ -481,12 +483,12 @@ python main.py --mode base --demo --period 12          # 先推进 12h 再评估
 .venv/Scripts/python.exe ui/__main__.py                 # 等价；IDE 里直接 Run 也行
 .venv/Scripts/python.exe -m ui --smoke                   # 建窗口转一圈就退（打包自检，退出码 0＝好）
 
-# 打包成 exe（PyInstaller onedir；**不带任何测试数据**，见 09-开发指南 §9.6）
+# 打包成 exe（PyInstaller onedir；**不带任何测试数据**，见 07-设计史.md「附·开发指南」§9.6）
 .venv/Scripts/python.exe -m pip install pyinstaller       # 构建期工具，只需一次
 .venv/Scripts/python.exe scripts/build_exe.py             # → dist/RhodesMoodSOC/RhodesMoodSOC.exe
 dist/RhodesMoodSOC/RhodesMoodSOC.exe --smoke               # 自检：退出码 0 ＝ 窗口建得起来
 
-# 程序接口（给 Rust 调用；见 documents/11-程序接口.md、documents/12-v3接入.md）
+# 程序接口（给 Rust 调用；见 documents/11-程序接口.md §1~§9 接口、§10~§18 v3 接入）
 .venv/Scripts/python.exe -m api.server                   # 常驻 NDJSON（推荐）
 .venv/Scripts/python.exe -m api.cli --op capabilities    # 一次性调用
 # v3 求解结果内联喂进来 → 查某时刻整座基地的布局 + 心情 → 闭环体检

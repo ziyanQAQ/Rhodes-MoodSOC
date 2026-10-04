@@ -36,7 +36,7 @@ python scripts/classify_skills.py --check
 python scripts/verify_skills.py --check
 ```
 
-详见 `documents/06-数据来源.md`（数据查找策略，**强制**）与 `documents/03-技能系统.md`。
+详见 `documents/06-数据来源.md`（数据查找策略，**强制**）与 `documents/02-数值规则.md`。
 """
 from __future__ import annotations
 
