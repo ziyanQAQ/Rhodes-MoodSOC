@@ -2,7 +2,7 @@
 
 基于多班排班模拟干员心情变化，并在班次执行点结算换心情与闲置入宿，向 Web UI 和程序 API 提供曲线、布局快照、事件与原因解释。
 
-> **当前状态：文档设计阶段。** 本仓库目前没有业务源码、构建配置或测试。下列接口和模块属于已确认的设计契约，不代表已经实现。
+> **当前状态：框架施工阶段。** 已建立 TypeScript/Vitest 工程配置，并完成 data 层目录快照的第一条垂直切片；domain、application 用例、Adapter 和 UI 仍待实现。下列接口和模块只有明确标注为已实现的部分才代表源码能力。
 
 ## 核心行为
 
@@ -32,6 +32,7 @@
 - [设施信息](documents/设施信息.md)：设施类型、容量、位次和布局约束
 - [心情计算与技能结算](documents/心情计算与技能结算.md)：心情积分、速率账本、技能子句和待核实数据边界
 - [施工总览](documents/施工/00-施工总览.md)：从 data 到 presentation 的实施顺序、接口和阶段门禁
+- [源码框架](src/README.md)：当前源码目录、依赖方向和实现状态
 - [AGENTS.md](AGENTS.md)：修改前方案确认、文档真源和阶段提醒约束
 
 ## 参考项目
@@ -40,6 +41,7 @@
 
 ## 当前限制
 
-- 无源码、依赖清单、构建脚本或可运行入口。
-- JSON 协议和 TypeScript 模块接口尚未落地。
-- README 后续应随实现状态、运行方式和验证命令更新。
+- 已有 TypeScript/Vitest 工程配置和 data 层目录快照实现；domain、application 用例、infrastructure Adapter 和 presentation UI 尚未实现。
+- 尚未接入真实上游目录文件、Worker、程序 API 或 Web UI 运行入口。
+- 当前验证命令：`npm test`、`npm run typecheck`。
+- README 后续应随各层实现状态、运行方式和验证命令更新。
