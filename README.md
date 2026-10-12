@@ -30,6 +30,7 @@
 - [干员信息](documents/干员信息.md)：稳定身份、名册和数据来源
 - [技能分类](documents/技能分类.md)：分类轴、模板、技能目录和扩展规则
 - [设施信息](documents/设施信息.md)：设施类型、容量、位次和布局约束
+- [施工总览](documents/施工/00-施工总览.md)：从 data 到 presentation 的实施顺序、接口和阶段门禁
 - [AGENTS.md](AGENTS.md)：修改前方案确认、文档真源和阶段提醒约束
 
 ## 参考项目
