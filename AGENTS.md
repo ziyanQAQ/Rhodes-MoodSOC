@@ -30,6 +30,7 @@
 - 总体分层与依赖：`documents/架构设计.md`
 - 功能归属与用例：`documents/功能模块.md`
 - 闲置入宿规则：`documents/入宿逻辑.md`
+- 心情积分与技能结算：`documents/心情计算与技能结算.md`
 - 程序 API 与 Worker 契约：`documents/协议格式.md`
 - 干员、技能、设施：对应的 `documents/干员信息.md`、`技能分类.md`、`设施信息.md`
 
