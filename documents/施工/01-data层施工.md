@@ -8,16 +8,31 @@ data 层把上游静态资料装配成版本化、只读、可索引的目录。
 
 ## 2. 推荐 Module 与 Interface
 
-建议文件：
+当前文件：
 
 ```text
 src/data/
   catalog-types.ts
-  raw-loader.ts
-  normalizer.ts
+  upstream-loader.ts
+  upstream-normalizer.ts
+  upstream-types.ts
+  catalog-generator.ts
   validator.ts
   catalog-builder.ts
 ```
+
+已实现的上游导入垂直切片由 `upstream-loader.ts`、`upstream-normalizer.ts` 和
+`catalog-generator.ts` 组成；`validator.ts` 仍是后续规则校验施工位，不能把尚未实现的校验描述成现有能力。
+
+生成命令：
+
+```text
+npm run data:build -- --source <ArknightsGameData>/zh_CN/gamedata/excel --output data/generated --generated-at <ISO-8601>
+```
+
+生成目录包含 `operators.json`、`skills.json`、`facilities.json`、`constants.json` 和 `manifest.json`。
+`manifest.json` 记录三份输入文件的逻辑文件名、字节数、SHA-256、生成时间、目录版本和产物哈希；不记录本机绝对路径。
+原始上游 JSON 不复制到项目仓库，生成物也不得手工修改。
 
 `CatalogReader` Interface 由 [`03-application层施工.md`](03-application层施工.md) 的 `application/ports.ts` 定义，并由 infrastructure 的目录 Adapter 实现。data 只产出不可变记录和快照，不拥有外部读取端口。规划的数据结构：
 
@@ -46,7 +61,7 @@ interface CatalogSnapshot {
 
 ## 4. 施工步骤
 
-1. 登记上游仓库 commit、数据目录和读取日期。
+1. 登记上游仓库版本；当输入是无 `.git` 的本地归档时，以所需输入文件 SHA-256、字节数和生成时间作为可复现版本依据，不伪造 commit。
 2. 将原始文件映射到内部 raw 类型，不在 loader 中写业务规则。
 3. normalizer 统一 ID、枚举、单位和十进制格式。
 4. validator 检查重复 ID、缺失引用、非法数值、未知版本和待核实字段。
@@ -67,4 +82,4 @@ interface CatalogSnapshot {
 
 ## 8. 当前实现状态
 
-已实现第一条垂直切片：`src/data/catalog-types.ts`、`src/data/catalog-builder.ts` 和 `src/data/index.ts` 提供目录定义、版本元数据、稳定 ID 查询、重复 ID/悬空引用校验和冻结结果。真实上游文件加载、规范化生成器和全量目录仍待实现。
+已实现两条 data 垂直切片：`catalog-types.ts`/`catalog-builder.ts` 提供目录定义与校验；`upstream-loader.ts`/`upstream-normalizer.ts`/`catalog-generator.ts` 从本地归档读取三份 JSON，保留来源指纹并生成五份项目目录文件。当前归档实测生成 432 名有基建数据的干员、763 条基建技能和 13 类设施。完整技能语义分类、十进制定点转换、数据变更兼容校验和运行时 `CatalogReader` Adapter 仍待实现。

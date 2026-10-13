@@ -35,6 +35,7 @@ export interface CatalogDefinition {
   readonly factions: readonly FactionRecord[];
 }
 
+/** 目录构建后的只读查询边界，只允许通过稳定 ID 访问记录。 */
 export interface CatalogSnapshot {
   readonly version: CatalogVersion;
   operator(operatorId: string): OperatorRecord | undefined;
@@ -51,6 +52,7 @@ export type CatalogBuildErrorCode =
 export interface CatalogBuildError {
   readonly code: CatalogBuildErrorCode;
   readonly message: string;
+  /** 指向 CatalogDefinition 中导致失败的字段，便于调用方展示和定位。 */
   readonly path: string;
 }
 

@@ -1,0 +1,6 @@
+{
+  "laborRecoverTime": 360,
+  "comfortManpowerRecoverFactor": 25,
+  "manpowerDisplayFactor": 360000,
+  "tiredApThreshold": 100
+}

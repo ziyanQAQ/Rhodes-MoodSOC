@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1",
+  "catalogVersion": "agd-e0460a6ae71afca1",
+  "generatedAt": "2026-10-12T06:42:46.077Z",
+  "source": {
+    "kind": "local-archive",
+    "files": {
+      "buildingData": {
+        "fileName": "building_data.json",
+        "sha256": "b98657bc691224a01d3cd044bf68698e9664e7f26c5d24ae104352be7954049b",
+        "bytes": 5313966
+      },
+      "characterTable": {
+        "fileName": "character_table.json",
+        "sha256": "e523c7c83c36e2d76697121079e17d0282da1a94d59a55e1cc55616edf0b41c4",
+        "bytes": 15069101
+      },
+      "gamedataConst": {
+        "fileName": "gamedata_const.json",
+        "sha256": "f0d9f0d4146c3a7adeedb57c114d9a1a9ea0eed6453aabbd05355115a441971c",
+        "bytes": 57974
+      }
+    }
+  },
+  "counts": {
+    "operators": 432,
+    "skills": 763,
+    "facilities": 13
+  },
+  "artifacts": {
+    "operators.json": {
+      "sha256": "6705ca3059633392d2dc6f2a5673d38e51cbd390169eab2eea618badaf6138fb",
+      "bytes": 218474
+    },
+    "skills.json": {
+      "sha256": "70860b60cd012e9e60d86d6e803d55f9f06b55f97dac33e1889cd6ac11bc35dd",
+      "bytes": 263448
+    },
+    "facilities.json": {
+      "sha256": "b922965455caa01901d6bdae04aeee9f8b1b3044e69ab35aa6f72be695e32d0e",
+      "bytes": 10670
+    },
+    "constants.json": {
+      "sha256": "3536508a6bffdf175e2359b73b362860f7556ae9b76bafd0e5866c046a0f70f3",
+      "bytes": 130
+    }
+  }
+}

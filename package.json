@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "data:build": "tsc -p tsconfig.data-build.json && node .catalog-build/scripts/generate-catalog.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

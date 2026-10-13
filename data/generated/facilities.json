@@ -1,0 +1,454 @@
+[
+  {
+    "facilityTypeId": "CONTROL",
+    "name": "控制中枢",
+    "description": "罗德岛舰船系统的控制中枢，支撑着各个区域的规划建设。",
+    "maxCount": 1,
+    "category": "SPECIAL",
+    "size": {
+      "row": 4,
+      "col": 8
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "CONTROL#1",
+        "electricity": 0,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "CONTROL#2",
+        "electricity": 0,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "CONTROL#3",
+        "electricity": 0,
+        "maxStationedNum": 3,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 4,
+        "unlockConditionId": "CONTROL#4",
+        "electricity": 0,
+        "maxStationedNum": 4,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 5,
+        "unlockConditionId": "CONTROL#5",
+        "electricity": 0,
+        "maxStationedNum": 5,
+        "manpowerCostRaw": 100
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "CORRIDOR",
+    "name": "走廊",
+    "description": null,
+    "maxCount": -1,
+    "category": "SPECIAL",
+    "size": {
+      "row": 2,
+      "col": 2
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "CORRIDOR#1",
+        "electricity": 0,
+        "maxStationedNum": 0,
+        "manpowerCostRaw": 0
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "DORMITORY",
+    "name": "宿舍",
+    "description": "罗德岛干员的标准住宿设施，向干员们提供了休息与活动的必须设备。",
+    "maxCount": 4,
+    "category": "CUSTOM",
+    "size": {
+      "row": 2,
+      "col": 6
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "DORMITORY#1",
+        "electricity": -10,
+        "maxStationedNum": 5,
+        "manpowerCostRaw": 0,
+        "manpowerRecoverRaw": 160,
+        "decorationLimit": 1000
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "DORMITORY#2",
+        "electricity": -20,
+        "maxStationedNum": 5,
+        "manpowerCostRaw": 0,
+        "manpowerRecoverRaw": 170,
+        "decorationLimit": 2000
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "DORMITORY#3",
+        "electricity": -30,
+        "maxStationedNum": 5,
+        "manpowerCostRaw": 0,
+        "manpowerRecoverRaw": 180,
+        "decorationLimit": 3000
+      },
+      {
+        "level": 4,
+        "unlockConditionId": "DORMITORY#4",
+        "electricity": -45,
+        "maxStationedNum": 5,
+        "manpowerCostRaw": 0,
+        "manpowerRecoverRaw": 190,
+        "decorationLimit": 4000
+      },
+      {
+        "level": 5,
+        "unlockConditionId": "DORMITORY#5",
+        "electricity": -65,
+        "maxStationedNum": 5,
+        "manpowerCostRaw": 0,
+        "manpowerRecoverRaw": 200,
+        "decorationLimit": 5000
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "ELEVATOR",
+    "name": "电梯间",
+    "description": null,
+    "maxCount": -1,
+    "category": "SPECIAL",
+    "size": {
+      "row": 2,
+      "col": 1
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "ELEVATOR#1",
+        "electricity": 0,
+        "maxStationedNum": 0,
+        "manpowerCostRaw": 0
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "HIRE",
+    "name": "办公室",
+    "description": "罗德岛的公务处理设施，用以处理罗德岛的各类综合事务。",
+    "maxCount": 1,
+    "category": "FUNCTION",
+    "size": {
+      "row": 2,
+      "col": 4
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "HIRE#1",
+        "electricity": -10,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "HIRE#2",
+        "electricity": -30,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "HIRE#3",
+        "electricity": -60,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 100
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "MANUFACTURE",
+    "name": "制造站",
+    "description": "罗德岛的资源生产设施，利用设备将原材料转化为工业原料，或产出种种器物。",
+    "maxCount": 5,
+    "category": "OUTPUT",
+    "size": {
+      "row": 2,
+      "col": 4
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "MANUFACTURE#1",
+        "electricity": -10,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "MANUFACTURE#2",
+        "electricity": -30,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "MANUFACTURE#3",
+        "electricity": -60,
+        "maxStationedNum": 3,
+        "manpowerCostRaw": 100
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "MEETING",
+    "name": "会客室",
+    "description": "罗德岛的对外接待设施，多数访问与会面都在这里进行。",
+    "maxCount": 1,
+    "category": "FUNCTION",
+    "size": {
+      "row": 2,
+      "col": 8
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "MEETING#1",
+        "electricity": -10,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "MEETING#2",
+        "electricity": -30,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "MEETING#3",
+        "electricity": -60,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "POWER",
+    "name": "发电站",
+    "description": "罗德岛的电力生产设施，凭借源石引擎生产与传输电力。",
+    "maxCount": 3,
+    "category": "OUTPUT",
+    "size": {
+      "row": 2,
+      "col": 4
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "POWER#1",
+        "electricity": 60,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "POWER#2",
+        "electricity": 130,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "POWER#3",
+        "electricity": 270,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 100
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "PRIVATE",
+    "name": "活动室",
+    "description": "罗德岛的个人休整设施，为干员们提供了独立的娱乐与活动空间。",
+    "maxCount": 8,
+    "category": "CUSTOM_P",
+    "size": {
+      "row": 2,
+      "col": 6
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "PRIVATE#1",
+        "electricity": 0,
+        "maxStationedNum": 0,
+        "manpowerCostRaw": 0
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "PRIVATE#2",
+        "electricity": 0,
+        "maxStationedNum": 0,
+        "manpowerCostRaw": 0
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "PRIVATE#3",
+        "electricity": 0,
+        "maxStationedNum": 0,
+        "manpowerCostRaw": 0
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "RECYCLE",
+    "name": "回收站",
+    "description": "罗德岛的材料转化设施，通过研究已知材料的结构和特性，回收材料，可以产出全新的材料。",
+    "maxCount": 1,
+    "category": "FUNCTION",
+    "size": {
+      "row": 2,
+      "col": 4
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "RECYCLE#1",
+        "electricity": 0,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "RECYCLE#2",
+        "electricity": 0,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "RECYCLE#3",
+        "electricity": 0,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "TRADING",
+    "name": "贸易站",
+    "description": "罗德岛的商业贸易设施，用以处理与各个势力间的贸易合同与商务协议，获取罗德岛必须的研究与活动资金。",
+    "maxCount": 5,
+    "category": "OUTPUT",
+    "size": {
+      "row": 2,
+      "col": 4
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "TRADING#1",
+        "electricity": -10,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "TRADING#2",
+        "electricity": -30,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "TRADING#3",
+        "electricity": -60,
+        "maxStationedNum": 3,
+        "manpowerCostRaw": 100
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "TRAINING",
+    "name": "训练室",
+    "description": "罗德岛的干员训练设施，通过各类训练设备，为干员提供锻炼与自我磨练的空间。",
+    "maxCount": 1,
+    "category": "FUNCTION",
+    "size": {
+      "row": 2,
+      "col": 4
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "TRAINING#1",
+        "electricity": -10,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "TRAINING#2",
+        "electricity": -30,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "TRAINING#3",
+        "electricity": -60,
+        "maxStationedNum": 2,
+        "manpowerCostRaw": 100
+      }
+    ]
+  },
+  {
+    "facilityTypeId": "WORKSHOP",
+    "name": "加工站",
+    "description": "罗德岛的资源加工设施，利用设备将工业原料加工成各类材料，或分解成其他类型的原料。",
+    "maxCount": 1,
+    "category": "FUNCTION",
+    "size": {
+      "row": 2,
+      "col": 4
+    },
+    "phases": [
+      {
+        "level": 1,
+        "unlockConditionId": "WORKSHOP#1",
+        "electricity": -10,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 0
+      },
+      {
+        "level": 2,
+        "unlockConditionId": "WORKSHOP#2",
+        "electricity": -10,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 0
+      },
+      {
+        "level": 3,
+        "unlockConditionId": "WORKSHOP#3",
+        "electricity": -10,
+        "maxStationedNum": 1,
+        "manpowerCostRaw": 0
+      }
+    ]
+  }
+]

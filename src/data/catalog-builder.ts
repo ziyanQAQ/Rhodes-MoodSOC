@@ -18,6 +18,7 @@ function failure(
 }
 
 function freezeOperator(record: OperatorRecord): OperatorRecord {
+  // 同时复制并冻结嵌套数组，避免调用方在构建后通过原始引用修改快照。
   return Object.freeze({
     ...record,
     skillIds: Object.freeze([...record.skillIds]),
@@ -34,6 +35,7 @@ function freezeRecord<T extends SkillRecord | FacilityTypeRecord>(record: T): T 
 }
 
 export function buildCatalogSnapshot(definition: CatalogDefinition): CatalogBuildResult {
+  // 校验顺序保持稳定：来源元数据与必填字段、ID 唯一性、最后检查跨记录引用。
   const { version } = definition;
   if (!version.id || !version.source || !version.generatedAt) {
     return failure("CATALOG_SOURCE_INVALID", "version", "Catalog version metadata is required.");
@@ -127,6 +129,7 @@ export function buildCatalogSnapshot(definition: CatalogDefinition): CatalogBuil
   }
 
   const immutableVersion = Object.freeze({ ...version });
+  // Map 仅由闭包持有；调用方只能使用稳定 ID 查询，不能直接修改索引。
   const snapshot: CatalogSnapshot = {
     version: immutableVersion,
     operator: (operatorId) => operatorById.get(operatorId),

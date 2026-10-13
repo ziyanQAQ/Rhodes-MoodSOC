@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".catalog-build",
+    "rootDir": "."
+  },
+  "include": ["src/data/**/*.ts", "scripts/generate-catalog.ts"]
+}
