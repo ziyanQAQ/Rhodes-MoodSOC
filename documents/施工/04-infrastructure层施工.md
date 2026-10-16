@@ -35,6 +35,11 @@ Worker 负责请求 ID、消息校验、调用 application、保存最近结果�
 - `Clock`：只用于显示或日志，不参与模拟积分；模拟时间来自输入 offset。
 - DTO mapper：输入和输出两侧各自校验，避免把不合法对象传入下一层。
 
+目录 Adapter 已实现于 `src/infrastructure/catalog/`：`upstream-loader.ts` 读取上游四份文件，
+`catalog-generator.ts` 写入生成物，`file-catalog-reader.ts` 实现 `CatalogReader.load()`。
+文件校验顺序、版本、稳定错误及限制以 [`01-data层施工.md`](01-data层施工.md) 为真源。
+Worker、程序 API、内存结果存储和 RIIC-Web mapper 均未实现。
+
 ## 4. 错误、生命周期和性能
 
 Adapter 将解析失败、超时、取消、缓存未命中转换为协议规定的稳定错误；不把堆栈或文件路径泄漏给 UI。限制由 `capabilities` 返回，超限不得静默裁剪。Worker 的缓存淘汰不能影响正在使用的 revision；淘汰后的查询返回明确 `QUERY_RESULT_EXPIRED`。

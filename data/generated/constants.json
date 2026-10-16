@@ -1,6 +1,22 @@
 {
-  "laborRecoverTime": 360,
-  "comfortManpowerRecoverFactor": 25,
-  "manpowerDisplayFactor": 360000,
-  "tiredApThreshold": 100
+  "laborRecoverTime": {
+    "rawValue": 360,
+    "sourcePath": "zh_CN/gamedata/excel/building_data.json#/laborRecoverTime",
+    "unitStatus": "unverified"
+  },
+  "comfortManpowerRecoverFactor": {
+    "rawValue": 25,
+    "sourcePath": "zh_CN/gamedata/excel/building_data.json#/comfortManpowerRecoverFactor",
+    "unitStatus": "unverified"
+  },
+  "manpowerDisplayFactor": {
+    "rawValue": 360000,
+    "sourcePath": "zh_CN/gamedata/excel/building_data.json#/manpowerDisplayFactor",
+    "unitStatus": "unverified"
+  },
+  "tiredApThreshold": {
+    "rawValue": 100,
+    "sourcePath": "zh_CN/gamedata/excel/building_data.json#/tiredApThreshold",
+    "unitStatus": "unverified"
+  }
 }

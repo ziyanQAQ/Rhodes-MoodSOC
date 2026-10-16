@@ -1,74 +1,44 @@
-import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
-import { loadUpstreamCatalog } from "./upstream-loader.js";
-import { normalizeUpstreamCatalog } from "./upstream-normalizer.js";
+/** 定义目录格式版本、清单结构与确定性序列化，不执行文件 I/O 或哈希计算。 */
+import type { NormalizedUpstreamCatalog } from "./upstream-normalizer.js";
 
-export interface GenerateCatalogArtifactsOptions {
-  readonly sourceRoot: string;
-  readonly outputRoot: string;
-  readonly generatedAt: string;
+export const CATALOG_SCHEMA_VERSION = "2";
+export const CATALOG_GENERATOR_VERSION = "2.0.0";
+export const CATALOG_ARTIFACT_NAMES = ["operators.json", "skills.json", "facilities.json", "factions.json", "constants.json"] as const;
+export type CatalogArtifactName = typeof CATALOG_ARTIFACT_NAMES[number];
+
+export interface CatalogFingerprint {
+  readonly sha256: string;
+  readonly bytes: number;
 }
 
-function serialize(value: unknown): string {
-  // 统一缩进和结尾换行是生成物可复现的一部分。
+export interface CatalogSourceFile extends CatalogFingerprint {
+  readonly fileName: string;
+}
+
+export interface CatalogManifest {
+  readonly schemaVersion: typeof CATALOG_SCHEMA_VERSION;
+  readonly generatorVersion: typeof CATALOG_GENERATOR_VERSION;
+  readonly catalogVersion: string;
+  readonly generatedAt: string;
+  readonly source: { readonly kind: "local-archive"; readonly files: Readonly<Record<string, CatalogSourceFile>> };
+  readonly counts: { readonly operators: number; readonly skills: number; readonly facilities: number; readonly factions: number };
+  readonly artifacts: Readonly<Record<CatalogArtifactName, CatalogFingerprint>>;
+}
+
+export function serialize(value: unknown): string {
+  // 缩进和末尾换行属于生成格式；此层只转换值，不访问文件或哈希实现。
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function sha256(contents: string): string {
-  return createHash("sha256").update(contents, "utf8").digest("hex");
+export function catalogIdentityInput(files: Readonly<Record<string, CatalogSourceFile>>): string {
+  return serialize({ schemaVersion: CATALOG_SCHEMA_VERSION, generatorVersion: CATALOG_GENERATOR_VERSION,
+    inputs: ["buildingData", "characterTable", "gamedataConst", "handbookTeamTable"].map((name) => ({
+      name, fileName: files[name]?.fileName, sha256: files[name]?.sha256, bytes: files[name]?.bytes,
+    })) });
 }
 
-export async function generateCatalogArtifacts(
-  options: GenerateCatalogArtifactsOptions,
-): Promise<void> {
-  if (Number.isNaN(Date.parse(options.generatedAt))) {
-    throw new Error("CATALOG_SOURCE_INVALID: generatedAt must be an ISO-8601 timestamp");
-  }
-
-  const raw = await loadUpstreamCatalog(options.sourceRoot);
-  const normalized = normalizeUpstreamCatalog(raw);
-  // 先确定实际写入字节，再由同一字符串计算清单中的产物哈希。
-  const artifactContents = {
-    "operators.json": serialize(normalized.operators),
-    "skills.json": serialize(normalized.skills),
-    "facilities.json": serialize(normalized.facilityTypes),
-    "constants.json": serialize(normalized.constants),
-  } as const;
-  const sourceFiles = Object.fromEntries(
-    Object.entries(raw.source.files).map(([logicalName, file]) => [
-      logicalName,
-      // 清单仅保留逻辑文件名，避免把生成机器的绝对路径写入项目数据。
-      { fileName: basename(file.path), sha256: file.sha256, bytes: file.bytes },
-    ]),
-  );
-  // 固定顺序组合三个输入哈希，得到可复现且不依赖本地目录名的目录版本。
-  const sourceDigest = createHash("sha256")
-    .update(Object.values(raw.source.files).map((file) => file.sha256).join("\n"), "utf8")
-    .digest("hex");
-  const manifest = {
-    schemaVersion: "1",
-    catalogVersion: `agd-${sourceDigest.slice(0, 16)}`,
-    generatedAt: options.generatedAt,
-    source: { kind: raw.source.kind, files: sourceFiles },
-    counts: {
-      operators: normalized.operators.length,
-      skills: normalized.skills.length,
-      facilities: normalized.facilityTypes.length,
-    },
-    artifacts: Object.fromEntries(
-      Object.entries(artifactContents).map(([fileName, contents]) => [
-        fileName,
-        { sha256: sha256(contents), bytes: Buffer.byteLength(contents, "utf8") },
-      ]),
-    ),
-  };
-
-  await mkdir(options.outputRoot, { recursive: true });
-  await Promise.all([
-    ...Object.entries(artifactContents).map(([fileName, contents]) =>
-      writeFile(join(options.outputRoot, fileName), contents, "utf8"),
-    ),
-    writeFile(join(options.outputRoot, "manifest.json"), serialize(manifest), "utf8"),
-  ]);
+export function catalogArtifactContents(catalog: NormalizedUpstreamCatalog): Readonly<Record<CatalogArtifactName, string>> {
+  return { "operators.json": serialize(catalog.operators), "skills.json": serialize(catalog.skills),
+    "facilities.json": serialize(catalog.facilityTypes), "factions.json": serialize(catalog.factions),
+    "constants.json": serialize(catalog.constants) };
 }

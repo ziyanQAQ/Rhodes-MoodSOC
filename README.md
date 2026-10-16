@@ -2,7 +2,7 @@
 
 基于多班排班模拟干员心情变化，并在班次执行点结算换心情与闲置入宿，向 Web UI 和程序 API 提供曲线、布局快照、事件与原因解释。
 
-> **当前状态：框架施工阶段。** 已建立 TypeScript/Vitest 工程配置，并完成 data 层目录快照与本地上游目录生成两条垂直切片；domain、application 用例、Adapter 和 UI 仍待实现。下列接口和模块只有明确标注为已实现的部分才代表源码能力。
+> **当前状态：分层施工阶段。** 已完成 data 层运行时校验、不可变目录快照、schema 2 生成物和 infrastructure 文件 `CatalogReader`；domain、application 用例、Worker/API 和 UI 仍待实现。设计契约不代表现有源码能力。
 
 ## 核心行为
 
@@ -41,7 +41,7 @@
 
 ## data 目录生成
 
-已接入本地 `ArknightsGameData` 归档的三份输入：`building_data.json`、`character_table.json` 和 `gamedata_const.json`。使用固定时间生成可复现目录：
+已接入本地 `ArknightsGameData` 归档的四份输入：`building_data.json`、`character_table.json`、`gamedata_const.json` 和 `handbook_team_table.json`。使用固定时间生成可复现目录：
 
 ```text
 npm run data:build -- --source <ArknightsGameData>/zh_CN/gamedata/excel --output data/generated --generated-at <ISO-8601>
@@ -51,7 +51,7 @@ npm run data:build -- --source <ArknightsGameData>/zh_CN/gamedata/excel --output
 
 ## 当前限制
 
-- 已有 TypeScript/Vitest 工程配置和 data 层目录快照实现；domain、application 用例、infrastructure Adapter 和 presentation UI 尚未实现。
+- 已有 data 层目录校验/快照/生成和文件 `CatalogReader`；domain、application 用例、其他 Adapter 和 presentation UI 尚未实现。
 - 已接入真实上游目录文件的加载、规范化和生成；Worker、程序 API 或 Web UI 运行入口仍未实现。
 - 当前验证命令：`npm test`、`npm run typecheck`。
-- README 后续应随各层实现状态、运行方式和验证命令更新。
+- 技能保留原文但全部 `unmodeled`，常量单位 `unverified`，不能直接用于心情计算。schema 1 需重新生成，不静默兼容。

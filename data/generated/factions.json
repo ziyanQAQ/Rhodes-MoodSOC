@@ -1,0 +1,3726 @@
+[
+  {
+    "factionId": "abyssal",
+    "name": "深海猎人",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/abyssal",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1023_ghost2",
+      "char_143_ghost",
+      "char_218_cuttle",
+      "char_263_skadi",
+      "char_4145_ulpia",
+      "char_474_glady"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1023_ghost2",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1023_ghost2/groupId"
+      },
+      {
+        "operatorId": "char_143_ghost",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_143_ghost/groupId"
+      },
+      {
+        "operatorId": "char_218_cuttle",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_218_cuttle/groupId"
+      },
+      {
+        "operatorId": "char_263_skadi",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_263_skadi/groupId"
+      },
+      {
+        "operatorId": "char_4145_ulpia",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4145_ulpia/groupId"
+      },
+      {
+        "operatorId": "char_474_glady",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_474_glady/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "action4",
+    "name": "行动组A4",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/action4",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1029_yato2",
+      "char_1030_noirc2",
+      "char_500_noirc",
+      "char_501_durin",
+      "char_502_nblade",
+      "char_503_rang"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1029_yato2",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1029_yato2/teamId"
+      },
+      {
+        "operatorId": "char_1030_noirc2",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1030_noirc2/teamId"
+      },
+      {
+        "operatorId": "char_500_noirc",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_500_noirc/teamId"
+      },
+      {
+        "operatorId": "char_501_durin",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_501_durin/teamId"
+      },
+      {
+        "operatorId": "char_502_nblade",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_502_nblade/teamId"
+      },
+      {
+        "operatorId": "char_503_rang",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_503_rang/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "babel",
+    "name": "巴别塔",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/babel",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1035_wisdel",
+      "char_113_cqbw",
+      "char_4087_ines",
+      "char_4088_hodrer"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1035_wisdel",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1035_wisdel/groupId"
+      },
+      {
+        "operatorId": "char_113_cqbw",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_113_cqbw/groupId"
+      },
+      {
+        "operatorId": "char_4087_ines",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4087_ines/groupId"
+      },
+      {
+        "operatorId": "char_4088_hodrer",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4088_hodrer/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "blacksteel",
+    "name": "黑钢国际",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/blacksteel",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1034_jesca2",
+      "char_106_franka",
+      "char_107_liskam",
+      "char_235_jesica",
+      "char_240_wyvern",
+      "char_4052_surfer",
+      "char_4105_almond"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1034_jesca2",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1034_jesca2/groupId"
+      },
+      {
+        "operatorId": "char_106_franka",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_106_franka/groupId"
+      },
+      {
+        "operatorId": "char_107_liskam",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_107_liskam/groupId"
+      },
+      {
+        "operatorId": "char_235_jesica",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_235_jesica/groupId"
+      },
+      {
+        "operatorId": "char_240_wyvern",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_240_wyvern/groupId"
+      },
+      {
+        "operatorId": "char_4052_surfer",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4052_surfer/groupId"
+      },
+      {
+        "operatorId": "char_4105_almond",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4105_almond/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "bolivar",
+    "name": "玻利瓦尔",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/bolivar",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_253_greyy",
+      "char_4100_caper",
+      "char_4130_luton",
+      "char_4164_tecno",
+      "char_4187_graceb",
+      "char_421_crow",
+      "char_4234_pedro",
+      "char_486_takila"
+    ],
+    "members": [
+      {
+        "operatorId": "char_253_greyy",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_253_greyy/nationId"
+      },
+      {
+        "operatorId": "char_4100_caper",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4100_caper/nationId"
+      },
+      {
+        "operatorId": "char_4130_luton",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4130_luton/nationId"
+      },
+      {
+        "operatorId": "char_4164_tecno",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4164_tecno/nationId"
+      },
+      {
+        "operatorId": "char_4187_graceb",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4187_graceb/nationId"
+      },
+      {
+        "operatorId": "char_421_crow",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_421_crow/nationId"
+      },
+      {
+        "operatorId": "char_4234_pedro",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4234_pedro/nationId"
+      },
+      {
+        "operatorId": "char_486_takila",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_486_takila/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "chiave",
+    "name": "贾维团伙",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/chiave",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_346_aosta",
+      "char_349_chiave",
+      "char_356_broca"
+    ],
+    "members": [
+      {
+        "operatorId": "char_346_aosta",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_346_aosta/teamId"
+      },
+      {
+        "operatorId": "char_349_chiave",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_349_chiave/teamId"
+      },
+      {
+        "operatorId": "char_356_broca",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_356_broca/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "columbia",
+    "name": "哥伦比亚",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/columbia",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1031_slent2",
+      "char_1034_jesca2",
+      "char_1047_halo2",
+      "char_106_franka",
+      "char_107_liskam",
+      "char_108_silent",
+      "char_128_plosis",
+      "char_134_ifrit",
+      "char_135_halo",
+      "char_150_snakek",
+      "char_202_demkni",
+      "char_214_kafka",
+      "char_235_jesica",
+      "char_240_wyvern",
+      "char_242_otter",
+      "char_248_mgllan",
+      "char_249_mlyss",
+      "char_264_f12yin",
+      "char_274_astesi",
+      "char_290_vigna",
+      "char_301_cutter",
+      "char_340_shwaz",
+      "char_347_jaksel",
+      "char_348_ceylon",
+      "char_366_acdrop",
+      "char_4004_pudd",
+      "char_4006_melnte",
+      "char_4027_heyak",
+      "char_4048_doroth",
+      "char_4052_surfer",
+      "char_4063_quartz",
+      "char_4104_coldst",
+      "char_4105_almond",
+      "char_4106_bryota",
+      "char_4151_tinman",
+      "char_4165_ctrail",
+      "char_4191_tippi",
+      "char_4212_nasti",
+      "char_4213_skybx",
+      "char_4214_cairn",
+      "char_4229_aphris",
+      "char_433_windft",
+      "char_440_pinecn",
+      "char_451_robin",
+      "char_452_bstalk",
+      "char_484_robrta",
+      "char_487_bobb",
+      "char_488_buildr",
+      "char_489_serum"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1031_slent2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1031_slent2/nationId"
+      },
+      {
+        "operatorId": "char_1034_jesca2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1034_jesca2/nationId"
+      },
+      {
+        "operatorId": "char_1047_halo2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1047_halo2/nationId"
+      },
+      {
+        "operatorId": "char_106_franka",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_106_franka/nationId"
+      },
+      {
+        "operatorId": "char_107_liskam",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_107_liskam/nationId"
+      },
+      {
+        "operatorId": "char_108_silent",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_108_silent/nationId"
+      },
+      {
+        "operatorId": "char_128_plosis",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_128_plosis/nationId"
+      },
+      {
+        "operatorId": "char_134_ifrit",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_134_ifrit/nationId"
+      },
+      {
+        "operatorId": "char_135_halo",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_135_halo/nationId"
+      },
+      {
+        "operatorId": "char_150_snakek",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_150_snakek/nationId"
+      },
+      {
+        "operatorId": "char_202_demkni",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_202_demkni/nationId"
+      },
+      {
+        "operatorId": "char_214_kafka",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_214_kafka/nationId"
+      },
+      {
+        "operatorId": "char_235_jesica",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_235_jesica/nationId"
+      },
+      {
+        "operatorId": "char_240_wyvern",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_240_wyvern/nationId"
+      },
+      {
+        "operatorId": "char_242_otter",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_242_otter/nationId"
+      },
+      {
+        "operatorId": "char_248_mgllan",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_248_mgllan/nationId"
+      },
+      {
+        "operatorId": "char_249_mlyss",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_249_mlyss/nationId"
+      },
+      {
+        "operatorId": "char_264_f12yin",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_264_f12yin/nationId"
+      },
+      {
+        "operatorId": "char_274_astesi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_274_astesi/nationId"
+      },
+      {
+        "operatorId": "char_290_vigna",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_290_vigna/nationId"
+      },
+      {
+        "operatorId": "char_301_cutter",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_301_cutter/nationId"
+      },
+      {
+        "operatorId": "char_340_shwaz",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_340_shwaz/nationId"
+      },
+      {
+        "operatorId": "char_347_jaksel",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_347_jaksel/nationId"
+      },
+      {
+        "operatorId": "char_348_ceylon",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_348_ceylon/nationId"
+      },
+      {
+        "operatorId": "char_366_acdrop",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_366_acdrop/nationId"
+      },
+      {
+        "operatorId": "char_4004_pudd",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4004_pudd/nationId"
+      },
+      {
+        "operatorId": "char_4006_melnte",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4006_melnte/nationId"
+      },
+      {
+        "operatorId": "char_4027_heyak",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4027_heyak/nationId"
+      },
+      {
+        "operatorId": "char_4048_doroth",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4048_doroth/nationId"
+      },
+      {
+        "operatorId": "char_4052_surfer",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4052_surfer/nationId"
+      },
+      {
+        "operatorId": "char_4063_quartz",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4063_quartz/nationId"
+      },
+      {
+        "operatorId": "char_4104_coldst",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4104_coldst/nationId"
+      },
+      {
+        "operatorId": "char_4105_almond",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4105_almond/nationId"
+      },
+      {
+        "operatorId": "char_4106_bryota",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4106_bryota/nationId"
+      },
+      {
+        "operatorId": "char_4151_tinman",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4151_tinman/nationId"
+      },
+      {
+        "operatorId": "char_4165_ctrail",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4165_ctrail/nationId"
+      },
+      {
+        "operatorId": "char_4191_tippi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4191_tippi/nationId"
+      },
+      {
+        "operatorId": "char_4212_nasti",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4212_nasti/nationId"
+      },
+      {
+        "operatorId": "char_4213_skybx",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4213_skybx/nationId"
+      },
+      {
+        "operatorId": "char_4214_cairn",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4214_cairn/nationId"
+      },
+      {
+        "operatorId": "char_4229_aphris",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4229_aphris/nationId"
+      },
+      {
+        "operatorId": "char_433_windft",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_433_windft/nationId"
+      },
+      {
+        "operatorId": "char_440_pinecn",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_440_pinecn/nationId"
+      },
+      {
+        "operatorId": "char_451_robin",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_451_robin/nationId"
+      },
+      {
+        "operatorId": "char_452_bstalk",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_452_bstalk/nationId"
+      },
+      {
+        "operatorId": "char_484_robrta",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_484_robrta/nationId"
+      },
+      {
+        "operatorId": "char_487_bobb",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_487_bobb/nationId"
+      },
+      {
+        "operatorId": "char_488_buildr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_488_buildr/nationId"
+      },
+      {
+        "operatorId": "char_489_serum",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_489_serum/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "dublinn",
+    "name": "深池",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/dublinn",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [],
+    "members": []
+  },
+  {
+    "factionId": "egir",
+    "name": "阿戈尔",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/egir",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1012_skadi2",
+      "char_1023_ghost2",
+      "char_110_deepcl",
+      "char_143_ghost",
+      "char_218_cuttle",
+      "char_263_skadi",
+      "char_4079_haini",
+      "char_4137_udflow",
+      "char_4145_ulpia",
+      "char_4231_clemnt",
+      "char_474_glady"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1012_skadi2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1012_skadi2/nationId"
+      },
+      {
+        "operatorId": "char_1023_ghost2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1023_ghost2/nationId"
+      },
+      {
+        "operatorId": "char_110_deepcl",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_110_deepcl/nationId"
+      },
+      {
+        "operatorId": "char_143_ghost",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_143_ghost/nationId"
+      },
+      {
+        "operatorId": "char_218_cuttle",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_218_cuttle/nationId"
+      },
+      {
+        "operatorId": "char_263_skadi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_263_skadi/nationId"
+      },
+      {
+        "operatorId": "char_4079_haini",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4079_haini/nationId"
+      },
+      {
+        "operatorId": "char_4137_udflow",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4137_udflow/nationId"
+      },
+      {
+        "operatorId": "char_4145_ulpia",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4145_ulpia/nationId"
+      },
+      {
+        "operatorId": "char_4231_clemnt",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4231_clemnt/nationId"
+      },
+      {
+        "operatorId": "char_474_glady",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_474_glady/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "elite",
+    "name": "罗德岛-精英干员",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/elite",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_017_huang",
+      "char_1040_blaze2",
+      "char_391_rosmon",
+      "char_4133_logos",
+      "char_4195_radian",
+      "char_4204_mantra",
+      "char_4230_mcnist"
+    ],
+    "members": [
+      {
+        "operatorId": "char_017_huang",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_017_huang/groupId"
+      },
+      {
+        "operatorId": "char_1040_blaze2",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1040_blaze2/groupId"
+      },
+      {
+        "operatorId": "char_391_rosmon",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_391_rosmon/groupId"
+      },
+      {
+        "operatorId": "char_4133_logos",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4133_logos/groupId"
+      },
+      {
+        "operatorId": "char_4195_radian",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4195_radian/groupId"
+      },
+      {
+        "operatorId": "char_4204_mantra",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4204_mantra/groupId"
+      },
+      {
+        "operatorId": "char_4230_mcnist",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4230_mcnist/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "followers",
+    "name": "使徒",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/followers",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_147_shining",
+      "char_148_nearl",
+      "char_179_cgbird"
+    ],
+    "members": [
+      {
+        "operatorId": "char_147_shining",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_147_shining/teamId"
+      },
+      {
+        "operatorId": "char_148_nearl",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_148_nearl/teamId"
+      },
+      {
+        "operatorId": "char_179_cgbird",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_179_cgbird/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "glasgow",
+    "name": "格拉斯哥帮",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/glasgow",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_112_siege",
+      "char_154_morgan",
+      "char_155_tiger",
+      "char_157_dagda"
+    ],
+    "members": [
+      {
+        "operatorId": "char_112_siege",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_112_siege/groupId"
+      },
+      {
+        "operatorId": "char_154_morgan",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_154_morgan/groupId"
+      },
+      {
+        "operatorId": "char_155_tiger",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_155_tiger/groupId"
+      },
+      {
+        "operatorId": "char_157_dagda",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_157_dagda/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "higashi",
+    "name": "东",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/higashi",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_118_yuki",
+      "char_289_gyuki",
+      "char_337_utage",
+      "char_343_tknogi",
+      "char_362_saga",
+      "char_4016_kazema",
+      "char_4199_makiri",
+      "char_4202_haruka",
+      "char_4203_kichi",
+      "char_437_mizuki",
+      "char_475_akafyu",
+      "char_478_kirara"
+    ],
+    "members": [
+      {
+        "operatorId": "char_118_yuki",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_118_yuki/nationId"
+      },
+      {
+        "operatorId": "char_289_gyuki",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_289_gyuki/nationId"
+      },
+      {
+        "operatorId": "char_337_utage",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_337_utage/nationId"
+      },
+      {
+        "operatorId": "char_343_tknogi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_343_tknogi/nationId"
+      },
+      {
+        "operatorId": "char_362_saga",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_362_saga/nationId"
+      },
+      {
+        "operatorId": "char_4016_kazema",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4016_kazema/nationId"
+      },
+      {
+        "operatorId": "char_4199_makiri",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4199_makiri/nationId"
+      },
+      {
+        "operatorId": "char_4202_haruka",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4202_haruka/nationId"
+      },
+      {
+        "operatorId": "char_4203_kichi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4203_kichi/nationId"
+      },
+      {
+        "operatorId": "char_437_mizuki",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_437_mizuki/nationId"
+      },
+      {
+        "operatorId": "char_475_akafyu",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_475_akafyu/nationId"
+      },
+      {
+        "operatorId": "char_478_kirara",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_478_kirara/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "iberia",
+    "name": "伊比利亚",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/iberia",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1039_thorn2",
+      "char_129_bluep",
+      "char_293_thorns",
+      "char_326_glacus",
+      "char_393_toledo",
+      "char_4009_irene",
+      "char_4042_lumen",
+      "char_4066_highmo",
+      "char_4163_rosesa",
+      "char_4232_hbound",
+      "char_436_whispr",
+      "char_469_indigo"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1039_thorn2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1039_thorn2/nationId"
+      },
+      {
+        "operatorId": "char_129_bluep",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_129_bluep/nationId"
+      },
+      {
+        "operatorId": "char_293_thorns",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_293_thorns/nationId"
+      },
+      {
+        "operatorId": "char_326_glacus",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_326_glacus/nationId"
+      },
+      {
+        "operatorId": "char_393_toledo",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_393_toledo/nationId"
+      },
+      {
+        "operatorId": "char_4009_irene",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4009_irene/nationId"
+      },
+      {
+        "operatorId": "char_4042_lumen",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4042_lumen/nationId"
+      },
+      {
+        "operatorId": "char_4066_highmo",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4066_highmo/nationId"
+      },
+      {
+        "operatorId": "char_4163_rosesa",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4163_rosesa/nationId"
+      },
+      {
+        "operatorId": "char_4232_hbound",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4232_hbound/nationId"
+      },
+      {
+        "operatorId": "char_436_whispr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_436_whispr/nationId"
+      },
+      {
+        "operatorId": "char_469_indigo",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_469_indigo/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "karlan",
+    "name": "喀兰贸易",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/karlan",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_172_svrash",
+      "char_198_blackd",
+      "char_199_yak",
+      "char_206_gnosis",
+      "char_4116_blkkgt"
+    ],
+    "members": [
+      {
+        "operatorId": "char_172_svrash",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_172_svrash/groupId"
+      },
+      {
+        "operatorId": "char_198_blackd",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_198_blackd/groupId"
+      },
+      {
+        "operatorId": "char_199_yak",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_199_yak/groupId"
+      },
+      {
+        "operatorId": "char_206_gnosis",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_206_gnosis/groupId"
+      },
+      {
+        "operatorId": "char_4116_blkkgt",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4116_blkkgt/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "kazimierz",
+    "name": "卡西米尔",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/kazimierz",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1014_nearl2",
+      "char_126_shotst",
+      "char_204_platnm",
+      "char_237_gravel",
+      "char_265_sophia",
+      "char_4000_jnight",
+      "char_4032_provs",
+      "char_4064_mlynar",
+      "char_420_flamtl",
+      "char_423_blemsh",
+      "char_430_fartth",
+      "char_431_ashlok",
+      "char_496_wildmn"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1014_nearl2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1014_nearl2/nationId"
+      },
+      {
+        "operatorId": "char_126_shotst",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_126_shotst/nationId"
+      },
+      {
+        "operatorId": "char_204_platnm",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_204_platnm/nationId"
+      },
+      {
+        "operatorId": "char_237_gravel",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_237_gravel/nationId"
+      },
+      {
+        "operatorId": "char_265_sophia",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_265_sophia/nationId"
+      },
+      {
+        "operatorId": "char_4000_jnight",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4000_jnight/nationId"
+      },
+      {
+        "operatorId": "char_4032_provs",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4032_provs/nationId"
+      },
+      {
+        "operatorId": "char_4064_mlynar",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4064_mlynar/nationId"
+      },
+      {
+        "operatorId": "char_420_flamtl",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_420_flamtl/nationId"
+      },
+      {
+        "operatorId": "char_423_blemsh",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_423_blemsh/nationId"
+      },
+      {
+        "operatorId": "char_430_fartth",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_430_fartth/nationId"
+      },
+      {
+        "operatorId": "char_431_ashlok",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_431_ashlok/nationId"
+      },
+      {
+        "operatorId": "char_496_wildmn",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_496_wildmn/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "kjerag",
+    "name": "谢拉格",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/kjerag",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1045_svash2",
+      "char_1046_sbell2",
+      "char_172_svrash",
+      "char_173_slchan",
+      "char_174_slbell",
+      "char_198_blackd",
+      "char_199_yak",
+      "char_206_gnosis",
+      "char_4013_kjera",
+      "char_4116_blkkgt",
+      "char_4211_snhunt",
+      "char_422_aurora"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1045_svash2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1045_svash2/nationId"
+      },
+      {
+        "operatorId": "char_1046_sbell2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1046_sbell2/nationId"
+      },
+      {
+        "operatorId": "char_172_svrash",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_172_svrash/nationId"
+      },
+      {
+        "operatorId": "char_173_slchan",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_173_slchan/nationId"
+      },
+      {
+        "operatorId": "char_174_slbell",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_174_slbell/nationId"
+      },
+      {
+        "operatorId": "char_198_blackd",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_198_blackd/nationId"
+      },
+      {
+        "operatorId": "char_199_yak",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_199_yak/nationId"
+      },
+      {
+        "operatorId": "char_206_gnosis",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_206_gnosis/nationId"
+      },
+      {
+        "operatorId": "char_4013_kjera",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4013_kjera/nationId"
+      },
+      {
+        "operatorId": "char_4116_blkkgt",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4116_blkkgt/nationId"
+      },
+      {
+        "operatorId": "char_4211_snhunt",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4211_snhunt/nationId"
+      },
+      {
+        "operatorId": "char_422_aurora",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_422_aurora/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "laios",
+    "name": "莱欧斯小队",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/laios",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_4141_marcil",
+      "char_4142_laios",
+      "char_4143_sensi",
+      "char_4144_chilc"
+    ],
+    "members": [
+      {
+        "operatorId": "char_4141_marcil",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4141_marcil/teamId"
+      },
+      {
+        "operatorId": "char_4142_laios",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4142_laios/teamId"
+      },
+      {
+        "operatorId": "char_4143_sensi",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4143_sensi/teamId"
+      },
+      {
+        "operatorId": "char_4144_chilc",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4144_chilc/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "laterano",
+    "name": "拉特兰",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/laterano",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1032_excu2",
+      "char_192_falco",
+      "char_213_mostma",
+      "char_245_cello",
+      "char_271_spikes",
+      "char_279_excu",
+      "char_300_phenxi",
+      "char_302_glaze",
+      "char_332_archet",
+      "char_4015_spuria",
+      "char_4036_forcer",
+      "char_4188_confes",
+      "char_4193_lemuen",
+      "char_4194_rmixer",
+      "char_498_inside"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1032_excu2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1032_excu2/nationId"
+      },
+      {
+        "operatorId": "char_192_falco",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_192_falco/nationId"
+      },
+      {
+        "operatorId": "char_213_mostma",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_213_mostma/nationId"
+      },
+      {
+        "operatorId": "char_245_cello",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_245_cello/nationId"
+      },
+      {
+        "operatorId": "char_271_spikes",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_271_spikes/nationId"
+      },
+      {
+        "operatorId": "char_279_excu",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_279_excu/nationId"
+      },
+      {
+        "operatorId": "char_300_phenxi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_300_phenxi/nationId"
+      },
+      {
+        "operatorId": "char_302_glaze",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_302_glaze/nationId"
+      },
+      {
+        "operatorId": "char_332_archet",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_332_archet/nationId"
+      },
+      {
+        "operatorId": "char_4015_spuria",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4015_spuria/nationId"
+      },
+      {
+        "operatorId": "char_4036_forcer",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4036_forcer/nationId"
+      },
+      {
+        "operatorId": "char_4188_confes",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4188_confes/nationId"
+      },
+      {
+        "operatorId": "char_4193_lemuen",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4193_lemuen/nationId"
+      },
+      {
+        "operatorId": "char_4194_rmixer",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4194_rmixer/nationId"
+      },
+      {
+        "operatorId": "char_498_inside",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_498_inside/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "lee",
+    "name": "鲤氏侦探事务所",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/lee",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_225_haak",
+      "char_226_hmau",
+      "char_243_waaifu",
+      "char_322_lmlee"
+    ],
+    "members": [
+      {
+        "operatorId": "char_225_haak",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_225_haak/teamId"
+      },
+      {
+        "operatorId": "char_226_hmau",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_226_hmau/teamId"
+      },
+      {
+        "operatorId": "char_243_waaifu",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_243_waaifu/teamId"
+      },
+      {
+        "operatorId": "char_322_lmlee",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_322_lmlee/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "leithanien",
+    "name": "莱塔尼亚",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/leithanien",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1016_agoat2",
+      "char_180_amgoat",
+      "char_183_skgoat",
+      "char_4011_lessng",
+      "char_4046_ebnhlz",
+      "char_4047_pianst",
+      "char_4051_akkord",
+      "char_4098_vvana",
+      "char_4109_baslin",
+      "char_426_billro",
+      "char_499_kaitou"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1016_agoat2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1016_agoat2/nationId"
+      },
+      {
+        "operatorId": "char_180_amgoat",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_180_amgoat/nationId"
+      },
+      {
+        "operatorId": "char_183_skgoat",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_183_skgoat/nationId"
+      },
+      {
+        "operatorId": "char_4011_lessng",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4011_lessng/nationId"
+      },
+      {
+        "operatorId": "char_4046_ebnhlz",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4046_ebnhlz/nationId"
+      },
+      {
+        "operatorId": "char_4047_pianst",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4047_pianst/nationId"
+      },
+      {
+        "operatorId": "char_4051_akkord",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4051_akkord/nationId"
+      },
+      {
+        "operatorId": "char_4098_vvana",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4098_vvana/nationId"
+      },
+      {
+        "operatorId": "char_4109_baslin",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4109_baslin/nationId"
+      },
+      {
+        "operatorId": "char_426_billro",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_426_billro/nationId"
+      },
+      {
+        "operatorId": "char_499_kaitou",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_499_kaitou/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "lgd",
+    "name": "龙门近卫局",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/lgd",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_010_chen",
+      "char_1044_hsgma2",
+      "char_136_hsguma",
+      "char_308_swire"
+    ],
+    "members": [
+      {
+        "operatorId": "char_010_chen",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_010_chen/groupId"
+      },
+      {
+        "operatorId": "char_1044_hsgma2",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1044_hsgma2/groupId"
+      },
+      {
+        "operatorId": "char_136_hsguma",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_136_hsguma/groupId"
+      },
+      {
+        "operatorId": "char_308_swire",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_308_swire/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "lungmen",
+    "name": "炎-龙门",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/lungmen",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_010_chen",
+      "char_101_sora",
+      "char_1028_texas2",
+      "char_102_texas",
+      "char_1033_swire2",
+      "char_103_angel",
+      "char_1041_angel2",
+      "char_1044_hsgma2",
+      "char_136_hsguma",
+      "char_201_moeshd",
+      "char_225_haak",
+      "char_226_hmau",
+      "char_236_rope",
+      "char_241_panda",
+      "char_243_waaifu",
+      "char_272_strong",
+      "char_277_sqrrel",
+      "char_308_swire",
+      "char_322_lmlee",
+      "char_325_bison",
+      "char_383_snsant",
+      "char_4080_lin"
+    ],
+    "members": [
+      {
+        "operatorId": "char_010_chen",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_010_chen/nationId"
+      },
+      {
+        "operatorId": "char_101_sora",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_101_sora/nationId"
+      },
+      {
+        "operatorId": "char_1028_texas2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1028_texas2/nationId"
+      },
+      {
+        "operatorId": "char_102_texas",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_102_texas/nationId"
+      },
+      {
+        "operatorId": "char_1033_swire2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1033_swire2/nationId"
+      },
+      {
+        "operatorId": "char_103_angel",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_103_angel/nationId"
+      },
+      {
+        "operatorId": "char_1041_angel2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1041_angel2/nationId"
+      },
+      {
+        "operatorId": "char_1044_hsgma2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1044_hsgma2/nationId"
+      },
+      {
+        "operatorId": "char_136_hsguma",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_136_hsguma/nationId"
+      },
+      {
+        "operatorId": "char_201_moeshd",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_201_moeshd/nationId"
+      },
+      {
+        "operatorId": "char_225_haak",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_225_haak/nationId"
+      },
+      {
+        "operatorId": "char_226_hmau",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_226_hmau/nationId"
+      },
+      {
+        "operatorId": "char_236_rope",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_236_rope/nationId"
+      },
+      {
+        "operatorId": "char_241_panda",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_241_panda/nationId"
+      },
+      {
+        "operatorId": "char_243_waaifu",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_243_waaifu/nationId"
+      },
+      {
+        "operatorId": "char_272_strong",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_272_strong/nationId"
+      },
+      {
+        "operatorId": "char_277_sqrrel",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_277_sqrrel/nationId"
+      },
+      {
+        "operatorId": "char_308_swire",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_308_swire/nationId"
+      },
+      {
+        "operatorId": "char_322_lmlee",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_322_lmlee/nationId"
+      },
+      {
+        "operatorId": "char_325_bison",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_325_bison/nationId"
+      },
+      {
+        "operatorId": "char_383_snsant",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_383_snsant/nationId"
+      },
+      {
+        "operatorId": "char_4080_lin",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4080_lin/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "minos",
+    "name": "米诺斯",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/minos",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_159_peacok",
+      "char_163_hpsts",
+      "char_333_sidero",
+      "char_4043_erato",
+      "char_4166_varkis",
+      "char_485_pallas"
+    ],
+    "members": [
+      {
+        "operatorId": "char_159_peacok",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_159_peacok/nationId"
+      },
+      {
+        "operatorId": "char_163_hpsts",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_163_hpsts/nationId"
+      },
+      {
+        "operatorId": "char_333_sidero",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_333_sidero/nationId"
+      },
+      {
+        "operatorId": "char_4043_erato",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4043_erato/nationId"
+      },
+      {
+        "operatorId": "char_4166_varkis",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4166_varkis/nationId"
+      },
+      {
+        "operatorId": "char_485_pallas",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_485_pallas/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "mujica",
+    "name": "Ave Mujica",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/mujica",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_4182_oblvns",
+      "char_4183_mortis",
+      "char_4184_dolris",
+      "char_4185_amoris",
+      "char_4186_tmoris"
+    ],
+    "members": [
+      {
+        "operatorId": "char_4182_oblvns",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4182_oblvns/teamId"
+      },
+      {
+        "operatorId": "char_4183_mortis",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4183_mortis/teamId"
+      },
+      {
+        "operatorId": "char_4184_dolris",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4184_dolris/teamId"
+      },
+      {
+        "operatorId": "char_4185_amoris",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4185_amoris/teamId"
+      },
+      {
+        "operatorId": "char_4186_tmoris",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4186_tmoris/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "none",
+    "name": "无团队",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/none",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [],
+    "members": []
+  },
+  {
+    "factionId": "penguin",
+    "name": "企鹅物流",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/penguin",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_101_sora",
+      "char_1028_texas2",
+      "char_102_texas",
+      "char_103_angel",
+      "char_1041_angel2",
+      "char_201_moeshd"
+    ],
+    "members": [
+      {
+        "operatorId": "char_101_sora",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_101_sora/groupId"
+      },
+      {
+        "operatorId": "char_1028_texas2",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1028_texas2/groupId"
+      },
+      {
+        "operatorId": "char_102_texas",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_102_texas/groupId"
+      },
+      {
+        "operatorId": "char_103_angel",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_103_angel/groupId"
+      },
+      {
+        "operatorId": "char_1041_angel2",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1041_angel2/groupId"
+      },
+      {
+        "operatorId": "char_201_moeshd",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_201_moeshd/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "pinus",
+    "name": "红松骑士团",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/pinus",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_4000_jnight",
+      "char_420_flamtl",
+      "char_430_fartth",
+      "char_431_ashlok",
+      "char_496_wildmn"
+    ],
+    "members": [
+      {
+        "operatorId": "char_4000_jnight",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4000_jnight/groupId"
+      },
+      {
+        "operatorId": "char_420_flamtl",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_420_flamtl/groupId"
+      },
+      {
+        "operatorId": "char_430_fartth",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_430_fartth/groupId"
+      },
+      {
+        "operatorId": "char_431_ashlok",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_431_ashlok/groupId"
+      },
+      {
+        "operatorId": "char_496_wildmn",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_496_wildmn/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "rainbow",
+    "name": "彩虹小队",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/rainbow",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_4123_ela",
+      "char_4124_iana",
+      "char_4125_rdoc",
+      "char_4126_fuze",
+      "char_456_ash",
+      "char_457_blitz",
+      "char_458_rfrost",
+      "char_459_tachak"
+    ],
+    "members": [
+      {
+        "operatorId": "char_4123_ela",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4123_ela/teamId"
+      },
+      {
+        "operatorId": "char_4124_iana",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4124_iana/teamId"
+      },
+      {
+        "operatorId": "char_4125_rdoc",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4125_rdoc/teamId"
+      },
+      {
+        "operatorId": "char_4126_fuze",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4126_fuze/teamId"
+      },
+      {
+        "operatorId": "char_456_ash",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_456_ash/teamId"
+      },
+      {
+        "operatorId": "char_457_blitz",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_457_blitz/teamId"
+      },
+      {
+        "operatorId": "char_458_rfrost",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_458_rfrost/teamId"
+      },
+      {
+        "operatorId": "char_459_tachak",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_459_tachak/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "reserve1",
+    "name": "行动预备组A1",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/reserve1",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_120_hibisc",
+      "char_121_lava",
+      "char_122_beagle",
+      "char_123_fang",
+      "char_124_kroos"
+    ],
+    "members": [
+      {
+        "operatorId": "char_120_hibisc",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_120_hibisc/teamId"
+      },
+      {
+        "operatorId": "char_121_lava",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_121_lava/teamId"
+      },
+      {
+        "operatorId": "char_122_beagle",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_122_beagle/teamId"
+      },
+      {
+        "operatorId": "char_123_fang",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_123_fang/teamId"
+      },
+      {
+        "operatorId": "char_124_kroos",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_124_kroos/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "reserve4",
+    "name": "行动预备组A4",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/reserve4",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_208_melan",
+      "char_209_ardign",
+      "char_210_stward",
+      "char_211_adnach",
+      "char_212_ansel"
+    ],
+    "members": [
+      {
+        "operatorId": "char_208_melan",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_208_melan/teamId"
+      },
+      {
+        "operatorId": "char_209_ardign",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_209_ardign/teamId"
+      },
+      {
+        "operatorId": "char_210_stward",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_210_stward/teamId"
+      },
+      {
+        "operatorId": "char_211_adnach",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_211_adnach/teamId"
+      },
+      {
+        "operatorId": "char_212_ansel",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_212_ansel/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "reserve6",
+    "name": "行动预备组A6",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/reserve6",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1048_orchd2",
+      "char_1049_catap2",
+      "char_278_orchid",
+      "char_281_popka",
+      "char_282_catap",
+      "char_283_midn",
+      "char_284_spot"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1048_orchd2",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1048_orchd2/teamId"
+      },
+      {
+        "operatorId": "char_1049_catap2",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1049_catap2/teamId"
+      },
+      {
+        "operatorId": "char_278_orchid",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_278_orchid/teamId"
+      },
+      {
+        "operatorId": "char_281_popka",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_281_popka/teamId"
+      },
+      {
+        "operatorId": "char_282_catap",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_282_catap/teamId"
+      },
+      {
+        "operatorId": "char_283_midn",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_283_midn/teamId"
+      },
+      {
+        "operatorId": "char_284_spot",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_284_spot/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "rhine",
+    "name": "莱茵生命",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/rhine",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1031_slent2",
+      "char_1047_halo2",
+      "char_108_silent",
+      "char_128_plosis",
+      "char_134_ifrit",
+      "char_135_halo",
+      "char_202_demkni",
+      "char_242_otter",
+      "char_248_mgllan",
+      "char_249_mlyss",
+      "char_4048_doroth",
+      "char_4212_nasti"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1031_slent2",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1031_slent2/groupId"
+      },
+      {
+        "operatorId": "char_1047_halo2",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1047_halo2/groupId"
+      },
+      {
+        "operatorId": "char_108_silent",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_108_silent/groupId"
+      },
+      {
+        "operatorId": "char_128_plosis",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_128_plosis/groupId"
+      },
+      {
+        "operatorId": "char_134_ifrit",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_134_ifrit/groupId"
+      },
+      {
+        "operatorId": "char_135_halo",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_135_halo/groupId"
+      },
+      {
+        "operatorId": "char_202_demkni",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_202_demkni/groupId"
+      },
+      {
+        "operatorId": "char_242_otter",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_242_otter/groupId"
+      },
+      {
+        "operatorId": "char_248_mgllan",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_248_mgllan/groupId"
+      },
+      {
+        "operatorId": "char_249_mlyss",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_249_mlyss/groupId"
+      },
+      {
+        "operatorId": "char_4048_doroth",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4048_doroth/groupId"
+      },
+      {
+        "operatorId": "char_4212_nasti",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4212_nasti/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "rhodes",
+    "name": "罗德岛",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/rhodes",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_002_amiya",
+      "char_003_kalts",
+      "char_009_12fce",
+      "char_017_huang",
+      "char_1011_lava2",
+      "char_1013_chen2",
+      "char_1015_aglna2",
+      "char_1021_kroos2",
+      "char_1022_flwr2",
+      "char_1024_hbisc2",
+      "char_1026_gvial2",
+      "char_1027_greyy2",
+      "char_1029_yato2",
+      "char_1030_noirc2",
+      "char_1036_fang2",
+      "char_1040_blaze2",
+      "char_1048_orchd2",
+      "char_1049_catap2",
+      "char_1052_kalts2",
+      "char_117_myrrh",
+      "char_120_hibisc",
+      "char_121_lava",
+      "char_122_beagle",
+      "char_123_fang",
+      "char_124_kroos",
+      "char_130_doberm",
+      "char_131_flameb",
+      "char_144_red",
+      "char_149_scave",
+      "char_1502_crosly",
+      "char_151_myrtle",
+      "char_158_milu",
+      "char_171_bldsk",
+      "char_181_flower",
+      "char_187_ccheal",
+      "char_193_frostl",
+      "char_2013_cerber",
+      "char_208_melan",
+      "char_209_ardign",
+      "char_210_stward",
+      "char_211_adnach",
+      "char_212_ansel",
+      "char_219_meteo",
+      "char_258_podego",
+      "char_260_durnar",
+      "char_278_orchid",
+      "char_281_popka",
+      "char_282_catap",
+      "char_283_midn",
+      "char_284_spot",
+      "char_285_medic2",
+      "char_286_cast3",
+      "char_298_susuro",
+      "char_304_zebra",
+      "char_311_mudrok",
+      "char_328_cammou",
+      "char_345_folnic",
+      "char_350_surtr",
+      "char_355_ethan",
+      "char_367_swllow",
+      "char_376_therex",
+      "char_391_rosmon",
+      "char_400_weedy",
+      "char_4010_etlchi",
+      "char_401_elysm",
+      "char_4041_chnut",
+      "char_4055_bgsnow",
+      "char_4071_peper",
+      "char_4077_palico",
+      "char_4091_ulika",
+      "char_4093_frston",
+      "char_4131_odda",
+      "char_4132_ascln",
+      "char_4133_logos",
+      "char_4134_cetsyr",
+      "char_4136_phonor",
+      "char_4146_nymph",
+      "char_4147_mitm",
+      "char_4179_monstr",
+      "char_4195_radian",
+      "char_4204_mantra",
+      "char_4215_buddy",
+      "char_4227_gallus",
+      "char_4228_closur",
+      "char_4230_mcnist",
+      "char_491_humus",
+      "char_492_quercu",
+      "char_497_ctable",
+      "char_500_noirc",
+      "char_501_durin",
+      "char_502_nblade",
+      "char_503_rang"
+    ],
+    "members": [
+      {
+        "operatorId": "char_002_amiya",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_002_amiya/nationId"
+      },
+      {
+        "operatorId": "char_003_kalts",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_003_kalts/nationId"
+      },
+      {
+        "operatorId": "char_009_12fce",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_009_12fce/nationId"
+      },
+      {
+        "operatorId": "char_017_huang",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_017_huang/nationId"
+      },
+      {
+        "operatorId": "char_1011_lava2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1011_lava2/nationId"
+      },
+      {
+        "operatorId": "char_1013_chen2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1013_chen2/nationId"
+      },
+      {
+        "operatorId": "char_1015_aglna2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1015_aglna2/nationId"
+      },
+      {
+        "operatorId": "char_1021_kroos2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1021_kroos2/nationId"
+      },
+      {
+        "operatorId": "char_1022_flwr2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1022_flwr2/nationId"
+      },
+      {
+        "operatorId": "char_1024_hbisc2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1024_hbisc2/nationId"
+      },
+      {
+        "operatorId": "char_1026_gvial2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1026_gvial2/nationId"
+      },
+      {
+        "operatorId": "char_1027_greyy2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1027_greyy2/nationId"
+      },
+      {
+        "operatorId": "char_1029_yato2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1029_yato2/nationId"
+      },
+      {
+        "operatorId": "char_1030_noirc2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1030_noirc2/nationId"
+      },
+      {
+        "operatorId": "char_1036_fang2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1036_fang2/nationId"
+      },
+      {
+        "operatorId": "char_1040_blaze2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1040_blaze2/nationId"
+      },
+      {
+        "operatorId": "char_1048_orchd2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1048_orchd2/nationId"
+      },
+      {
+        "operatorId": "char_1049_catap2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1049_catap2/nationId"
+      },
+      {
+        "operatorId": "char_1052_kalts2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1052_kalts2/nationId"
+      },
+      {
+        "operatorId": "char_117_myrrh",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_117_myrrh/nationId"
+      },
+      {
+        "operatorId": "char_120_hibisc",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_120_hibisc/nationId"
+      },
+      {
+        "operatorId": "char_121_lava",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_121_lava/nationId"
+      },
+      {
+        "operatorId": "char_122_beagle",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_122_beagle/nationId"
+      },
+      {
+        "operatorId": "char_123_fang",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_123_fang/nationId"
+      },
+      {
+        "operatorId": "char_124_kroos",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_124_kroos/nationId"
+      },
+      {
+        "operatorId": "char_130_doberm",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_130_doberm/nationId"
+      },
+      {
+        "operatorId": "char_131_flameb",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_131_flameb/nationId"
+      },
+      {
+        "operatorId": "char_144_red",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_144_red/nationId"
+      },
+      {
+        "operatorId": "char_149_scave",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_149_scave/nationId"
+      },
+      {
+        "operatorId": "char_1502_crosly",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1502_crosly/nationId"
+      },
+      {
+        "operatorId": "char_151_myrtle",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_151_myrtle/nationId"
+      },
+      {
+        "operatorId": "char_158_milu",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_158_milu/nationId"
+      },
+      {
+        "operatorId": "char_171_bldsk",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_171_bldsk/nationId"
+      },
+      {
+        "operatorId": "char_181_flower",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_181_flower/nationId"
+      },
+      {
+        "operatorId": "char_187_ccheal",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_187_ccheal/nationId"
+      },
+      {
+        "operatorId": "char_193_frostl",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_193_frostl/nationId"
+      },
+      {
+        "operatorId": "char_2013_cerber",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2013_cerber/nationId"
+      },
+      {
+        "operatorId": "char_208_melan",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_208_melan/nationId"
+      },
+      {
+        "operatorId": "char_209_ardign",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_209_ardign/nationId"
+      },
+      {
+        "operatorId": "char_210_stward",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_210_stward/nationId"
+      },
+      {
+        "operatorId": "char_211_adnach",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_211_adnach/nationId"
+      },
+      {
+        "operatorId": "char_212_ansel",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_212_ansel/nationId"
+      },
+      {
+        "operatorId": "char_219_meteo",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_219_meteo/nationId"
+      },
+      {
+        "operatorId": "char_258_podego",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_258_podego/nationId"
+      },
+      {
+        "operatorId": "char_260_durnar",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_260_durnar/nationId"
+      },
+      {
+        "operatorId": "char_278_orchid",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_278_orchid/nationId"
+      },
+      {
+        "operatorId": "char_281_popka",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_281_popka/nationId"
+      },
+      {
+        "operatorId": "char_282_catap",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_282_catap/nationId"
+      },
+      {
+        "operatorId": "char_283_midn",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_283_midn/nationId"
+      },
+      {
+        "operatorId": "char_284_spot",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_284_spot/nationId"
+      },
+      {
+        "operatorId": "char_285_medic2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_285_medic2/nationId"
+      },
+      {
+        "operatorId": "char_286_cast3",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_286_cast3/nationId"
+      },
+      {
+        "operatorId": "char_298_susuro",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_298_susuro/nationId"
+      },
+      {
+        "operatorId": "char_304_zebra",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_304_zebra/nationId"
+      },
+      {
+        "operatorId": "char_311_mudrok",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_311_mudrok/nationId"
+      },
+      {
+        "operatorId": "char_328_cammou",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_328_cammou/nationId"
+      },
+      {
+        "operatorId": "char_345_folnic",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_345_folnic/nationId"
+      },
+      {
+        "operatorId": "char_350_surtr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_350_surtr/nationId"
+      },
+      {
+        "operatorId": "char_355_ethan",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_355_ethan/nationId"
+      },
+      {
+        "operatorId": "char_367_swllow",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_367_swllow/nationId"
+      },
+      {
+        "operatorId": "char_376_therex",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_376_therex/nationId"
+      },
+      {
+        "operatorId": "char_391_rosmon",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_391_rosmon/nationId"
+      },
+      {
+        "operatorId": "char_400_weedy",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_400_weedy/nationId"
+      },
+      {
+        "operatorId": "char_4010_etlchi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4010_etlchi/nationId"
+      },
+      {
+        "operatorId": "char_401_elysm",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_401_elysm/nationId"
+      },
+      {
+        "operatorId": "char_4041_chnut",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4041_chnut/nationId"
+      },
+      {
+        "operatorId": "char_4055_bgsnow",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4055_bgsnow/nationId"
+      },
+      {
+        "operatorId": "char_4071_peper",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4071_peper/nationId"
+      },
+      {
+        "operatorId": "char_4077_palico",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4077_palico/nationId"
+      },
+      {
+        "operatorId": "char_4091_ulika",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4091_ulika/nationId"
+      },
+      {
+        "operatorId": "char_4093_frston",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4093_frston/nationId"
+      },
+      {
+        "operatorId": "char_4131_odda",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4131_odda/nationId"
+      },
+      {
+        "operatorId": "char_4132_ascln",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4132_ascln/nationId"
+      },
+      {
+        "operatorId": "char_4133_logos",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4133_logos/nationId"
+      },
+      {
+        "operatorId": "char_4134_cetsyr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4134_cetsyr/nationId"
+      },
+      {
+        "operatorId": "char_4136_phonor",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4136_phonor/nationId"
+      },
+      {
+        "operatorId": "char_4146_nymph",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4146_nymph/nationId"
+      },
+      {
+        "operatorId": "char_4147_mitm",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4147_mitm/nationId"
+      },
+      {
+        "operatorId": "char_4179_monstr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4179_monstr/nationId"
+      },
+      {
+        "operatorId": "char_4195_radian",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4195_radian/nationId"
+      },
+      {
+        "operatorId": "char_4204_mantra",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4204_mantra/nationId"
+      },
+      {
+        "operatorId": "char_4215_buddy",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4215_buddy/nationId"
+      },
+      {
+        "operatorId": "char_4227_gallus",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4227_gallus/nationId"
+      },
+      {
+        "operatorId": "char_4228_closur",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4228_closur/nationId"
+      },
+      {
+        "operatorId": "char_4230_mcnist",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4230_mcnist/nationId"
+      },
+      {
+        "operatorId": "char_491_humus",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_491_humus/nationId"
+      },
+      {
+        "operatorId": "char_492_quercu",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_492_quercu/nationId"
+      },
+      {
+        "operatorId": "char_497_ctable",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_497_ctable/nationId"
+      },
+      {
+        "operatorId": "char_500_noirc",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_500_noirc/nationId"
+      },
+      {
+        "operatorId": "char_501_durin",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_501_durin/nationId"
+      },
+      {
+        "operatorId": "char_502_nblade",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_502_nblade/nationId"
+      },
+      {
+        "operatorId": "char_503_rang",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_503_rang/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "rim",
+    "name": "雷姆必拓",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/rim",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_230_savage",
+      "char_294_ayer",
+      "char_365_aprl",
+      "char_373_lionhd",
+      "char_378_asbest",
+      "char_4081_warmy",
+      "char_4117_ray",
+      "char_4178_alanna",
+      "char_4235_thumpy",
+      "char_4236_tmslot",
+      "char_4237_jcinta",
+      "char_449_glider",
+      "char_464_cement",
+      "char_476_blkngt",
+      "char_493_firwhl"
+    ],
+    "members": [
+      {
+        "operatorId": "char_230_savage",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_230_savage/nationId"
+      },
+      {
+        "operatorId": "char_294_ayer",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_294_ayer/nationId"
+      },
+      {
+        "operatorId": "char_365_aprl",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_365_aprl/nationId"
+      },
+      {
+        "operatorId": "char_373_lionhd",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_373_lionhd/nationId"
+      },
+      {
+        "operatorId": "char_378_asbest",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_378_asbest/nationId"
+      },
+      {
+        "operatorId": "char_4081_warmy",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4081_warmy/nationId"
+      },
+      {
+        "operatorId": "char_4117_ray",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4117_ray/nationId"
+      },
+      {
+        "operatorId": "char_4178_alanna",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4178_alanna/nationId"
+      },
+      {
+        "operatorId": "char_4235_thumpy",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4235_thumpy/nationId"
+      },
+      {
+        "operatorId": "char_4236_tmslot",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4236_tmslot/nationId"
+      },
+      {
+        "operatorId": "char_4237_jcinta",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4237_jcinta/nationId"
+      },
+      {
+        "operatorId": "char_449_glider",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_449_glider/nationId"
+      },
+      {
+        "operatorId": "char_464_cement",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_464_cement/nationId"
+      },
+      {
+        "operatorId": "char_476_blkngt",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_476_blkngt/nationId"
+      },
+      {
+        "operatorId": "char_493_firwhl",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_493_firwhl/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "sami",
+    "name": "萨米",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/sami",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_109_fmout",
+      "char_2012_typhon",
+      "char_252_bibeak",
+      "char_341_sntlla",
+      "char_4102_threye",
+      "char_466_qanik"
+    ],
+    "members": [
+      {
+        "operatorId": "char_109_fmout",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_109_fmout/nationId"
+      },
+      {
+        "operatorId": "char_2012_typhon",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2012_typhon/nationId"
+      },
+      {
+        "operatorId": "char_252_bibeak",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_252_bibeak/nationId"
+      },
+      {
+        "operatorId": "char_341_sntlla",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_341_sntlla/nationId"
+      },
+      {
+        "operatorId": "char_4102_threye",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4102_threye/nationId"
+      },
+      {
+        "operatorId": "char_466_qanik",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_466_qanik/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "sargon",
+    "name": "萨尔贡",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/sargon",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_127_estell",
+      "char_215_mantic",
+      "char_336_folivo",
+      "char_344_beewax",
+      "char_379_sesa",
+      "char_381_bubble",
+      "char_394_hadiya",
+      "char_4023_rfalcn",
+      "char_402_tuye",
+      "char_4054_malist",
+      "char_4056_titi",
+      "char_4058_pepe",
+      "char_4062_totter",
+      "char_411_tomimi",
+      "char_4138_narant",
+      "char_4139_papyrs",
+      "char_4140_lasher",
+      "char_4148_philae",
+      "char_415_flint",
+      "char_416_zumama",
+      "char_4171_wulfen",
+      "char_472_pasngr"
+    ],
+    "members": [
+      {
+        "operatorId": "char_127_estell",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_127_estell/nationId"
+      },
+      {
+        "operatorId": "char_215_mantic",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_215_mantic/nationId"
+      },
+      {
+        "operatorId": "char_336_folivo",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_336_folivo/nationId"
+      },
+      {
+        "operatorId": "char_344_beewax",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_344_beewax/nationId"
+      },
+      {
+        "operatorId": "char_379_sesa",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_379_sesa/nationId"
+      },
+      {
+        "operatorId": "char_381_bubble",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_381_bubble/nationId"
+      },
+      {
+        "operatorId": "char_394_hadiya",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_394_hadiya/nationId"
+      },
+      {
+        "operatorId": "char_4023_rfalcn",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4023_rfalcn/nationId"
+      },
+      {
+        "operatorId": "char_402_tuye",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_402_tuye/nationId"
+      },
+      {
+        "operatorId": "char_4054_malist",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4054_malist/nationId"
+      },
+      {
+        "operatorId": "char_4056_titi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4056_titi/nationId"
+      },
+      {
+        "operatorId": "char_4058_pepe",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4058_pepe/nationId"
+      },
+      {
+        "operatorId": "char_4062_totter",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4062_totter/nationId"
+      },
+      {
+        "operatorId": "char_411_tomimi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_411_tomimi/nationId"
+      },
+      {
+        "operatorId": "char_4138_narant",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4138_narant/nationId"
+      },
+      {
+        "operatorId": "char_4139_papyrs",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4139_papyrs/nationId"
+      },
+      {
+        "operatorId": "char_4140_lasher",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4140_lasher/nationId"
+      },
+      {
+        "operatorId": "char_4148_philae",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4148_philae/nationId"
+      },
+      {
+        "operatorId": "char_415_flint",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_415_flint/nationId"
+      },
+      {
+        "operatorId": "char_416_zumama",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_416_zumama/nationId"
+      },
+      {
+        "operatorId": "char_4171_wulfen",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4171_wulfen/nationId"
+      },
+      {
+        "operatorId": "char_472_pasngr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_472_pasngr/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "sees",
+    "name": "S.E.E.S.",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/sees",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_4217_makoto",
+      "char_4218_aigis",
+      "char_4219_yukari",
+      "char_4220_kormr"
+    ],
+    "members": [
+      {
+        "operatorId": "char_4217_makoto",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4217_makoto/teamId"
+      },
+      {
+        "operatorId": "char_4218_aigis",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4218_aigis/teamId"
+      },
+      {
+        "operatorId": "char_4219_yukari",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4219_yukari/teamId"
+      },
+      {
+        "operatorId": "char_4220_kormr",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4220_kormr/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "siesta",
+    "name": "汐斯塔",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/siesta",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_340_shwaz",
+      "char_348_ceylon",
+      "char_4106_bryota",
+      "char_488_buildr"
+    ],
+    "members": [
+      {
+        "operatorId": "char_340_shwaz",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_340_shwaz/groupId"
+      },
+      {
+        "operatorId": "char_348_ceylon",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_348_ceylon/groupId"
+      },
+      {
+        "operatorId": "char_4106_bryota",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4106_bryota/groupId"
+      },
+      {
+        "operatorId": "char_488_buildr",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_488_buildr/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "siracusa",
+    "name": "叙拉古",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/siracusa",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1038_whitw2",
+      "char_140_whitew",
+      "char_145_prove",
+      "char_190_clour",
+      "char_254_vodfox",
+      "char_291_aglina",
+      "char_346_aosta",
+      "char_349_chiave",
+      "char_356_broca",
+      "char_358_lisa",
+      "char_4014_lunacu",
+      "char_4026_vulpis",
+      "char_4031_liesel",
+      "char_4037_demetr",
+      "char_4065_judge",
+      "char_4155_talr",
+      "char_427_vigil",
+      "char_446_aroma"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1038_whitw2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1038_whitw2/nationId"
+      },
+      {
+        "operatorId": "char_140_whitew",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_140_whitew/nationId"
+      },
+      {
+        "operatorId": "char_145_prove",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_145_prove/nationId"
+      },
+      {
+        "operatorId": "char_190_clour",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_190_clour/nationId"
+      },
+      {
+        "operatorId": "char_254_vodfox",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_254_vodfox/nationId"
+      },
+      {
+        "operatorId": "char_291_aglina",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_291_aglina/nationId"
+      },
+      {
+        "operatorId": "char_346_aosta",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_346_aosta/nationId"
+      },
+      {
+        "operatorId": "char_349_chiave",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_349_chiave/nationId"
+      },
+      {
+        "operatorId": "char_356_broca",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_356_broca/nationId"
+      },
+      {
+        "operatorId": "char_358_lisa",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_358_lisa/nationId"
+      },
+      {
+        "operatorId": "char_4014_lunacu",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4014_lunacu/nationId"
+      },
+      {
+        "operatorId": "char_4026_vulpis",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4026_vulpis/nationId"
+      },
+      {
+        "operatorId": "char_4031_liesel",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4031_liesel/nationId"
+      },
+      {
+        "operatorId": "char_4037_demetr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4037_demetr/nationId"
+      },
+      {
+        "operatorId": "char_4065_judge",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4065_judge/nationId"
+      },
+      {
+        "operatorId": "char_4155_talr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4155_talr/nationId"
+      },
+      {
+        "operatorId": "char_427_vigil",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_427_vigil/nationId"
+      },
+      {
+        "operatorId": "char_446_aroma",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_446_aroma/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "student",
+    "name": "乌萨斯学生自治团",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/student",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1051_headb2",
+      "char_115_headbr",
+      "char_194_leto",
+      "char_195_glassb",
+      "char_196_sunbr",
+      "char_197_poca",
+      "char_405_absin"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1051_headb2",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1051_headb2/teamId"
+      },
+      {
+        "operatorId": "char_115_headbr",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_115_headbr/teamId"
+      },
+      {
+        "operatorId": "char_194_leto",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_194_leto/teamId"
+      },
+      {
+        "operatorId": "char_195_glassb",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_195_glassb/teamId"
+      },
+      {
+        "operatorId": "char_196_sunbr",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_196_sunbr/teamId"
+      },
+      {
+        "operatorId": "char_197_poca",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_197_poca/teamId"
+      },
+      {
+        "operatorId": "char_405_absin",
+        "kind": "team",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_405_absin/teamId"
+      }
+    ]
+  },
+  {
+    "factionId": "sui",
+    "name": "炎-岁",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/sui",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_2014_nian",
+      "char_2015_dusk",
+      "char_2023_ling",
+      "char_2024_chyue",
+      "char_2025_shu",
+      "char_2026_yu",
+      "char_2027_wang"
+    ],
+    "members": [
+      {
+        "operatorId": "char_2014_nian",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2014_nian/groupId"
+      },
+      {
+        "operatorId": "char_2015_dusk",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2015_dusk/groupId"
+      },
+      {
+        "operatorId": "char_2023_ling",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2023_ling/groupId"
+      },
+      {
+        "operatorId": "char_2024_chyue",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2024_chyue/groupId"
+      },
+      {
+        "operatorId": "char_2025_shu",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2025_shu/groupId"
+      },
+      {
+        "operatorId": "char_2026_yu",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2026_yu/groupId"
+      },
+      {
+        "operatorId": "char_2027_wang",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2027_wang/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "sweep",
+    "name": "S.W.E.E.P.",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/sweep",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_144_red",
+      "char_149_scave",
+      "char_4132_ascln"
+    ],
+    "members": [
+      {
+        "operatorId": "char_144_red",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_144_red/groupId"
+      },
+      {
+        "operatorId": "char_149_scave",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_149_scave/groupId"
+      },
+      {
+        "operatorId": "char_4132_ascln",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4132_ascln/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "tara",
+    "name": "塔拉",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/tara",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1020_reed2",
+      "char_297_hamoni",
+      "char_4177_brigid",
+      "char_450_necras"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1020_reed2",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1020_reed2/groupId"
+      },
+      {
+        "operatorId": "char_297_hamoni",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_297_hamoni/groupId"
+      },
+      {
+        "operatorId": "char_4177_brigid",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4177_brigid/groupId"
+      },
+      {
+        "operatorId": "char_450_necras",
+        "kind": "group",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_450_necras/groupId"
+      }
+    ]
+  },
+  {
+    "factionId": "ursus",
+    "name": "乌萨斯",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/ursus",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1051_headb2",
+      "char_115_headbr",
+      "char_137_brownb",
+      "char_188_helage",
+      "char_194_leto",
+      "char_195_glassb",
+      "char_196_sunbr",
+      "char_197_poca",
+      "char_405_absin",
+      "char_4207_branch",
+      "char_4208_wintim",
+      "char_4223_botany",
+      "char_4224_turdus",
+      "char_4225_tanya",
+      "char_4226_veen"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1051_headb2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1051_headb2/nationId"
+      },
+      {
+        "operatorId": "char_115_headbr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_115_headbr/nationId"
+      },
+      {
+        "operatorId": "char_137_brownb",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_137_brownb/nationId"
+      },
+      {
+        "operatorId": "char_188_helage",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_188_helage/nationId"
+      },
+      {
+        "operatorId": "char_194_leto",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_194_leto/nationId"
+      },
+      {
+        "operatorId": "char_195_glassb",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_195_glassb/nationId"
+      },
+      {
+        "operatorId": "char_196_sunbr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_196_sunbr/nationId"
+      },
+      {
+        "operatorId": "char_197_poca",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_197_poca/nationId"
+      },
+      {
+        "operatorId": "char_405_absin",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_405_absin/nationId"
+      },
+      {
+        "operatorId": "char_4207_branch",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4207_branch/nationId"
+      },
+      {
+        "operatorId": "char_4208_wintim",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4208_wintim/nationId"
+      },
+      {
+        "operatorId": "char_4223_botany",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4223_botany/nationId"
+      },
+      {
+        "operatorId": "char_4224_turdus",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4224_turdus/nationId"
+      },
+      {
+        "operatorId": "char_4225_tanya",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4225_tanya/nationId"
+      },
+      {
+        "operatorId": "char_4226_veen",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4226_veen/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "victoria",
+    "name": "维多利亚",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/victoria",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1019_siege2",
+      "char_1020_reed2",
+      "char_1042_phatm2",
+      "char_112_siege",
+      "char_133_mm",
+      "char_141_nights",
+      "char_154_morgan",
+      "char_155_tiger",
+      "char_157_dagda",
+      "char_164_nightm",
+      "char_166_skfire",
+      "char_185_frncat",
+      "char_220_grani",
+      "char_222_bpipe",
+      "char_250_phatom",
+      "char_261_sddrag",
+      "char_275_breeze",
+      "char_297_hamoni",
+      "char_338_iris",
+      "char_363_toddi",
+      "char_369_bena",
+      "char_377_gdglow",
+      "char_388_mint",
+      "char_4017_puzzle",
+      "char_4025_aprot2",
+      "char_4039_horn",
+      "char_4040_rockr",
+      "char_4045_heidi",
+      "char_4072_ironmn",
+      "char_4107_vrdant",
+      "char_4110_delphn",
+      "char_4114_harold",
+      "char_4162_cathy",
+      "char_4173_nowell",
+      "char_4177_brigid",
+      "char_4198_christ",
+      "char_450_necras",
+      "char_479_sleach",
+      "char_494_vendla"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1019_siege2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1019_siege2/nationId"
+      },
+      {
+        "operatorId": "char_1020_reed2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1020_reed2/nationId"
+      },
+      {
+        "operatorId": "char_1042_phatm2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1042_phatm2/nationId"
+      },
+      {
+        "operatorId": "char_112_siege",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_112_siege/nationId"
+      },
+      {
+        "operatorId": "char_133_mm",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_133_mm/nationId"
+      },
+      {
+        "operatorId": "char_141_nights",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_141_nights/nationId"
+      },
+      {
+        "operatorId": "char_154_morgan",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_154_morgan/nationId"
+      },
+      {
+        "operatorId": "char_155_tiger",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_155_tiger/nationId"
+      },
+      {
+        "operatorId": "char_157_dagda",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_157_dagda/nationId"
+      },
+      {
+        "operatorId": "char_164_nightm",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_164_nightm/nationId"
+      },
+      {
+        "operatorId": "char_166_skfire",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_166_skfire/nationId"
+      },
+      {
+        "operatorId": "char_185_frncat",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_185_frncat/nationId"
+      },
+      {
+        "operatorId": "char_220_grani",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_220_grani/nationId"
+      },
+      {
+        "operatorId": "char_222_bpipe",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_222_bpipe/nationId"
+      },
+      {
+        "operatorId": "char_250_phatom",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_250_phatom/nationId"
+      },
+      {
+        "operatorId": "char_261_sddrag",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_261_sddrag/nationId"
+      },
+      {
+        "operatorId": "char_275_breeze",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_275_breeze/nationId"
+      },
+      {
+        "operatorId": "char_297_hamoni",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_297_hamoni/nationId"
+      },
+      {
+        "operatorId": "char_338_iris",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_338_iris/nationId"
+      },
+      {
+        "operatorId": "char_363_toddi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_363_toddi/nationId"
+      },
+      {
+        "operatorId": "char_369_bena",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_369_bena/nationId"
+      },
+      {
+        "operatorId": "char_377_gdglow",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_377_gdglow/nationId"
+      },
+      {
+        "operatorId": "char_388_mint",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_388_mint/nationId"
+      },
+      {
+        "operatorId": "char_4017_puzzle",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4017_puzzle/nationId"
+      },
+      {
+        "operatorId": "char_4025_aprot2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4025_aprot2/nationId"
+      },
+      {
+        "operatorId": "char_4039_horn",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4039_horn/nationId"
+      },
+      {
+        "operatorId": "char_4040_rockr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4040_rockr/nationId"
+      },
+      {
+        "operatorId": "char_4045_heidi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4045_heidi/nationId"
+      },
+      {
+        "operatorId": "char_4072_ironmn",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4072_ironmn/nationId"
+      },
+      {
+        "operatorId": "char_4107_vrdant",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4107_vrdant/nationId"
+      },
+      {
+        "operatorId": "char_4110_delphn",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4110_delphn/nationId"
+      },
+      {
+        "operatorId": "char_4114_harold",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4114_harold/nationId"
+      },
+      {
+        "operatorId": "char_4162_cathy",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4162_cathy/nationId"
+      },
+      {
+        "operatorId": "char_4173_nowell",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4173_nowell/nationId"
+      },
+      {
+        "operatorId": "char_4177_brigid",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4177_brigid/nationId"
+      },
+      {
+        "operatorId": "char_4198_christ",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4198_christ/nationId"
+      },
+      {
+        "operatorId": "char_450_necras",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_450_necras/nationId"
+      },
+      {
+        "operatorId": "char_479_sleach",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_479_sleach/nationId"
+      },
+      {
+        "operatorId": "char_494_vendla",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_494_vendla/nationId"
+      }
+    ]
+  },
+  {
+    "factionId": "yan",
+    "name": "炎",
+    "sourcePath": "zh_CN/gamedata/excel/handbook_team_table.json#/yan",
+    "membershipScope": "catalog-direct-links",
+    "operatorIds": [
+      "char_1043_leizi2",
+      "char_1050_chen3",
+      "char_2014_nian",
+      "char_2015_dusk",
+      "char_2023_ling",
+      "char_2024_chyue",
+      "char_2025_shu",
+      "char_2026_yu",
+      "char_2027_wang",
+      "char_306_leizi",
+      "char_385_finlpp",
+      "char_4019_ncdeer",
+      "char_4067_lolxh",
+      "char_4078_bdhkgt",
+      "char_4082_qiubai",
+      "char_4083_chimes",
+      "char_4119_wanqin",
+      "char_4121_zuole",
+      "char_4122_grabds",
+      "char_4172_xingzh",
+      "char_4196_reckpr",
+      "char_4221_ju",
+      "char_4222_taraxa",
+      "char_445_wscoot",
+      "char_455_nothin",
+      "char_473_mberry"
+    ],
+    "members": [
+      {
+        "operatorId": "char_1043_leizi2",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1043_leizi2/nationId"
+      },
+      {
+        "operatorId": "char_1050_chen3",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_1050_chen3/nationId"
+      },
+      {
+        "operatorId": "char_2014_nian",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2014_nian/nationId"
+      },
+      {
+        "operatorId": "char_2015_dusk",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2015_dusk/nationId"
+      },
+      {
+        "operatorId": "char_2023_ling",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2023_ling/nationId"
+      },
+      {
+        "operatorId": "char_2024_chyue",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2024_chyue/nationId"
+      },
+      {
+        "operatorId": "char_2025_shu",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2025_shu/nationId"
+      },
+      {
+        "operatorId": "char_2026_yu",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2026_yu/nationId"
+      },
+      {
+        "operatorId": "char_2027_wang",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_2027_wang/nationId"
+      },
+      {
+        "operatorId": "char_306_leizi",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_306_leizi/nationId"
+      },
+      {
+        "operatorId": "char_385_finlpp",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_385_finlpp/nationId"
+      },
+      {
+        "operatorId": "char_4019_ncdeer",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4019_ncdeer/nationId"
+      },
+      {
+        "operatorId": "char_4067_lolxh",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4067_lolxh/nationId"
+      },
+      {
+        "operatorId": "char_4078_bdhkgt",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4078_bdhkgt/nationId"
+      },
+      {
+        "operatorId": "char_4082_qiubai",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4082_qiubai/nationId"
+      },
+      {
+        "operatorId": "char_4083_chimes",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4083_chimes/nationId"
+      },
+      {
+        "operatorId": "char_4119_wanqin",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4119_wanqin/nationId"
+      },
+      {
+        "operatorId": "char_4121_zuole",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4121_zuole/nationId"
+      },
+      {
+        "operatorId": "char_4122_grabds",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4122_grabds/nationId"
+      },
+      {
+        "operatorId": "char_4172_xingzh",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4172_xingzh/nationId"
+      },
+      {
+        "operatorId": "char_4196_reckpr",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4196_reckpr/nationId"
+      },
+      {
+        "operatorId": "char_4221_ju",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4221_ju/nationId"
+      },
+      {
+        "operatorId": "char_4222_taraxa",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_4222_taraxa/nationId"
+      },
+      {
+        "operatorId": "char_445_wscoot",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_445_wscoot/nationId"
+      },
+      {
+        "operatorId": "char_455_nothin",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_455_nothin/nationId"
+      },
+      {
+        "operatorId": "char_473_mberry",
+        "kind": "nation",
+        "sourcePath": "zh_CN/gamedata/excel/character_table.json#/char_473_mberry/nationId"
+      }
+    ]
+  }
+]

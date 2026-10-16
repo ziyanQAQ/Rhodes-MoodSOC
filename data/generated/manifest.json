@@ -1,7 +1,8 @@
 {
-  "schemaVersion": "1",
-  "catalogVersion": "agd-e0460a6ae71afca1",
-  "generatedAt": "2026-10-12T06:42:46.077Z",
+  "schemaVersion": "2",
+  "generatorVersion": "2.0.0",
+  "catalogVersion": "agd-ae5061f21556e2ff2cafe464f69424ce418eddb3a5df199be3dae60a8b84229f",
+  "generatedAt": "2026-10-13T00:00:00.000Z",
   "source": {
     "kind": "local-archive",
     "files": {
@@ -19,30 +20,40 @@
         "fileName": "gamedata_const.json",
         "sha256": "f0d9f0d4146c3a7adeedb57c114d9a1a9ea0eed6453aabbd05355115a441971c",
         "bytes": 57974
+      },
+      "handbookTeamTable": {
+        "fileName": "handbook_team_table.json",
+        "sha256": "332c3687c17ad43000771b04b00ea655fcf94f760deb91a49591af2f1b324f8f",
+        "bytes": 10025
       }
     }
   },
   "counts": {
     "operators": 432,
     "skills": 763,
-    "facilities": 13
+    "facilities": 13,
+    "factions": 47
   },
   "artifacts": {
     "operators.json": {
-      "sha256": "6705ca3059633392d2dc6f2a5673d38e51cbd390169eab2eea618badaf6138fb",
-      "bytes": 218474
+      "sha256": "e54b7057c85024244aea9b73d16efa63c753bb43b22410948792205117a865e0",
+      "bytes": 482024
     },
     "skills.json": {
-      "sha256": "70860b60cd012e9e60d86d6e803d55f9f06b55f97dac33e1889cd6ac11bc35dd",
-      "bytes": 263448
+      "sha256": "f34b6b2f33480aeee5c0eb6868ef5e839ffa6ba3d000d3d73880c08c92c6b518",
+      "bytes": 360488
     },
     "facilities.json": {
-      "sha256": "b922965455caa01901d6bdae04aeee9f8b1b3044e69ab35aa6f72be695e32d0e",
-      "bytes": 10670
+      "sha256": "7cd7905ef51391c6824e5cee433a8f6967eda6be6bd19df045b445aed174c8ba",
+      "bytes": 15589
+    },
+    "factions.json": {
+      "sha256": "334a2502dc3762bda0571fadceb24e6b1d3719f1face955429fa2d75821d575c",
+      "bytes": 119500
     },
     "constants.json": {
-      "sha256": "3536508a6bffdf175e2359b73b362860f7556ae9b76bafd0e5866c046a0f70f3",
-      "bytes": 130
+      "sha256": "285bb9dea569e42cfe7bbe2ed78d97303148156638f1f6008d4d2eb3c0a770fd",
+      "bytes": 679
     }
   }
 }

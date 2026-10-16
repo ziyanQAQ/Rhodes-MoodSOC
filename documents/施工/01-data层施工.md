@@ -13,7 +13,6 @@ data 层把上游静态资料装配成版本化、只读、可索引的目录。
 ```text
 src/data/
   catalog-types.ts
-  upstream-loader.ts
   upstream-normalizer.ts
   upstream-types.ts
   catalog-generator.ts
@@ -21,8 +20,8 @@ src/data/
   catalog-builder.ts
 ```
 
-已实现的上游导入垂直切片由 `upstream-loader.ts`、`upstream-normalizer.ts` 和
-`catalog-generator.ts` 组成；`validator.ts` 仍是后续规则校验施工位，不能把尚未实现的校验描述成现有能力。
+data 仅包含纯校验、规范化、序列化和快照构建。文件读取、写入和 SHA-256 位于
+`src/infrastructure/catalog/`；该目录的 `FileCatalogReader` 实现 application 端口。
 
 生成命令：
 
@@ -30,8 +29,10 @@ src/data/
 npm run data:build -- --source <ArknightsGameData>/zh_CN/gamedata/excel --output data/generated --generated-at <ISO-8601>
 ```
 
-生成目录包含 `operators.json`、`skills.json`、`facilities.json`、`constants.json` 和 `manifest.json`。
-`manifest.json` 记录三份输入文件的逻辑文件名、字节数、SHA-256、生成时间、目录版本和产物哈希；不记录本机绝对路径。
+生成目录包含 `operators.json`、`skills.json`、`facilities.json`、`factions.json`、`constants.json` 和 `manifest.json`。
+`manifest.json` 记录四份输入文件的逻辑文件名、字节数、SHA-256、生成时间、目录版本、数量和产物哈希；不记录本机绝对路径。
+四份输入为 `building_data.json`、`character_table.json`、`gamedata_const.json`、`handbook_team_table.json`。
+当前 schema 为 `2`、generator 为 `2.0.0`；目录身份由输入指纹和这两个版本共同计算，不含生成时间。schema 1 不静默兼容，须重新生成。
 原始上游 JSON 不复制到项目仓库，生成物也不得手工修改。
 
 `CatalogReader` Interface 由 [`03-application层施工.md`](03-application层施工.md) 的 `application/ports.ts` 定义，并由 infrastructure 的目录 Adapter 实现。data 只产出不可变记录和快照，不拥有外部读取端口。规划的数据结构：
@@ -40,14 +41,15 @@ npm run data:build -- --source <ArknightsGameData>/zh_CN/gamedata/excel --output
 type CatalogVersion = { id: string; source: string; generatedAt: string };
 interface CatalogSnapshot {
   readonly version: CatalogVersion;
-  readonly operators: ReadonlyMap<OperatorId, OperatorRecord>;
-  readonly skills: ReadonlyMap<SkillId, SkillRecord>;
-  readonly facilityTypes: ReadonlyMap<FacilityTypeId, FacilityTypeRecord>;
-  readonly factions: ReadonlyMap<FactionId, FactionRecord>;
+  readonly constants: CatalogConstants;
+  operator(id: string): OperatorRecord | undefined;
+  skill(id: string): SkillRecord | undefined;
+  facilityType(id: string): FacilityTypeRecord | undefined;
+  faction(id: string): FactionRecord | undefined;
 }
 ```
 
-快照提供统一索引、版本检查和只读保证，不暴露上游 JSON 结构。infrastructure 的 `CatalogReader` Adapter 读取并校验来源，再调用 data builder 形成快照；application 在模拟开始时选取所需数据并冻结快照传给 domain。domain 不得直接打开文件、解析上游 JSON 或依赖 `CatalogReader`。
+快照提供闭包索引与深复制/深冻结，不暴露 Map。`FileCatalogReader` 读取清单及固定逻辑文件名，校验格式版本、输入身份、字节指纹、数量、字段和引用，再调用 builder。application 将快照交给 domain 的模拟用例仍待实现；domain 不得直接打开文件、解析上游 JSON 或依赖 `CatalogReader`。
 
 ## 3. 数据对象与不变量
 
@@ -82,4 +84,12 @@ interface CatalogSnapshot {
 
 ## 8. 当前实现状态
 
-已实现两条 data 垂直切片：`catalog-types.ts`/`catalog-builder.ts` 提供目录定义与校验；`upstream-loader.ts`/`upstream-normalizer.ts`/`catalog-generator.ts` 从本地归档读取三份 JSON，保留来源指纹并生成五份项目目录文件。当前归档实测生成 432 名有基建数据的干员、763 条基建技能和 13 类设施。完整技能语义分类、十进制定点转换、数据变更兼容校验和运行时 `CatalogReader` Adapter 仍待实现。
+已实现运行时校验、统一不可变快照、schema 2 生成与文件 `CatalogReader`。当前归档生成 432 名有基建数据的干员、763 条基建技能和 13 类设施；阵营数量以 manifest 为准。技能全部标为 `unmodeled`，常量使用 `{rawValue, sourcePath, unitStatus: "unverified"}`，尚未成为可执行公式。
+
+字段校验允许新增未知字段；必需字段类型变化、未知解锁阶段、非有限数、非安全整数容量、缺失引用、ID 与表键不一致、宿舍两份阶段表长度不一致均拒绝。上游特殊设施的 `description: null` 与 `maxCount: -1` 保留原值，不推断哨兵含义。干员解锁保留组号，阵营保留 nation/group/team 来源；索引与细项相互校验。
+
+技能 ID 索引必须去重，并与解锁明细中的技能 ID 集合一致；同一技能允许保留不同来源路径的解锁明细，但同一干员的解锁明细不得重复使用 `sourcePath`，否则返回 `CATALOG_FIELD_INVALID`。
+
+阵营成员仅覆盖本目录干员的上游直接关联（`membershipScope: "catalog-direct-links"`），不代表技能成员集合。完整技能语义分类、十进制定点转换与领域模拟仍待施工。
+
+读取失败以 `CatalogValidationError.detail` 提供 `{code,path,message}`；路径为逻辑文件或字段路径，不包含本机路径。哈希用于一致性检查，不是来源认证或数字签名。生成器先写数据、最后写清单；更新不是事务原子替换，读取中间状态时 Reader 拒绝不一致目录，调用方需待生成完成后再读。

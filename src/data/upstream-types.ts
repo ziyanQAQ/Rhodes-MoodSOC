@@ -16,6 +16,7 @@ export interface UpstreamSourceMetadata {
     readonly buildingData: SourceFileFingerprint;
     readonly characterTable: SourceFileFingerprint;
     readonly gamedataConst: SourceFileFingerprint;
+    readonly handbookTeamTable: SourceFileFingerprint;
   };
 }
 
@@ -55,7 +56,7 @@ export interface UpstreamRoomPhase {
 export interface UpstreamRoom {
   readonly id: string;
   readonly name: string;
-  readonly description: string;
+  readonly description: string | null;
   readonly maxCount: number;
   readonly category: string;
   readonly size: { readonly row: number; readonly col: number };
@@ -90,4 +91,5 @@ export interface UpstreamCatalogRaw {
   readonly buildingData: UpstreamBuildingData;
   readonly characterTable: Readonly<Record<string, UpstreamCharacter>>;
   readonly gamedataConst: Readonly<Record<string, unknown>>;
+  readonly handbookTeamTable: Readonly<Record<string, { readonly powerId: string; readonly powerName: string }>>;
 }

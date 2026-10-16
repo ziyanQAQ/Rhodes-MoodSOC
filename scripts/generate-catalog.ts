@@ -1,5 +1,6 @@
+/** 解析目录生成命令的参数与环境变量，调用基础设施生成器更新静态目录。 */
 import { resolve } from "node:path";
-import { generateCatalogArtifacts } from "../src/data/catalog-generator.js";
+import { generateCatalogArtifacts } from "../src/infrastructure/catalog/catalog-generator.js";
 
 function option(name: string): string | undefined {
   const position = process.argv.indexOf(name);

@@ -1,0 +1,2 @@
+# 生成目录的哈希按文件字节计算，检出时保持 LF。
+/data/generated/*.json text eol=lf
