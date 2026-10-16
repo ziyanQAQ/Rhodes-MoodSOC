@@ -2,7 +2,7 @@
 
 基于多班排班模拟干员心情变化，并在班次执行点结算换心情与闲置入宿，向 Web UI 和程序 API 提供曲线、布局快照、事件与原因解释。
 
-> **当前状态：分层施工阶段。** 已完成 data 层运行时校验、不可变目录快照、schema 2 生成物和 infrastructure 文件 `CatalogReader`；domain、application 用例、Worker/API 和 UI 仍待实现。设计契约不代表现有源码能力。
+> **当前状态：分层施工阶段。** 已完成 data 层运行时校验、不可变目录快照、schema 2 生成物和 infrastructure 文件 `CatalogReader`；domain 已完成结构化错误、十进制定点基础运算、班次时间线、名册与布局/手动台账基础，心情积分、自动化、application 用例、Worker/API 和 UI 仍待实现。设计契约不代表现有源码能力。
 
 ## 核心行为
 
@@ -51,7 +51,7 @@ npm run data:build -- --source <ArknightsGameData>/zh_CN/gamedata/excel --output
 
 ## 当前限制
 
-- 已有 data 层目录校验/快照/生成和文件 `CatalogReader`；domain、application 用例、其他 Adapter 和 presentation UI 尚未实现。
+- 已有 data 层目录校验/快照/生成、文件 `CatalogReader` 和 domain 数值/时间线/名册/布局基础；真实心情结算、自动入宿策略、application 用例、其他 Adapter 和 presentation UI 尚未实现。
 - 已接入真实上游目录文件的加载、规范化和生成；Worker、程序 API 或 Web UI 运行入口仍未实现。
 - 当前验证命令：`npm test`、`npm run typecheck`。
 - 技能保留原文但全部 `unmodeled`，常量单位 `unverified`，不能直接用于心情计算。schema 1 需重新生成，不静默兼容。

@@ -1,3 +1,7 @@
 # domain
 
-待实现。这里将放置不依赖 JSON、Worker、HTTP、存储或 UI 的领域 Module：时间轴、布局、心情、自动化和模拟编排。开始实现前必须先在 `test/domain/` 写公开 Interface 的黑盒测试。
+当前已实现结构化领域错误、六位小数定点基础运算、班初和班内每 12h 执行点、显式练度名册，以及布局容量校验、手动台账、全局名单与基线/模拟副本隔离。心情速率/积分、自动入宿决策和模拟编排仍待实现。
+
+领域公开入口为 `index.ts`。实现不依赖 JSON、Worker、HTTP、存储或 UI；新增行为前必须先在 `test/domain/` 通过公开 Interface 编写相关黑盒测试。
+
+具体 Interface、错误、输入规范和未支持边界见 [`domain 层施工`](../../documents/施工/02-domain层施工.md)。
